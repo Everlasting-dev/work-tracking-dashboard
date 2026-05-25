@@ -32,6 +32,19 @@ const SupabaseDB = {
 
   _sb() { return this._client; },
 
+  async _nextTableId(table) {
+    const { data, error } = await this._sb().from(table).select('id').order('id', { ascending: false }).limit(1);
+    if (error) throw error;
+    return (data?.[0]?.id ?? 0) + 1;
+  },
+
+  async _resetIdSequences() {
+    try {
+      const { error } = await this._sb().rpc('wt_reset_id_sequences');
+      if (!error) return;
+    } catch (_) { /* RPC optional until schema is updated */ }
+  },
+
   _mapUser(r) {
     if (!r) return null;
     return {
@@ -107,8 +120,9 @@ const SupabaseDB = {
 
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
     if (!userId || !action) return;
+    const id = await this._nextTableId('wt_activity_log');
     await this._sb().from('wt_activity_log').insert({
-      user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
+      id, user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
       entity_id: entityId, details: details || ''
     });
   },
@@ -176,7 +190,13 @@ const SupabaseDB = {
     }
     const { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
     if (error) throw error;
-    if (actorUserId) await this.logActivity({ userId: actorUserId, action: 'updated', entityType: 'user', entityId: id, details: Object.keys(patch).join(',') });
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', discord_id: 'Discord ID', username: 'username' };
+    if (actorUserId) {
+      await this.logActivity({
+        userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
+        details: Object.keys(patch).map(k => fieldLabels[k] || k).join(', ')
+      });
+    }
   },
 
   async changePassword(userId, newPassword, actorUserId = null) {
@@ -227,9 +247,11 @@ const SupabaseDB = {
 
   async createProject(data) {
     const actorUserId = data.actorUserId;
+    const id = await this._nextTableId('wt_projects');
     const { data: row, error } = await this._sb().from('wt_projects').insert({
-      name: data.name || '', notes: data.notes || '', type: data.type || 'project',
-      status: data.status || 'active', priority: data.priority || 'medium', owner_id: data.ownerId || 1
+      id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
+      status: data.status || 'active', priority: data.priority || 'medium',
+      owner_id: data.ownerId ?? actorUserId ?? 1
     }).select().single();
     if (error) throw error;
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name });
@@ -325,8 +347,9 @@ const SupabaseDB = {
   async createTask(data) {
     const actorUserId = data.actorUserId;
     const assigneeId = data.assigneeId != null ? Number(data.assigneeId) : (actorUserId ?? null);
+    const id = await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
-      project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
+      id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium'
     }).select().single();
@@ -384,8 +407,9 @@ const SupabaseDB = {
 
   async createMilestone(data) {
     const actorUserId = data.actorUserId;
+    const id = await this._nextTableId('wt_milestones');
     const { data: row, error } = await this._sb().from('wt_milestones').insert({
-      project_id: data.projectId, title: data.title || '', due_date: data.dueDate || '',
+      id, project_id: data.projectId, title: data.title || '', due_date: data.dueDate || '',
       status: data.status || 'pending', weight: data.weight || 1
     }).select().single();
     if (error) throw error;
@@ -443,8 +467,9 @@ const SupabaseDB = {
 
   async createUpdate(data) {
     const actorUserId = data.actorUserId;
+    const id = await this._nextTableId('wt_updates');
     const { data: row, error } = await this._sb().from('wt_updates').insert({
-      project_id: data.projectId, user_id: actorUserId || null, content: data.content || ''
+      id, project_id: data.projectId, user_id: actorUserId || null, content: data.content || ''
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
@@ -797,6 +822,8 @@ const SupabaseDB = {
         attachmentsImported++;
       }
     }
+
+    await this._resetIdSequences();
 
     return {
       needsPasswordReset,

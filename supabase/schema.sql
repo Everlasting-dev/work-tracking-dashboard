@@ -160,5 +160,26 @@ create policy wt_storage_read on storage.objects for select to anon, authenticat
 create policy wt_storage_write on storage.objects for insert to anon, authenticated with check (bucket_id = 'project-files');
 create policy wt_storage_delete on storage.objects for delete to anon, authenticated using (bucket_id = 'project-files');
 
+-- After backup import with explicit IDs, bump identity sequences so new rows get fresh IDs
+create or replace function public.wt_reset_id_sequences()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform setval(pg_get_serial_sequence('public.wt_projects', 'id'), coalesce((select max(id) from public.wt_projects), 1));
+  perform setval(pg_get_serial_sequence('public.wt_tasks', 'id'), coalesce((select max(id) from public.wt_tasks), 1));
+  perform setval(pg_get_serial_sequence('public.wt_milestones', 'id'), coalesce((select max(id) from public.wt_milestones), 1));
+  perform setval(pg_get_serial_sequence('public.wt_updates', 'id'), coalesce((select max(id) from public.wt_updates), 1));
+  perform setval(pg_get_serial_sequence('public.wt_activity_log', 'id'), coalesce((select max(id) from public.wt_activity_log), 1));
+  perform setval(pg_get_serial_sequence('public.wt_notifications', 'id'), coalesce((select max(id) from public.wt_notifications), 1));
+  perform setval(pg_get_serial_sequence('public.wt_webhooks', 'id'), coalesce((select max(id) from public.wt_webhooks), 1));
+  perform setval(pg_get_serial_sequence('public.wt_attachments', 'id'), coalesce((select max(id) from public.wt_attachments), 1));
+end;
+$$;
+
+grant execute on function public.wt_reset_id_sequences() to anon, authenticated;
+
 -- Reload PostgREST schema cache so new tables are visible immediately
 notify pgrst, 'reload schema';

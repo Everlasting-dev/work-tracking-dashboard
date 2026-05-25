@@ -457,6 +457,15 @@ function closeUserMenu() {
   updateSidebarUser();
 }
 
+function humanizeActivityDetails(raw) {
+  if (!raw) return '';
+  const labels = {
+    display_name: 'display name', displayName: 'display name', email: 'email',
+    discord_id: 'Discord ID', username: 'username', role: 'role'
+  };
+  return raw.split(',').map(s => labels[s.trim()] || s.trim().replace(/_/g, ' ')).join(', ');
+}
+
 function formatActivityMessage(entry, uMap) {
   const who = uMap[entry.userId];
   const name = who ? (who.displayName || who.username) : 'Someone';
@@ -470,7 +479,7 @@ function formatActivityMessage(entry, uMap) {
   };
   const verb = actionLabels[entry.action] || entry.action;
   const type = typeLabels[entry.entityType] || entry.entityType;
-  const detail = entry.details ? `: <em>${esc(entry.details)}</em>` : '';
+  const detail = entry.details ? `: <em>${esc(humanizeActivityDetails(entry.details))}</em>` : '';
   if (entry.action === 'password_changed') return `${esc(name)} ${verb} an account`;
   if (entry.action === 'logged_in' || entry.action === 'logged_out') return `${esc(name)} ${verb}`;
   if (entry.action === 'noted') return `${esc(name)} ${verb} ${type}${detail}`;
@@ -1148,7 +1157,7 @@ async function renderAdminDashboard() {
           <div class="activity-log-row">
             <span class="activity-dot"></span>
             <div class="activity-text">
-              ${esc(formatActivityMessage(entry, uMap))}
+              ${formatActivityMessage(entry, uMap)}
               <span class="text-muted text-sm">${timeAgo(entry.createdAt)}</span>
             </div>
           </div>`).join('')}</div>`
@@ -1603,7 +1612,11 @@ async function handleFormSubmit(e) {
       showToast('Master recovery key saved', 'success');
     }
     hideModal(); await router();
-  } catch (err) { console.error(err); showToast('Something went wrong', 'error'); }
+  } catch (err) {
+    console.error(err);
+    const msg = err?.message || err?.details || 'Something went wrong';
+    showToast(msg.includes('duplicate key') ? 'Could not save — try refreshing the page' : msg, 'error');
+  }
 }
 
 /* ──── Actions ──── */
