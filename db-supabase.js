@@ -120,17 +120,17 @@ const SupabaseDB = {
 
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
     if (!userId || !action) return;
-    const id = await this._nextTableId('wt_activity_log');
-    await this._sb().from('wt_activity_log').insert({
-      id, user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
+    this._sb().from('wt_activity_log').insert({
+      user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
       entity_id: entityId, details: details || ''
-    });
+    }).then(({ error }) => { if (error) console.warn('activity log:', error.message); });
   },
 
   async getActivityLog(filters = {}) {
     let q = this._sb().from('wt_activity_log').select('*').order('created_at', { ascending: false });
     if (filters.projectId != null) q = q.eq('project_id', filters.projectId);
     if (filters.userId != null) q = q.eq('user_id', filters.userId);
+    if (filters.limit != null) q = q.limit(filters.limit);
     const { data, error } = await q;
     if (error) throw error;
     let rows = (data || []).map(r => this._mapActivity(r));

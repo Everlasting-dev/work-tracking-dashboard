@@ -55,7 +55,7 @@ function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:0
 
 /* ──── Config ──── */
 
-const TYPE_CFG  = { 'project': { l: 'Project', c: 'blue' }, 'research': { l: 'Research', c: 'purple' }, 'job-search': { l: 'Job Search', c: 'green' }, 'idea': { l: 'Idea', c: 'amber' } };
+const TYPE_CFG  = { 'project': { l: 'Project', c: 'blue' }, 'research': { l: 'Research', c: 'purple' }, 'idea': { l: 'Idea', c: 'amber' } };
 const STAT_CFG  = { 'active': { l: 'Active', c: 'green' }, 'completed': { l: 'Completed', c: 'blue' }, 'on-hold': { l: 'On Hold', c: 'amber' }, 'archived': { l: 'Archived', c: 'muted' } };
 const TSTATUS   = { 'todo': { l: 'To Do', c: 'amber' }, 'doing': { l: 'In Progress', c: 'blue' }, 'done': { l: 'Done', c: 'green' } };
 const PRIO_CFG  = { 'low': { l: 'Low', c: 'muted' }, 'medium': { l: 'Medium', c: 'blue' }, 'high': { l: 'High', c: 'amber' }, 'urgent': { l: 'Urgent', c: 'red' } };
@@ -63,7 +63,8 @@ const PRIO_CFG  = { 'low': { l: 'Low', c: 'muted' }, 'medium': { l: 'Medium', c:
 /* ──── Template Helpers ──── */
 
 function badge(t, c) { return `<span class="badge badge-${c}">${t}</span>`; }
-function typeBadge(t)    { const c = TYPE_CFG[t] || TYPE_CFG.project; return badge(c.l, c.c); }
+const TYPE_CFG_LEGACY = { 'job-search': { l: 'Job Search', c: 'green' } };
+function typeBadge(t)    { const c = TYPE_CFG[t] || TYPE_CFG_LEGACY[t] || TYPE_CFG.project; return badge(c.l, c.c); }
 function statusBadge(s)  { const c = STAT_CFG[s] || STAT_CFG.active; return badge(c.l, c.c); }
 function taskBadge(s)    { const c = TSTATUS[s] || TSTATUS.todo; return badge(c.l, c.c); }
 function prioBadge(p)    { const c = PRIO_CFG[p] || PRIO_CFG.medium; return badge(c.l, c.c); }
@@ -114,6 +115,82 @@ function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
 function actorId() { return getSession()?.userId ?? null; }
+
+/* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
+
+const WORKSPACE_CACHE_MS = 8000;
+const USERS_CACHE_MS = 30000;
+let _workspaceCache = null;
+let _workspaceCacheAt = 0;
+let _usersCache = null;
+let _usersCacheAt = 0;
+let _workspaceRefresh = null;
+
+function bustWorkspaceCache() {
+  _workspaceCache = null;
+  _workspaceCacheAt = 0;
+  _usersCache = null;
+  _usersCacheAt = 0;
+  _workspaceRefresh = null;
+}
+
+async function getUsersCached(force = false) {
+  const now = Date.now();
+  if (!force && _usersCache && now - _usersCacheAt < USERS_CACHE_MS) return _usersCache;
+  _usersCache = await DB.getUsers();
+  _usersCacheAt = now;
+  return _usersCache;
+}
+
+async function refreshWorkspaceInBackground() {
+  try {
+    const [projects, tasks, users] = await Promise.all([
+      DB.getProjects(),
+      DB.getTasks(),
+      getUsersCached(true)
+    ]);
+    _workspaceCache = { projects, tasks, users };
+    _workspaceCacheAt = Date.now();
+  } catch (err) {
+    console.warn('workspace refresh failed', err);
+  } finally {
+    _workspaceRefresh = null;
+  }
+}
+
+async function getWorkspaceData(force = false) {
+  const now = Date.now();
+  const fresh = !force && _workspaceCache && now - _workspaceCacheAt < WORKSPACE_CACHE_MS;
+  if (fresh) return _workspaceCache;
+
+  if (!force && _workspaceCache && !_workspaceRefresh) {
+    _workspaceRefresh = refreshWorkspaceInBackground();
+    return _workspaceCache;
+  }
+
+  const [projects, tasks, users] = await Promise.all([
+    DB.getProjects(),
+    DB.getTasks(),
+    getUsersCached(force)
+  ]);
+  _workspaceCache = { projects, tasks, users };
+  _workspaceCacheAt = now;
+  return _workspaceCache;
+}
+
+function projectStatsFromTasks(tasks, projectId) {
+  const pt = tasks.filter(t => t.projectId === projectId);
+  if (!pt.length) return { progress: 0, taskCount: 0, doneCount: 0 };
+  const scores = { todo: 0, doing: 50, done: 100 };
+  const progress = Math.round(pt.reduce((sum, t) => sum + (scores[t.status] || 0), 0) / pt.length);
+  return { progress, taskCount: pt.length, doneCount: pt.filter(t => t.status === 'done').length };
+}
+
+function projectProgressFromTaskList(taskList) {
+  if (!taskList.length) return 0;
+  const scores = { todo: 0, doing: 50, done: 100 };
+  return Math.round(taskList.reduce((sum, t) => sum + (scores[t.status] || 0), 0) / taskList.length);
+}
 
 /* ──── Discord webhook helper ──── */
 
@@ -491,18 +568,13 @@ function formatActivityMessage(entry, uMap) {
 async function renderProjects() {
   const content = document.getElementById('content');
   const s = getSession();
-  const allRaw = await DB.getProjects();
+  const { projects: allRaw, tasks: allTasks, users } = await getWorkspaceData();
   const all = filterProjectsByWorkspace(allRaw);
   const f = state.projectFilter;
   const list = f === 'all' ? all : all.filter(p => p.status === f);
-  const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
 
-  const pData = await Promise.all(list.map(async p => ({
-    ...p, progress: await DB.getProjectProgress(p.id),
-    taskCount: (await DB.getTasks({ projectId: p.id })).length,
-    doneCount: (await DB.getTasks({ projectId: p.id, status: 'done' })).length
-  })));
+  const pData = list.map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
 
   const cnt = { all: all.length, active: all.filter(p => p.status === 'active').length, completed: all.filter(p => p.status === 'completed').length, 'on-hold': all.filter(p => p.status === 'on-hold').length, archived: all.filter(p => p.status === 'archived').length };
   const fLabels = { all: 'All', active: 'Active', completed: 'Completed', 'on-hold': 'On Hold', archived: 'Archived' };
@@ -572,19 +644,22 @@ async function renderProjectDetail(projectId) {
   const s = getSession();
   const editable = canEdit(project);
   // Owner/admin sees everything; non-owners see only tasks assigned to them.
-  const allProjectTasks = await DB.getTasks({ projectId });
+  const [allProjectTasks, milestones, users, attList] = await Promise.all([
+    DB.getTasks({ projectId }),
+    DB.getMilestones(projectId),
+    getUsersCached(),
+    DB.getAttachments(projectId)
+  ]);
   const visibleTasks = editable ? allProjectTasks : allProjectTasks.filter(t => t.assigneeId === s.userId);
   const canSeeTasks = editable || visibleTasks.length > 0;
-  const progress = editable ? await DB.getProjectProgress(projectId) : null;
+  const progress = editable ? projectProgressFromTaskList(allProjectTasks) : null;
   const tasks = visibleTasks;
-  const milestones = await DB.getMilestones(projectId);
-  const users = await DB.getUsers();
   const owner = users.find(u => u.id === project.ownerId);
   let tab = state.projectTab;
   if (!canSeeTasks && tab === 'tasks') tab = 'milestones';
   state.projectTab = tab;
-  const attList = await DB.getAttachments(projectId);
   const attCount = attList.length;
+  state._detailCache = { projectId, allProjectTasks, milestones, users, attList };
 
   if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
   await renderDocumentPanel(projectId, editable);
@@ -712,9 +787,10 @@ async function renderTab(tab, projectId, editable) {
 
   if (tab === 'tasks') {
     const s = getSession();
-    const allTasks = await DB.getTasks({ projectId });
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
     const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
-    const users = await DB.getUsers();
+    const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button></div>` : ''}
@@ -749,7 +825,8 @@ async function renderTab(tab, projectId, editable) {
           </div>
         </div>`; }).join('')}</div>`}`;
   } else if (tab === 'milestones') {
-    const ms = await DB.getMilestones(projectId);
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const ms = cache?.milestones ?? await DB.getMilestones(projectId);
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-milestone" data-project-id="${projectId}">${ICONS.plus} Add Milestone</button></div>` : ''}
       ${ms.length === 0 ? emptyState({
@@ -781,8 +858,9 @@ async function renderTab(tab, projectId, editable) {
       state._libraryBlobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
     }
     state._libraryBlobUrls = [];
-    const items = await DB.getAttachments(projectId);
-    const users = await DB.getUsers();
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const items = cache?.attList ?? await DB.getAttachments(projectId);
+    const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     const cards = items.map(item => {
       const blob = item.blob;
@@ -849,12 +927,11 @@ async function renderTab(tab, projectId, editable) {
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
-  const allProjects = await DB.getProjects();
+  const { projects: allProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
   // Tasks are private per project owner. Non-admin members ALSO see tasks assigned to them.
   const myProjectIds = new Set(allProjects.filter(p => p.ownerId === s.userId).map(p => p.id));
-  const allUsers = await DB.getUsers();
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
-  let all = await DB.getTasks();
+  let all = allTasks;
   if (!isAdmin()) {
     all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
   }
@@ -913,12 +990,13 @@ async function renderTasks() {
 async function renderAdmin() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
-  const users = await DB.getUsers();
   const s = getSession();
-  const hasMk = await DB.hasMasterKey();
-  const generalHook = await DB.getGeneralWebhook();
-  const projects = await DB.getProjects();
-  const projectHooksAll = await DB.getWebhooks();
+  const [{ users, projects }, hasMk, generalHook, projectHooksAll] = await Promise.all([
+    getWorkspaceData(),
+    DB.hasMasterKey(),
+    DB.getGeneralWebhook(),
+    DB.getWebhooks()
+  ]);
   const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const masterKeySection = !hasMk ? `
     <section class="section-card" style="margin-bottom:24px">
@@ -1078,9 +1156,8 @@ async function renderChat() {
 async function renderAdminDashboard() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
-  const [users, projects, tasks, log] = await Promise.all([
-    DB.getUsers(), DB.getProjects(), DB.getTasks(), DB.getActivityLog({ limit: 30 })
-  ]);
+  const { users, projects, tasks } = await getWorkspaceData();
+  const log = await DB.getActivityLog({ limit: 30 });
   const now = Date.now();
   const sevenDays = 7 * 24 * 60 * 60 * 1000;
   const activeUsers = users.filter(u => u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays));
@@ -1556,6 +1633,7 @@ async function handleFormSubmit(e) {
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
       await DB.createUser({ username, displayName, email, password, role });
+      bustWorkspaceCache();
       showToast('User created', 'success');
     } else if (type === 'reset-pw') {
       const pw = fd.get('password'); const confirm = fd.get('confirm');
@@ -1611,6 +1689,7 @@ async function handleFormSubmit(e) {
       await DB.setMasterKey(mk);
       showToast('Master recovery key saved', 'success');
     }
+    bustWorkspaceCache();
     hideModal(); await router();
   } catch (err) {
     console.error(err);
@@ -1632,6 +1711,7 @@ const actions = {
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     if (!confirm('Delete this project and all its data?')) return;
     await DB.deleteProject(p.id, actorId()); showToast('Project deleted', 'success');
+    bustWorkspaceCache();
     window.location.hash = '#/projects';
   },
   'cycle-task-status': async (b) => {
@@ -1648,6 +1728,7 @@ const actions = {
       const discordMsg = `${actor?.displayName || 'Someone'} marked **${t.title}** as done in *${p.name}*.`;
       await notifyUser({ userId: p.ownerId, type: 'task_done', message: msg, projectId: p.id, entityType: 'task', entityId: t.id, actorUserId: uid, discordContent: discordMsg });
     }
+    bustWorkspaceCache();
     await router();
   },
   'assign-task': (b) => showAssignTaskModal(Number(b.dataset.id)),
@@ -1655,7 +1736,7 @@ const actions = {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteTask(t.id, actorId()); showToast('Task deleted', 'success'); await router();
+    await DB.deleteTask(t.id, actorId()); showToast('Task deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-milestone': async (b) => {
     const id = Number(b.dataset.id);
@@ -1663,20 +1744,20 @@ const actions = {
     if (!m) return;
     const p = await DB.getProject(m.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteMilestone(id, actorId()); showToast('Milestone deleted', 'success'); await router();
+    await DB.deleteMilestone(id, actorId()); showToast('Milestone deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'complete-milestone': async (b) => {
     const id = Number(b.dataset.id);
     const ms = await DB.getMilestone(id);
     const p = ms ? await DB.getProject(ms.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.updateMilestone(id, { status: 'completed' }, actorId()); showToast('Milestone completed', 'success'); await router();
+    await DB.updateMilestone(id, { status: 'completed' }, actorId()); showToast('Milestone completed', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-update': async (b) => {
     const row = await DB.getUpdate(Number(b.dataset.id));
     const p = row ? await DB.getProject(row.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteUpdate(Number(b.dataset.id), actorId()); showToast('Note deleted', 'success'); await router();
+    await DB.deleteUpdate(Number(b.dataset.id), actorId()); showToast('Note deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'toggle-doc-panel': async () => {
     state.docPanelOpen = !state.docPanelOpen;
@@ -1724,6 +1805,7 @@ const actions = {
     if (!confirm('Remove this file from the project?')) return;
     await DB.deleteAttachment(row.id, actorId());
     showToast('File removed', 'success');
+    bustWorkspaceCache();
     await router();
   },
   'add-user': () => showAddUserModal(),
@@ -1733,13 +1815,13 @@ const actions = {
     const uid = Number(b.dataset.id); const s = getSession();
     if (uid === s.userId) { showToast('Cannot delete yourself', 'error'); return; }
     if (!confirm('Delete this user? Their projects will be transferred to you.')) return;
-    await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); await router();
+    await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'reset-sample-data': async () => {
     if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
     await DB.importAll({ projects: [], tasks: [], milestones: [], updates: [] });
     await DB.createSampleData(getSession().userId);
-    showToast('Data reset', 'success'); await router();
+    showToast('Data reset', 'success'); bustWorkspaceCache(); await router();
   },
   'recovery-back-login': async () => { window.location.hash = ''; await applyRoute(); },
   'toggle-notif': () => { toggleNotifPanel(); },
@@ -1873,6 +1955,7 @@ function setupImport() {
       if (!data.projects || !data.tasks) { showToast('Invalid file', 'error'); return; }
       if (!confirm('Replace all current data?')) return;
       const result = await DB.importAll(data);
+      bustWorkspaceCache();
       let msg = `Imported ${data.projects?.length || 0} projects and ${data.tasks?.length || 0} tasks.`;
       if (result?.needsPasswordReset?.length) {
         msg += ` Set passwords in Admin for: ${result.needsPasswordReset.join(', ')}.`;
