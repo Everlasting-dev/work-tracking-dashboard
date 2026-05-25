@@ -346,7 +346,8 @@ const SupabaseDB = {
 
   async createTask(data) {
     const actorUserId = data.actorUserId;
-    const assigneeId = data.assigneeId != null ? Number(data.assigneeId) : (actorUserId ?? null);
+    const picked = data.assigneeId != null ? Number(data.assigneeId) : null;
+    const assigneeId = picked != null && picked > 0 ? picked : (actorUserId ?? null);
     const id = await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
       id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
@@ -570,6 +571,7 @@ const SupabaseDB = {
     return this._mapWebhook(data);
   },
   async saveGeneralWebhook({ url, channelUrl = '' }) {
+    url = String(url || '').trim();
     const existing = await this.getGeneralWebhook();
     if (existing) {
       const { error } = await this._sb().from('wt_webhooks').update({ url, channel_url: channelUrl, updated_at: new Date().toISOString() }).eq('id', existing.id);
@@ -581,6 +583,7 @@ const SupabaseDB = {
     return data?.id;
   },
   async saveProjectWebhook(projectId, { url, channelUrl = '', name = '' }) {
+    url = String(url || '').trim();
     const existing = await this.getProjectWebhook(projectId);
     if (existing) {
       const { error } = await this._sb().from('wt_webhooks').update({ url, channel_url: channelUrl, name: name || existing.name, updated_at: new Date().toISOString() }).eq('id', existing.id);

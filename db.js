@@ -375,7 +375,8 @@ const LocalDB = {
     const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
     const title = data.title || '';
-    const assigneeId = data.assigneeId != null ? Number(data.assigneeId) : (actorUserId ?? null);
+    const picked = data.assigneeId != null ? Number(data.assigneeId) : null;
+    const assigneeId = picked != null && picked > 0 ? picked : (actorUserId ?? null);
     const taskId = await db.tasks.add({
       projectId: data.projectId,
       milestoneId: data.milestoneId || null,

@@ -38,6 +38,8 @@ For assignment pings like `@jawad`:
 - Webhook URLs are **secrets** — anyone with the URL can post to that channel. Only admins can edit them in the app.
 - Messages are sent from the **browser** (GitHub Pages). Some networks block `fetch` to Discord; if sends fail, try another network or we can add a small server proxy later.
 - Discord does **not** push messages back into WorkTracker (no true two-way sync without a bot).
+- **Forum channels:** Discord returns `400` unless the payload includes a `thread_name`. The app retries automatically with thread name `WorkTracker`. For best results, create the webhook on a normal **text channel**, not a forum.
+- If test ping fails, the toast now shows Discord’s error message (e.g. invalid webhook, forum channel, revoked URL).
 
 ### Optional next steps (not implemented)
 

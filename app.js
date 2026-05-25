@@ -248,23 +248,79 @@ function projectProgressFromTaskList(taskList) {
 
 /* ──── Discord webhook helper ──── */
 
-async function postToDiscordWebhook(url, payload) {
-  if (!url) return { ok: false, reason: 'no-url' };
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal
-    });
-    clearTimeout(t);
-    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: err.name === 'AbortError' ? 'timeout' : 'network' };
+function trimWebhookUrl(url) {
+  return String(url || '').trim();
+}
+
+function discordWebhookUsername(session) {
+  const raw = session?.displayName || session?.username || 'WorkTracker';
+  const safe = raw.replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 64);
+  return safe ? `${safe} (WorkTracker)` : 'WorkTracker';
+}
+
+function buildDiscordWebhookBody({ content, username, threadName }) {
+  const text = String(content || 'Notification from WorkTracker').trim().slice(0, 2000) || ' ';
+  const body = { content: text };
+  if (username) {
+    const u = String(username).replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (u) body.username = u;
   }
+  if (threadName) body.thread_name = String(threadName).slice(0, 100);
+  if (/@|<@|&\d+/.test(text)) {
+    body.allowed_mentions = { parse: ['users', 'roles'] };
+  }
+  return body;
+}
+
+async function postToDiscordWebhook(url, payload) {
+  const cleanUrl = trimWebhookUrl(url);
+  if (!cleanUrl) return { ok: false, reason: 'no-url' };
+  const bodies = [
+    buildDiscordWebhookBody(payload),
+    buildDiscordWebhookBody({ ...payload, threadName: 'WorkTracker' })
+  ];
+  const seen = new Set();
+  const uniqueBodies = bodies.filter(b => {
+    const key = JSON.stringify(b);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  let last = { ok: false, reason: 'failed' };
+  for (const body of uniqueBodies) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal
+      });
+      clearTimeout(t);
+      if (res.ok) return { ok: true };
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 200); } catch (_) {}
+      last = { ok: false, reason: `http-${res.status}`, detail };
+      if (res.status !== 400) break;
+    } catch (err) {
+      last = { ok: false, reason: err.name === 'AbortError' ? 'timeout' : 'network' };
+      break;
+    }
+  }
+  return last;
+}
+
+function discordFailToast(result) {
+  if (result.detail) {
+    try {
+      const j = JSON.parse(result.detail);
+      if (j.message) return `Discord: ${j.message}`;
+    } catch (_) {}
+    return `Discord error (${result.reason}): ${result.detail}`;
+  }
+  return `Failed: ${result.reason}`;
 }
 
 async function fireDiscordEvent({ projectId = null, content, username = null }) {
@@ -274,9 +330,8 @@ async function fireDiscordEvent({ projectId = null, content, username = null }) 
   if (!hook?.url) return { ok: false, reason: 'no-hook' };
   const session = getSession();
   return postToDiscordWebhook(hook.url, {
-    username: username || (session?.displayName ? `${session.displayName} · WorkTracker` : 'WorkTracker'),
-    content,
-    allowed_mentions: { parse: ['users', 'roles'] }
+    username: username || discordWebhookUsername(session),
+    content
   });
 }
 
@@ -1385,7 +1440,8 @@ async function showTaskModal(preId = null) {
     : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`;
   const users = await DB.getUsers();
   const meId = actorId();
-  const assigneeOptions = users
+  const sorted = [...users].sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0));
+  const assigneeOptions = sorted
     .map(u => `<option value="${u.id}" ${u.id === meId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
     .join('');
   showModal('New Task', `
@@ -1588,8 +1644,8 @@ async function handleFormSubmit(e) {
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
-      const assigneeRaw = fd.get('assigneeId');
-      const assigneeId = assigneeRaw ? Number(assigneeRaw) : uid;
+      const picked = Number(fd.get('assigneeId'));
+      const assigneeId = Number.isFinite(picked) && picked > 0 ? picked : uid;
       const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
       if (!data.title || !data.projectId) return;
       const newId = await DB.createTask(data);
@@ -1627,9 +1683,11 @@ async function handleFormSubmit(e) {
       if (!url) {
         const existing = await DB.getGeneralWebhook();
         if (existing) await DB.deleteWebhook(existing.id);
+        _webhooksCache = null;
         showToast('General webhook cleared', 'info');
       } else {
-        await DB.saveGeneralWebhook({ url, channelUrl });
+        await DB.saveGeneralWebhook({ url: trimWebhookUrl(url), channelUrl });
+        _webhooksCache = null;
         showToast('General webhook saved', 'success');
       }
     } else if (type === 'webhook-project') {
@@ -1643,9 +1701,11 @@ async function handleFormSubmit(e) {
       if (!url) {
         const existing = await DB.getProjectWebhook(pid);
         if (existing) await DB.deleteWebhook(existing.id);
+        _webhooksCache = null;
         showToast('Project webhook cleared', 'info');
       } else {
-        await DB.saveProjectWebhook(pid, { url, channelUrl, name: project.name });
+        await DB.saveProjectWebhook(pid, { url: trimWebhookUrl(url), channelUrl, name: project.name });
+        _webhooksCache = null;
         showToast(`Webhook saved for ${project.name}`, 'success');
       }
     } else if (type === 'chat-send') {
@@ -1663,7 +1723,7 @@ async function handleFormSubmit(e) {
         allowed_mentions: { parse: ['users', 'roles'] }
       });
       if (!result.ok) {
-        showToast(`Send failed: ${result.reason}`, 'error');
+        showToast(discordFailToast(result), 'error');
         return;
       }
       await DB.logActivity({ userId: uid, projectId: hook.projectId || null, action: 'sent_message', entityType: 'chat', details: content.slice(0, 120) });
@@ -1908,11 +1968,11 @@ const actions = {
     else if (scope === 'project' && pid) hook = await DB.getProjectWebhook(pid);
     if (!hook?.url) { showToast('No webhook to test', 'warning'); return; }
     const session = getSession();
+    const who = session?.displayName || session?.username || 'WorkTracker';
     const result = await postToDiscordWebhook(hook.url, {
-      username: 'WorkTracker',
-      content: `:white_check_mark: Test ping from **${session?.displayName || 'WorkTracker'}**. If you see this, the webhook is wired up.`
+      content: `Test ping from ${who} — WorkTracker is connected.`
     });
-    showToast(result.ok ? 'Test message sent' : `Failed: ${result.reason}`, result.ok ? 'success' : 'error');
+    showToast(result.ok ? 'Test message sent' : discordFailToast(result), result.ok ? 'success' : 'error');
   },
   'delete-webhook': async (b) => {
     if (!isAdmin()) return;
