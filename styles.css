@@ -736,3 +736,96 @@ span.status-dot:hover { transform: none; }
 @media (max-width: 480px) {
   .stats-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Admin badge & avatar crown ── */
+.user-avatar { position: relative; }
+.user-avatar-admin {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.25);
+}
+.admin-crown-badge {
+  position: absolute; top: -5px; right: -5px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fbbf24; color: #1f2937;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid #1e1e24;
+}
+.admin-crown-badge svg { width: 10px; height: 10px; }
+
+.admin-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  background: linear-gradient(135deg, rgba(245,158,11,0.18), rgba(239,68,68,0.18));
+  color: #fbbf24;
+  border: 1px solid rgba(245,158,11,0.45);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.admin-tag svg { width: 10px; height: 10px; }
+
+.admin-crown { color: #fbbf24; vertical-align: -2px; margin-left: 2px; }
+.admin-crown svg { width: 12px; height: 12px; }
+
+/* ── Workspace / privacy hint ── */
+.workspace-hint {
+  background: rgba(99,102,241,0.08);
+  border: 1px solid rgba(99,102,241,0.18);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+/* ── Onboarding (how-to) modal ── */
+.modal-howto { max-width: 560px; }
+.modal-howto .modal-header h2 {
+  display: flex; align-items: center; gap: 8px;
+  background: linear-gradient(135deg, #6366f1, #ec4899);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.modal-howto .modal-header h2 svg { color: #8b5cf6; -webkit-text-fill-color: currentColor; }
+
+.howto-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.howto-list li {
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(99,102,241,0.04);
+  border: 1px solid var(--border);
+  transition: transform .2s ease, border-color .2s ease;
+}
+.howto-list li:hover {
+  transform: translateX(2px);
+  border-color: rgba(99,102,241,0.35);
+}
+.howto-list li strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.howto-list li p {
+  margin: 0;
+  line-height: 1.5;
+}
+.howto-step-icon {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(99,102,241,0.18), rgba(236,72,153,0.18));
+  color: #818cf8;
+  display: flex; align-items: center; justify-content: center;
+}
+.howto-step-icon svg { width: 18px; height: 18px; }

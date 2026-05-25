@@ -15,7 +15,7 @@ A lightweight project and task tracker for individuals and small teams. Track pr
 - **Milestones** — weighted milestones per project
 - **Documents** — upload PDFs, images, and files; preview in-browser; right-side document panel
 - **Activity log** — automatic audit trail (visible to you and admins)
-- **Multi-user** — admin-managed accounts with roles (Admin / Member)
+- **Multi-user** — admin-managed accounts with roles (Admin / Member); **self-signup is disabled** by design
 - **Import / Export** — JSON backup (admin only, from user menu)
 - **Two storage modes:**
   - **Local** — IndexedDB in the browser (default, no server)
@@ -35,8 +35,9 @@ A lightweight project and task tracker for individuals and small teams. Track pr
    npx serve .
    ```
 3. Open the URL shown (e.g. `http://localhost:3000`).
-4. On first visit, create the **administrator account** and a **master recovery key**.
-5. Sign in and start creating projects.
+4. The landing page is always the **sign-in screen**. Self-signup is disabled — only an admin can create accounts.
+5. **First-time bootstrap (owner only):** navigate to `http://localhost:3000/#/setup` to create the initial administrator account and a master recovery key. After the admin exists, this route is locked and `#/setup` shows the login screen.
+6. Sign in. From the **Admin** panel, add additional users (Members or Admins).
 
 No `npm install` is required for local mode — dependencies load from CDN.
 

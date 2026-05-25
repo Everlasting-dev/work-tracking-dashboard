@@ -20,6 +20,9 @@ const ICONS = {
   upload: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>',
   download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>',
   logOut: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>',
+  crown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.5 19h19l-1.5-9-4.5 4-3-7-3 7-4.5-4z"/></svg>',
+  userCog: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><circle cx="18" cy="15" r="3"/><path d="m21.7 16.4-.9-.3M15.2 13.9l-.9-.3M16.6 18.7l.3-.9M13.9 12.2l.3-.9M19.7 18.3l-.4 1M15.3 12.6l-.4 1M20.6 13.8l-.9.3M14.1 16.3l-.9.3"/></svg>',
+  sparkles: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>',
 };
 
 /* ──── Utilities ──── */
@@ -220,11 +223,7 @@ async function handleAuth(e) {
     const password = fd.get('password');
     if (!username || !password) return;
     const user = await DB.getUserByUsername(username);
-    if (!user) {
-      const hasUsers = await DB.hasUsers();
-      showAuthError(hasUsers ? 'Invalid username or password' : 'No account is available yet. If you are the owner, open #/setup to create the administrator account.');
-      return;
-    }
+    if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
     setSession(user);
@@ -289,16 +288,20 @@ async function showApp() {
   if (await DB.isEmpty()) await DB.createSampleData(s.userId);
   await router();
   wtAppBootstrapped = true;
+  // First-time how-to guide (per user, persisted in localStorage)
+  setTimeout(() => showOnboardingModal(false), 350);
 }
 
 function updateSidebarUser() {
   const s = getSession(); if (!s) return;
-  const init = (s.displayName || s.username).charAt(0).toUpperCase();
+  const display = s.displayName || s.username;
+  const init = display.charAt(0).toUpperCase();
+  const isAdm = s.role === 'admin';
   const el = document.getElementById('sidebar-user');
   el.innerHTML = `
-    <div class="user-avatar">${init}</div>
+    <div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}">${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>
     <div class="user-details">
-      <span class="user-name">${esc(s.displayName || s.username)}</span>
+      <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
       <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
@@ -322,6 +325,8 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="user-export">${ICONS.download} Export Data</button>
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
   menu.innerHTML = `
+    <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
+    <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
     ${adminItems}
     <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
 }
@@ -425,17 +430,24 @@ async function renderProjectDetail(projectId) {
 
   const s = getSession();
   const editable = canEdit(project);
-  const progress = await DB.getProjectProgress(projectId);
-  const tasks = await DB.getTasks({ projectId });
+  const canSeeTasks = editable; // Tasks are private: only owner/admin can see them
+  const progress = canSeeTasks ? await DB.getProjectProgress(projectId) : null;
+  const tasks = canSeeTasks ? await DB.getTasks({ projectId }) : [];
   const milestones = await DB.getMilestones(projectId);
   const users = await DB.getUsers();
   const owner = users.find(u => u.id === project.ownerId);
-  const tab = state.projectTab;
+  let tab = state.projectTab;
+  if (!canSeeTasks && tab === 'tasks') tab = 'milestones';
+  state.projectTab = tab;
   const attList = await DB.getAttachments(projectId);
   const attCount = attList.length;
 
   if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
   await renderDocumentPanel(projectId, editable);
+
+  const progressLine = canSeeTasks
+    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>`
+    : `<p class="text-muted text-sm" style="margin-top:14px">${ICONS.target} Task details are visible only to the project owner.</p>`;
 
   content.innerHTML = `
     <div class="view-header">
@@ -454,11 +466,11 @@ async function renderProjectDetail(projectId) {
       <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${prioBadge(project.priority)}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
-      <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}</p>
-      <div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>
+      <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
+      ${progressLine}
     </div>
     <div class="tab-bar">
-      <button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>
+      ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
       <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
       <button class="tab-btn ${tab === 'library' ? 'active' : ''}" data-action="switch-tab" data-tab="library" data-project-id="${projectId}">Library (${attCount})</button>
       <button class="tab-btn ${tab === 'updates' ? 'active' : ''}" data-action="switch-tab" data-tab="updates" data-project-id="${projectId}">Activity</button>
@@ -661,23 +673,28 @@ async function renderTab(tab, projectId, editable) {
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
-  const projectsVisible = filterProjectsByWorkspace(await DB.getProjects());
-  const pids = new Set(projectsVisible.map(p => p.id));
+  const allProjects = await DB.getProjects();
+  // Tasks are private per project: only the owner (or admin) can see them.
+  const myProjects = isAdmin() ? allProjects : allProjects.filter(p => p.ownerId === s.userId);
+  const pids = new Set(myProjects.map(p => p.id));
   let all = await DB.getTasks();
   all = all.filter(t => pids.has(t.projectId));
   const f = state.taskFilter;
   const tasks = f === 'all' ? all : all.filter(t => t.status === f);
-  const projects = await DB.getProjects();
-  const pMap = Object.fromEntries(projects.map(p => [p.id, p]));
+  const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
   const fLabels = { all: 'All', todo: 'To Do', doing: 'In Progress', done: 'Done' };
 
+  const privacyHint = !isAdmin()
+    ? `<p class="text-muted text-sm workspace-hint">Tasks are private to each project owner. You see only your own tasks here.</p>`
+    : '';
+
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} tasks in this workspace</p></div>
+      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} ${isAdmin() ? 'tasks in this workspace' : 'of your tasks'}</p></div>
       <div class="view-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
     </div>
-    ${workspaceScopeBarHtml()}
+    ${privacyHint}
     <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
       <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-tasks" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
     </div>
@@ -842,6 +859,74 @@ function showResetPwModal(uid) {
     </form>`);
 }
 
+async function showProfileModal() {
+  const s = getSession(); if (!s) return;
+  const user = await DB.getUser(s.userId);
+  if (!user) { showToast('Could not load profile', 'error'); return; }
+  const isAdm = s.role === 'admin';
+  showModal('Edit Profile', `
+    <form data-form="edit-profile">
+      <p class="text-muted text-sm" style="margin-bottom:12px">This is how your name appears across WorkTracker. Your username (<strong>@${esc(user.username)}</strong>) stays the same.</p>
+      <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
+      <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
+      ${isAdm ? `<p class="text-muted text-sm" style="margin:6px 0 12px"><span class="admin-tag">${ICONS.crown} Admin</span> badge is shown automatically.</p>` : ''}
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+    </form>`);
+}
+
+function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
+
+function showOnboardingModal(force = false) {
+  const s = getSession(); if (!s) return;
+  if (!force && localStorage.getItem(howtoSeenKey(s.userId))) return;
+  const isAdm = s.role === 'admin';
+  const ov = document.getElementById('modal-overlay');
+  ov.innerHTML = `
+    <div class="modal modal-howto">
+      <div class="modal-header">
+        <h2>${ICONS.sparkles} Welcome to WorkTracker${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
+        <button class="btn-icon" data-action="close-howto">${ICONS.x}</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary" style="margin-bottom:14px">Here's a 30-second tour to get you started.</p>
+        <ol class="howto-list">
+          <li>
+            <span class="howto-step-icon">${ICONS.folder}</span>
+            <div>
+              <strong>Create a project</strong>
+              <p class="text-muted text-sm">Go to <strong>Projects</strong> in the sidebar and click <em>New Project</em>. Add a name, description, type, and priority.</p>
+            </div>
+          </li>
+          <li>
+            <span class="howto-step-icon">${ICONS.checkCircle}</span>
+            <div>
+              <strong>Add tasks</strong>
+              <p class="text-muted text-sm">Open a project and click <em>Add Task</em>. The project is auto-selected. You can also click <em>New Task</em> from the Projects or Tasks pages and pick the project from a dropdown.</p>
+            </div>
+          </li>
+          <li>
+            <span class="howto-step-icon">${ICONS.user}</span>
+            <div>
+              <strong>See your teammates' work</strong>
+              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' — except for admins, who can see everything' : ''}.</p>
+            </div>
+          </li>
+          <li>
+            <span class="howto-step-icon">${ICONS.file}</span>
+            <div>
+              <strong>Upload files & track progress</strong>
+              <p class="text-muted text-sm">Inside a project, use the <em>Library</em> tab or right-side <em>Documents</em> panel to attach PDFs/images. The <em>Activity</em> tab keeps an audit log of every change.</p>
+            </div>
+          </li>
+        </ol>
+        <p class="text-muted text-sm" style="margin-top:14px">You can reopen this any time from your profile menu (bottom-left → <em>Show How-to</em>).</p>
+        <div class="form-actions"><button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it — let's go</button></div>
+      </div>
+    </div>`;
+  ov.classList.remove('hidden');
+  localStorage.setItem(howtoSeenKey(s.userId), String(Date.now()));
+}
+
 
 async function handleFormSubmit(e) {
   e.preventDefault();
@@ -893,6 +978,16 @@ async function handleFormSubmit(e) {
       if (pw !== confirm) { showToast('Passwords do not match', 'error'); return; }
       await DB.changePassword(Number(form.dataset.userId), pw, actorId());
       showToast('Password reset', 'success');
+    } else if (type === 'edit-profile') {
+      const s = getSession(); if (!s) return;
+      const displayName = fd.get('displayName')?.trim();
+      const email = fd.get('email')?.trim() || '';
+      if (!displayName) { showToast('Display name is required', 'warning'); return; }
+      await DB.updateUser(s.userId, { displayName, email }, s.userId);
+      const updated = await DB.getUser(s.userId);
+      if (updated) setSession(updated);
+      updateSidebarUser();
+      showToast('Profile updated', 'success');
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
       const mk = fd.get('masterKey')?.trim();
@@ -963,6 +1058,9 @@ const actions = {
   'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
+  'user-edit-profile': async () => { closeUserMenu(); await showProfileModal(); },
+  'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
+  'close-howto': () => hideModal(),
   'user-logout': async () => {
     closeUserMenu();
     const s = getSession();
