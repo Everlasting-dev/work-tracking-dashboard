@@ -114,6 +114,7 @@ function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ u
 function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
+function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
@@ -786,9 +787,9 @@ async function renderProjectDetail(projectId) {
       </div>
       <div class="view-actions">
         <button type="button" class="btn btn-ghost ${state.docPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" title="Documents panel">${ICONS.file} Files (${attCount})</button>
-        ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>
-        <button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` :
-        badge('View Only', 'muted')}
+        ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
+        ${canDeleteProject() ? `<button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` : ''}
+        ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
       </div>
     </div>
     <div class="project-hero">
@@ -1822,8 +1823,9 @@ const actions = {
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
   'edit-project': (b) => showProjectModal(Number(b.dataset.id)),
   'delete-project': async (b) => {
+    if (!canDeleteProject()) { showToast('Only admins can delete projects', 'error'); return; }
     const p = await DB.getProject(Number(b.dataset.id));
-    if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
+    if (!p) { showToast('Project not found', 'error'); return; }
     if (!confirm('Delete this project and all its data?')) return;
     await DB.deleteProject(p.id, actorId()); showToast('Project deleted', 'success');
     bustWorkspaceCache();
