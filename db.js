@@ -67,7 +67,7 @@ function generateSalt() {
 
 /* ── Database helpers (Supabase-ready: swap Dexie calls for supabase.from() later) ── */
 
-const DB = {
+const LocalDB = {
   /* Activity audit log */
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
     if (!userId || !action) return;
@@ -122,7 +122,7 @@ const DB = {
     const salt = generateSalt();
     const pwHash = await hashPassword(newPassword, salt);
     await db.users.update(userId, { passwordHash: pwHash, salt });
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: null, action: 'password_changed', entityType: 'user', entityId: userId, details: '' });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'password_changed', entityType: 'user', entityId: userId, details: '' });
   },
 
   async verifyPassword(password, user) {
@@ -171,7 +171,7 @@ const DB = {
       createdAt: now,
       updatedAt: now
     });
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: id, action: 'created', entityType: 'project', entityId: id, details: name });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: id, action: 'created', entityType: 'project', entityId: id, details: name });
     return id;
   },
 
@@ -189,7 +189,7 @@ const DB = {
     await db.projects.update(id, patch);
     if (actorUserId) {
       const p = await db.projects.get(id);
-      await DB.logActivity({ userId: actorUserId, projectId: id, action: 'updated', entityType: 'project', entityId: id, details: p?.name || '' });
+      await LocalDB.logActivity({ userId: actorUserId, projectId: id, action: 'updated', entityType: 'project', entityId: id, details: p?.name || '' });
     }
     return id;
   },
@@ -202,7 +202,7 @@ const DB = {
     await db.attachments.where('projectId').equals(id).delete();
     await db.activityLog.where('projectId').equals(id).delete();
     await db.projects.delete(id);
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: null, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
 
   /* Attachments (files stored in IndexedDB) */
@@ -218,7 +218,7 @@ const DB = {
       createdAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
-    if (data.uploadedBy) await DB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: id, details: fileName });
+    if (data.uploadedBy) await LocalDB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: id, details: fileName });
     return id;
   },
 
@@ -234,7 +234,7 @@ const DB = {
     await db.attachments.delete(id);
     if (row) {
       await db.projects.update(row.projectId, { updatedAt: new Date().toISOString() });
-      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
+      if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
     }
   },
 
@@ -274,7 +274,7 @@ const DB = {
       updatedAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: taskId, details: title });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: taskId, details: title });
     return taskId;
   },
 
@@ -297,7 +297,7 @@ const DB = {
       await db.projects.update(task.projectId, { updatedAt: patch.updatedAt });
       if (actorUserId) {
         const detail = patch.status ? `status → ${patch.status}` : (task.title || '');
-        await DB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
+        await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
   },
@@ -307,7 +307,7 @@ const DB = {
     await db.tasks.delete(id);
     if (task) {
       await db.projects.update(task.projectId, { updatedAt: new Date().toISOString() });
-      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title || '' });
+      if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title || '' });
     }
   },
 
@@ -325,13 +325,17 @@ const DB = {
       createdAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'milestone', entityId: id, details: title });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'milestone', entityId: id, details: title });
     return id;
   },
 
   async getMilestones(projectId) {
     return db.milestones.where('projectId').equals(projectId).toArray();
   },
+
+  async getMilestone(id) { return db.milestones.get(id); },
+
+  async getUpdate(id) { return db.updates.get(id); },
 
   async updateMilestone(id, changes, actorUserId = null) {
     const patch = { ...changes };
@@ -340,7 +344,7 @@ const DB = {
     await db.milestones.update(id, patch);
     if (ms) {
       await db.projects.update(ms.projectId, { updatedAt: new Date().toISOString() });
-      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'updated', entityType: 'milestone', entityId: id, details: ms.title || '' });
+      if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'updated', entityType: 'milestone', entityId: id, details: ms.title || '' });
     }
     return id;
   },
@@ -350,7 +354,7 @@ const DB = {
     if (ms) {
       await db.tasks.where('milestoneId').equals(id).modify({ milestoneId: null });
       await db.projects.update(ms.projectId, { updatedAt: new Date().toISOString() });
-      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'deleted', entityType: 'milestone', entityId: id, details: ms.title || '' });
+      if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'deleted', entityType: 'milestone', entityId: id, details: ms.title || '' });
     }
     return db.milestones.delete(id);
   },
@@ -362,7 +366,7 @@ const DB = {
     const content = data.content || '';
     await db.projects.update(data.projectId, { updatedAt: now });
     const id = await db.updates.add({ projectId: data.projectId, userId: actorUserId || null, content, createdAt: now });
-    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'noted', entityType: 'update', entityId: id, details: content.slice(0, 120) });
+    if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'noted', entityType: 'update', entityId: id, details: content.slice(0, 120) });
     return id;
   },
 
@@ -374,7 +378,7 @@ const DB = {
   async deleteUpdate(id, actorUserId = null) {
     const row = await db.updates.get(id);
     await db.updates.delete(id);
-    if (row && actorUserId) await DB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'update', entityId: id, details: '' });
+    if (row && actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'update', entityId: id, details: '' });
   },
 
   /* Stats & Progress */
@@ -415,9 +419,9 @@ const DB = {
       const existing = await db.projects.count();
       if (existing > 0) return false;
       for (const op of oldData) {
-        const pid = await DB.createProject({ name: op.name, notes: op.notes || '', ownerId: adminId });
+        const pid = await LocalDB.createProject({ name: op.name, notes: op.notes || '', ownerId: adminId });
         for (const ot of (op.tasks || [])) {
-          await DB.createTask({ projectId: pid, title: ot.title, dueDate: ot.dueDate || '', status: ot.status || 'todo' });
+          await LocalDB.createTask({ projectId: pid, title: ot.title, dueDate: ot.dueDate || '', status: ot.status || 'todo' });
         }
       }
       localStorage.setItem('simple-work-tracker-data-migrated', 'true');
@@ -436,7 +440,7 @@ const DB = {
     const attachments = [];
     for (const a of attRows) {
       if (!a.blob) continue;
-      const dataBase64 = await DB.blobToBase64(a.blob);
+      const dataBase64 = await LocalDB.blobToBase64(a.blob);
       attachments.push({
         id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName, mimeType: a.mimeType, createdAt: a.createdAt, dataBase64
       });
@@ -460,7 +464,7 @@ const DB = {
       if (data.attachments?.length) {
         for (const a of data.attachments) {
           if (!a.dataBase64) continue;
-          const blob = DB.base64ToBlob(a.dataBase64, a.mimeType);
+          const blob = LocalDB.base64ToBlob(a.dataBase64, a.mimeType);
           await db.attachments.add({
             projectId: a.projectId,
             uploadedBy: a.uploadedBy,
@@ -477,26 +481,29 @@ const DB = {
 
   /* Sample Data */
   async createSampleData(ownerId) {
-    const jobId = await DB.createProject({ name: 'Job Search', notes: 'Track applications, resume updates, and follow-ups.', type: 'job-search', priority: 'high', ownerId });
-    await DB.createTask({ projectId: jobId, title: 'Update resume with latest experience', status: 'doing', priority: 'high' });
-    await DB.createTask({ projectId: jobId, title: 'Apply to 5 frontend developer roles', status: 'todo', priority: 'high', dueDate: '2026-05-20' });
-    await DB.createTask({ projectId: jobId, title: 'Send recruiter follow-up emails', status: 'done', priority: 'medium' });
-    await DB.createTask({ projectId: jobId, title: 'Prepare portfolio website', status: 'todo', priority: 'medium', dueDate: '2026-05-25' });
-    await DB.createMilestone({ projectId: jobId, title: 'Resume & portfolio ready', dueDate: '2026-05-18', weight: 3 });
-    await DB.createMilestone({ projectId: jobId, title: '10 applications sent', dueDate: '2026-06-01', weight: 5 });
-    await DB.createUpdate({ projectId: jobId, content: 'Started updating resume. Need to add the latest project work and skills section.' });
+    const jobId = await LocalDB.createProject({ name: 'Job Search', notes: 'Track applications, resume updates, and follow-ups.', type: 'job-search', priority: 'high', ownerId });
+    await LocalDB.createTask({ projectId: jobId, title: 'Update resume with latest experience', status: 'doing', priority: 'high' });
+    await LocalDB.createTask({ projectId: jobId, title: 'Apply to 5 frontend developer roles', status: 'todo', priority: 'high', dueDate: '2026-05-20' });
+    await LocalDB.createTask({ projectId: jobId, title: 'Send recruiter follow-up emails', status: 'done', priority: 'medium' });
+    await LocalDB.createTask({ projectId: jobId, title: 'Prepare portfolio website', status: 'todo', priority: 'medium', dueDate: '2026-05-25' });
+    await LocalDB.createMilestone({ projectId: jobId, title: 'Resume & portfolio ready', dueDate: '2026-05-18', weight: 3 });
+    await LocalDB.createMilestone({ projectId: jobId, title: '10 applications sent', dueDate: '2026-06-01', weight: 5 });
+    await LocalDB.createUpdate({ projectId: jobId, content: 'Started updating resume. Need to add the latest project work and skills section.' });
 
-    const resId = await DB.createProject({ name: 'ML Research Paper', notes: 'Investigating recommendation system approaches for the conference paper.', type: 'research', priority: 'medium', ownerId });
-    await DB.createTask({ projectId: resId, title: 'Complete literature review on collaborative filtering', status: 'done' });
-    await DB.createTask({ projectId: resId, title: 'Write introduction chapter', status: 'doing', dueDate: '2026-05-22', priority: 'high' });
-    await DB.createTask({ projectId: resId, title: 'Run baseline experiments', status: 'todo', priority: 'high', dueDate: '2026-05-30' });
-    await DB.createMilestone({ projectId: resId, title: 'Literature review complete', weight: 2 });
-    await DB.createUpdate({ projectId: resId, content: 'Finished initial literature review. Found 3 promising approaches to compare.' });
+    const resId = await LocalDB.createProject({ name: 'ML Research Paper', notes: 'Investigating recommendation system approaches for the conference paper.', type: 'research', priority: 'medium', ownerId });
+    await LocalDB.createTask({ projectId: resId, title: 'Complete literature review on collaborative filtering', status: 'done' });
+    await LocalDB.createTask({ projectId: resId, title: 'Write introduction chapter', status: 'doing', dueDate: '2026-05-22', priority: 'high' });
+    await LocalDB.createTask({ projectId: resId, title: 'Run baseline experiments', status: 'todo', priority: 'high', dueDate: '2026-05-30' });
+    await LocalDB.createMilestone({ projectId: resId, title: 'Literature review complete', weight: 2 });
+    await LocalDB.createUpdate({ projectId: resId, content: 'Finished initial literature review. Found 3 promising approaches to compare.' });
 
-    const sideId = await DB.createProject({ name: 'Side Project \u2013 Budget App', notes: 'Personal finance tracking tool with charts and categories.', type: 'project', priority: 'low', ownerId });
-    await DB.createTask({ projectId: sideId, title: 'Design database schema', status: 'done' });
-    await DB.createTask({ projectId: sideId, title: 'Build UI prototype', status: 'doing' });
-    await DB.createTask({ projectId: sideId, title: 'Add authentication', status: 'todo' });
-    await DB.createUpdate({ projectId: sideId, content: 'Decided on the tech stack. Going with a simple frontend approach first.' });
+    const sideId = await LocalDB.createProject({ name: 'Side Project \u2013 Budget App', notes: 'Personal finance tracking tool with charts and categories.', type: 'project', priority: 'low', ownerId });
+    await LocalDB.createTask({ projectId: sideId, title: 'Design database schema', status: 'done' });
+    await LocalDB.createTask({ projectId: sideId, title: 'Build UI prototype', status: 'doing' });
+    await LocalDB.createTask({ projectId: sideId, title: 'Add authentication', status: 'todo' });
+    await LocalDB.createUpdate({ projectId: sideId, content: 'Decided on the tech stack. Going with a simple frontend approach first.' });
   }
 };
+
+window.LocalDB = LocalDB;
+window.WT_CRYPTO = { hashPassword, generateSalt };

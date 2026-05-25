@@ -295,7 +295,7 @@ function updateSidebarUser() {
     <div class="user-avatar">${init}</div>
     <div class="user-details">
       <span class="user-name">${esc(s.displayName || s.username)}</span>
-      <span class="user-role">@${esc(s.username)}</span>
+      <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
@@ -933,7 +933,7 @@ const actions = {
   },
   'delete-milestone': async (b) => {
     const id = Number(b.dataset.id);
-    const m = await db.milestones.get(id);
+    const m = await DB.getMilestone(id);
     if (!m) return;
     const p = await DB.getProject(m.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
@@ -941,13 +941,13 @@ const actions = {
   },
   'complete-milestone': async (b) => {
     const id = Number(b.dataset.id);
-    const ms = await db.milestones.get(id);
+    const ms = await DB.getMilestone(id);
     const p = ms ? await DB.getProject(ms.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.updateMilestone(id, { status: 'completed' }, actorId()); showToast('Milestone completed', 'success'); await router();
   },
   'delete-update': async (b) => {
-    const row = await db.updates.get(Number(b.dataset.id));
+    const row = await DB.getUpdate(Number(b.dataset.id));
     const p = row ? await DB.getProject(row.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.deleteUpdate(Number(b.dataset.id), actorId()); showToast('Note deleted', 'success'); await router();
@@ -1216,4 +1216,4 @@ async function init() {
   }
 }
 
-init();
+bootstrapDB().then(() => init());
