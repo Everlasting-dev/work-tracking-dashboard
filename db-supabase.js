@@ -9,13 +9,23 @@ const SupabaseDB = {
     this._client = window.supabase.createClient(url, anonKey);
     const required = ['wt_users', 'wt_projects', 'wt_tasks', 'wt_settings'];
     for (const table of required) {
-      const { error } = await this._client.from(table).select('id').limit(1);
+      const { error } = await this._client.from(table).select('*', { count: 'exact', head: true });
       if (error) {
+        const code = error.code || '';
         const msg = (error.message || '').toLowerCase();
-        if (msg.includes('does not exist') || msg.includes('404') || msg.includes('schema cache')) {
-          throw new Error(`Supabase table "${table}" is missing. Open Supabase → SQL Editor → run the full script in supabase/schema.sql, then reload the app.`);
+        const details = (error.details || '').toLowerCase();
+        const missing =
+          code === 'PGRST205' ||
+          msg.includes('does not exist') ||
+          msg.includes('schema cache') ||
+          msg.includes('could not find') ||
+          details.includes('does not exist');
+        if (missing) {
+          throw new Error(
+            `Supabase table "${table}" is missing. Open Supabase → SQL Editor → run supabase/schema.sql, then hard-reload the app.`
+          );
         }
-        if (!msg.includes('0 rows')) throw error;
+        throw error;
       }
     }
   },

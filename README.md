@@ -75,7 +75,7 @@ In Supabase → **Project Settings** → **API**:
 - **Project URL** → `supabaseUrl`
 - **Publishable** or **anon public** key → `supabaseAnonKey` (either format works)
 
-**Troubleshooting:** If only `wt_users` exists in Table Editor but `wt_projects` / `wt_tasks` are missing, re-run the **entire** [`supabase/schema.sql`](supabase/schema.sql) script (it is safe to run again). The app needs all `wt_*` tables before team members can sign in on other devices.
+**Troubleshooting:** If only `wt_users` exists in Table Editor but `wt_projects` / `wt_tasks` are missing, re-run the **entire** [`supabase/schema.sql`](supabase/schema.sql) script (it is safe to run again). The app needs all `wt_*` tables before team members can sign in on other devices. If tables exist but the app still shows “browser-only storage”, hard-reload after deploying the latest `db-supabase.js` (an older build probed `wt_settings` with a non-existent `id` column and falsely failed the cloud check).
 
 #### C. Add GitHub secrets
 
