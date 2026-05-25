@@ -220,7 +220,11 @@ async function handleAuth(e) {
     const password = fd.get('password');
     if (!username || !password) return;
     const user = await DB.getUserByUsername(username);
-    if (!user) { showAuthError('Invalid username or password'); return; }
+    if (!user) {
+      const hasUsers = await DB.hasUsers();
+      showAuthError(hasUsers ? 'Invalid username or password' : 'No account is available yet. If you are the owner, open #/setup to create the administrator account.');
+      return;
+    }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
     setSession(user);
@@ -1109,7 +1113,8 @@ async function applyRoute() {
     document.getElementById('app').style.display = 'none';
     document.getElementById('menu-toggle').style.display = 'none';
     document.getElementById('auth-screen').style.display = 'flex';
-    renderAdminSetup();
+    if (hash === '/setup') renderAdminSetup();
+    else renderLogin();
     return;
   }
 

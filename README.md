@@ -110,6 +110,8 @@ window.WT_CONFIG = {
 };
 ```
 
+When no users exist yet, the public landing page shows only the sign-in screen. To create the first administrator account, open `#/setup` directly.
+
 ---
 
 ## Project structure
