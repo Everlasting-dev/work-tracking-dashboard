@@ -1859,8 +1859,15 @@ function setupImport() {
       const data = JSON.parse(await file.text());
       if (!data.projects || !data.tasks) { showToast('Invalid file', 'error'); return; }
       if (!confirm('Replace all current data?')) return;
-      await DB.importAll(data);
-      showToast('Data imported into cloud database', 'success');
+      const result = await DB.importAll(data);
+      let msg = `Imported ${data.projects?.length || 0} projects and ${data.tasks?.length || 0} tasks.`;
+      if (result?.needsPasswordReset?.length) {
+        msg += ` Set passwords in Admin for: ${result.needsPasswordReset.join(', ')}.`;
+      }
+      if (result?.attachmentsSkipped > 0) {
+        msg += ` ${result.attachmentsSkipped} file(s) had no file data in the backup.`;
+      }
+      showToast(msg, 'success');
       await router();
     } catch (err) {
       console.error(err);

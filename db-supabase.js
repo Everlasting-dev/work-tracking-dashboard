@@ -609,7 +609,8 @@ const SupabaseDB = {
     if (sErr) throw sErr;
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt
+      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '',
+      passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = (settingsRows || []).map(s => ({
       key: s.key, passwordHash: s.password_hash, salt: s.salt
@@ -632,8 +633,62 @@ const SupabaseDB = {
     };
   },
 
+  async _importUsersFromBackup(users = []) {
+    const sb = this._sb();
+    const userIdMap = new Map();
+    const needsPasswordReset = [];
+    const existing = await this.getUsers();
+    const byUsername = new Map(existing.map(u => [u.username.toLowerCase(), u]));
+
+    for (const u of users) {
+      const uname = (u.username || '').trim().toLowerCase();
+      if (!uname) continue;
+      const found = byUsername.get(uname);
+      if (found) {
+        userIdMap.set(u.id, found.id);
+        continue;
+      }
+
+      const salt = u.salt || window.WT_CRYPTO.generateSalt();
+      let passwordHash = u.passwordHash;
+      if (!passwordHash || !u.salt) {
+        passwordHash = await window.WT_CRYPTO.hashPassword(`import-reset-${u.id}`, salt);
+        needsPasswordReset.push(uname);
+      }
+
+      const row = {
+        username: uname,
+        display_name: u.displayName || u.username,
+        email: u.email || '',
+        password_hash: passwordHash,
+        salt,
+        role: u.role || 'user',
+        discord_id: u.discordId || '',
+        created_at: u.createdAt || new Date().toISOString()
+      };
+      if (u.id != null) row.id = u.id;
+
+      const { data: inserted, error } = await sb.from('wt_users').insert(row).select('id,username').single();
+      if (error) throw error;
+      userIdMap.set(u.id, inserted.id);
+      byUsername.set(uname, { id: inserted.id, username: inserted.username });
+    }
+
+    return { userIdMap, needsPasswordReset };
+  },
+
+  _mapImportUserId(userIdMap, id) {
+    if (id == null) return null;
+    return userIdMap.has(id) ? userIdMap.get(id) : id;
+  },
+
   async importAll(data) {
     const sb = this._sb();
+    const { userIdMap, needsPasswordReset } = await this._importUsersFromBackup(data.users || []);
+    const mapUid = (id) => this._mapImportUserId(userIdMap, id);
+    const validUserIds = new Set((await this.getUsers()).map(u => u.id));
+    const validProjectIds = new Set((data.projects || []).map(p => p.id));
+
     const tables = [
       'wt_webhooks', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
       'wt_updates', 'wt_tasks', 'wt_milestones', 'wt_projects'
@@ -646,7 +701,8 @@ const SupabaseDB = {
     if (data.projects?.length) {
       const { error } = await sb.from('wt_projects').insert(data.projects.map(p => ({
         id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
-        status: p.status || 'active', priority: p.priority || 'medium', owner_id: p.ownerId,
+        status: p.status || 'active', priority: p.priority || 'medium',
+        owner_id: mapUid(p.ownerId) ?? p.ownerId,
         created_at: p.createdAt, updated_at: p.updatedAt
       })));
       if (error) throw error;
@@ -661,35 +717,53 @@ const SupabaseDB = {
     if (data.tasks?.length) {
       const { error } = await sb.from('wt_tasks').insert(data.tasks.map(t => ({
         id: t.id, project_id: t.projectId, milestone_id: t.milestoneId ?? null,
-        assignee_id: t.assigneeId ?? null, title: t.title || '', due_date: t.dueDate || '',
-        status: t.status || 'todo', priority: t.priority || 'medium',
-        created_at: t.createdAt, updated_at: t.updatedAt
+        assignee_id: t.assigneeId != null ? mapUid(t.assigneeId) : null,
+        title: t.title || '', due_date: t.dueDate || '', status: t.status || 'todo',
+        priority: t.priority || 'medium', created_at: t.createdAt, updated_at: t.updatedAt
       })));
       if (error) throw error;
     }
     if (data.updates?.length) {
-      const { error } = await sb.from('wt_updates').insert(data.updates.map(u => ({
-        id: u.id, project_id: u.projectId, user_id: u.userId ?? null,
-        content: u.content || '', created_at: u.createdAt
-      })));
-      if (error) throw error;
+      const rows = data.updates
+        .filter(u => validProjectIds.has(u.projectId))
+        .map(u => ({
+          id: u.id, project_id: u.projectId,
+          user_id: u.userId != null ? mapUid(u.userId) : null,
+          content: u.content || '', created_at: u.createdAt
+        }))
+        .filter(u => u.user_id == null || validUserIds.has(u.user_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_updates').insert(rows);
+        if (error) throw error;
+      }
     }
     if (data.activityLog?.length) {
-      const { error } = await sb.from('wt_activity_log').insert(data.activityLog.map(a => ({
-        id: a.id, user_id: a.userId, project_id: a.projectId ?? null, action: a.action,
-        entity_type: a.entityType || 'system', entity_id: a.entityId ?? null,
-        details: a.details || '', created_at: a.createdAt
-      })));
-      if (error) throw error;
+      const rows = data.activityLog
+        .map(a => ({
+          id: a.id, user_id: mapUid(a.userId), project_id: a.projectId ?? null,
+          action: a.action, entity_type: a.entityType || 'system',
+          entity_id: a.entityType === 'user' && a.entityId != null ? mapUid(a.entityId) : (a.entityId ?? null),
+          details: a.details || '', created_at: a.createdAt
+        }))
+        .filter(a => validUserIds.has(a.user_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_activity_log').insert(rows);
+        if (error) throw error;
+      }
     }
     if (data.notifications?.length) {
-      const { error } = await sb.from('wt_notifications').insert(data.notifications.map(n => ({
-        id: n.id, user_id: n.userId, actor_user_id: n.actorUserId ?? null, type: n.type || 'info',
-        entity_type: n.entityType ?? null, entity_id: n.entityId ?? null,
-        project_id: n.projectId ?? null, message: n.message || '',
-        read_at: n.readAt ?? null, created_at: n.createdAt
-      })));
-      if (error) throw error;
+      const rows = data.notifications
+        .map(n => ({
+          id: n.id, user_id: mapUid(n.userId), actor_user_id: n.actorUserId != null ? mapUid(n.actorUserId) : null,
+          type: n.type || 'info', entity_type: n.entityType ?? null, entity_id: n.entityId ?? null,
+          project_id: n.projectId ?? null, message: n.message || '',
+          read_at: n.readAt ?? null, created_at: n.createdAt
+        }))
+        .filter(n => validUserIds.has(n.user_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_notifications').insert(rows);
+        if (error) throw error;
+      }
     }
     if (data.webhooks?.length) {
       const { error } = await sb.from('wt_webhooks').insert(data.webhooks.map(w => ({
@@ -709,16 +783,25 @@ const SupabaseDB = {
         }
       }
     }
+    let attachmentsImported = 0;
     if (data.attachments?.length) {
       for (const a of data.attachments) {
         if (!a.dataBase64) continue;
         const blob = this.base64ToBlob(a.dataBase64, a.mimeType);
+        const uploadedBy = mapUid(a.uploadedBy);
+        if (!validUserIds.has(uploadedBy)) continue;
         await this.addAttachment({
-          projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+          projectId: a.projectId, uploadedBy, fileName: a.fileName,
           mimeType: a.mimeType, blob
         });
+        attachmentsImported++;
       }
     }
+
+    return {
+      needsPasswordReset,
+      attachmentsSkipped: (data.attachments?.length || 0) - attachmentsImported
+    };
   },
 
   async createSampleData(ownerId) {

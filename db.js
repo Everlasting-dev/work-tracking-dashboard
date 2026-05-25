@@ -550,7 +550,11 @@ const LocalDB = {
     const [projects, tasks, milestones, updates, users] = await Promise.all([
       db.projects.toArray(), db.tasks.toArray(), db.milestones.toArray(), db.updates.toArray(), db.users.toArray()
     ]);
-    const safeUsers = users.map(u => ({ id: u.id, username: u.username, displayName: u.displayName, email: u.email || '', role: u.role, createdAt: u.createdAt }));
+    const safeUsers = users.map(u => ({
+      id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
+      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '',
+      passwordHash: u.passwordHash, salt: u.salt
+    }));
     const settings = await db.settings.toArray();
     const attRows = await db.attachments.toArray();
     const attachments = [];
