@@ -4,3 +4,6 @@ Thumbs.db
 desktop.ini
 backup-pre-server.bundle
 config.local.js
+
+# Local data exports / backups
+worktracker-*.json

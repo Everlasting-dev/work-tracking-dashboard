@@ -1198,24 +1198,64 @@ async function renderAdmin() {
 
 /* ──── Chat (Discord bridge) ──── */
 
+async function getChatMessagesForChannel(channelId) {
+  const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+  const log = await DB.getActivityLog({ limit: 200 });
+  let rows = log.filter(e => e.action === 'sent_message' && e.entityType === 'chat');
+  if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
+  else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
+  return rows.reverse();
+}
+
+function renderChatMessagesHtml(messages, uMap) {
+  const meId = actorId();
+  if (!messages.length) {
+    return `<div class="chat-empty">
+      <div class="chat-empty-icon">${ICONS.chat}</div>
+      <p><strong>No messages yet</strong></p>
+      <p class="text-sm">Send a message below — it will show here and post to Discord.</p>
+    </div>`;
+  }
+  return `<div class="chat-messages">${messages.map(m => {
+    const who = uMap[m.userId];
+    const name = who ? (who.displayName || who.username) : 'Someone';
+    const init = name.charAt(0).toUpperCase();
+    const mine = m.userId === meId;
+    return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''}">
+      <div class="chat-bubble-avatar" title="${esc(name)}">${init}</div>
+      <div class="chat-bubble-wrap">
+        <div class="chat-bubble-meta"><strong>${esc(name)}</strong><span>${timeAgo(m.createdAt)}</span></div>
+        <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 async function renderChat() {
   const content = document.getElementById('content');
-  const { projects } = await getWorkspaceData();
-  const myProjects = isAdmin() ? projects : projects.filter(p => p.ownerId === actorId());
+  const { projects, users } = await getWorkspaceData();
+  const visibleProjects = filterProjectsByWorkspace(projects);
   const allHooks = await getWebhooksCached();
   const generalHook = allHooks.find(h => h.scope === 'general');
   const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
 
   const channels = [
-    { id: 'general', name: 'general', label: '#general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '' }
+    { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null }
   ];
-  for (const p of projects) {
+  for (const p of visibleProjects) {
     const h = projectHookMap[p.id];
-    if (h?.url) channels.push({ id: `project-${p.id}`, name: p.name, label: `#${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}`, webhook: h, channelUrl: h.channelUrl || '', projectId: p.id });
+    channels.push({
+      id: `project-${p.id}`, name: p.name, webhook: h, channelUrl: h?.channelUrl || '',
+      projectId: p.id, configured: !!h?.url
+    });
   }
 
   if (!state.chatChannel) state.chatChannel = channels[0]?.id || 'general';
   const active = channels.find(c => c.id === state.chatChannel) || channels[0];
+  const messages = active ? await getChatMessagesForChannel(active.id) : [];
+  const messagesHtml = renderChatMessagesHtml(messages, uMap);
+  const hasWebhook = !!active?.webhook?.url;
 
   const channelList = `
     <div class="chat-channels">
@@ -1224,42 +1264,48 @@ async function renderChat() {
         <button type="button" class="chat-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
           <span class="channel-hash">#</span>
           <span class="chat-channel-name">${esc(c.name)}</span>
+          ${c.configured === false && c.id !== 'general' ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
+          ${c.id === 'general' && !c.webhook?.url ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
         </button>`).join('')}
       ${isAdmin() ? `<button type="button" class="chat-channel-btn" data-action="configure-chat" style="margin-top:8px;color:var(--accent-text)">${ICONS.plus} Configure channels</button>` : ''}
     </div>`;
 
-  const configuredMain = active?.webhook?.url ? `
+  const composeHtml = hasWebhook ? `
+      <form class="chat-compose" data-form="chat-send" data-channel-id="${active.id}">
+        <textarea name="content" rows="1" placeholder="Type a message — sent as ${esc(getSession()?.displayName || 'you')} · Enter to send" required></textarea>
+        <button type="submit" class="btn btn-primary" title="Send">${ICONS.send}</button>
+      </form>` : `
+      <div class="chat-compose chat-compose-disabled">
+        <p class="text-muted text-sm">${isAdmin() ? 'Configure a webhook in Admin → Discord Integrations to send messages.' : 'Ask an admin to configure a Discord webhook for this channel.'}</p>
+        ${isAdmin() ? `<button type="button" class="btn btn-sm btn-primary" data-action="configure-chat">Open Integrations</button>` : ''}
+      </div>`;
+
+  const chatMain = `
     <div class="chat-main">
       <div class="chat-header">
-        <h2>${ICONS.chat} ${esc(active.name)}</h2>
-        ${active.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Open in Discord</a>` : ''}
+        <h2>${ICONS.chat} ${esc(active?.name || 'Chat')}</h2>
+        <div class="chat-header-actions">
+          ${active?.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Open in Discord</a>` : ''}
+          ${!hasWebhook && isAdmin() ? `<button type="button" class="btn btn-sm btn-ghost" data-action="configure-chat">Set up webhook</button>` : ''}
+        </div>
       </div>
-      <div class="chat-body">
-        <div class="chat-empty-icon">${ICONS.chat}</div>
-        <h3 style="color:var(--text);margin-bottom:4px">Messages live in Discord</h3>
-        <p>Anything you send here gets posted to the bound Discord channel.<br>${active.channelUrl ? 'Use the <em>Open in Discord</em> button to read replies.' : 'Add a Discord channel URL in Admin → Integrations to enable an Open-in-Discord button.'}</p>
-      </div>
-      <form class="chat-compose" data-form="chat-send" data-channel-id="${active.id}">
-        <textarea name="content" rows="1" placeholder="Type a message — sent as ${esc(getSession()?.displayName || 'you')} · ⏎ to send, Shift+⏎ for newline" required></textarea>
-        <button type="submit" class="btn btn-primary" title="Send">${ICONS.send}</button>
-      </form>
-    </div>` : `
-    <div class="chat-main">
-      <div class="chat-not-configured">
-        <h3>${ICONS.chat} No webhook for this channel yet</h3>
-        <p>${isAdmin() ? 'Open <strong>Admin → Discord Integrations</strong> to paste a webhook URL.' : 'Ask an admin to configure a Discord webhook for this channel.'}</p>
-        ${isAdmin() ? `<button class="btn btn-primary" data-action="configure-chat" style="margin-top:14px">${ICONS.externalLink} Open Integrations</button>` : ''}
-      </div>
+      <div class="chat-body" id="chat-messages-pane">${messagesHtml}</div>
+      ${composeHtml}
     </div>`;
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Chat</h1><p class="view-subtitle">Discord bridge — messages route to your team server</p></div>
+      <div><h1>Chat</h1><p class="view-subtitle">Team messages sent from WorkTracker (also posted to Discord)</p></div>
     </div>
     <div class="chat-layout">
       ${channelList}
-      ${configuredMain}
+      ${chatMain}
     </div>`;
+
+  requestAnimationFrame(() => {
+    const pane = document.getElementById('chat-messages-pane');
+    if (pane) pane.scrollTop = pane.scrollHeight;
+  });
 }
 
 /* ──── Admin Dashboard ──── */
@@ -1719,18 +1765,18 @@ async function handleFormSubmit(e) {
       else if (channelId?.startsWith('project-')) hook = await DB.getProjectWebhook(Number(channelId.split('-')[1]));
       if (!hook?.url) { showToast('No webhook configured for this channel', 'error'); return; }
       const result = await postToDiscordWebhook(hook.url, {
-        username: session?.displayName || session?.username || 'WorkTracker',
-        content,
-        allowed_mentions: { parse: ['users', 'roles'] }
+        username: discordWebhookUsername(session),
+        content
       });
       if (!result.ok) {
         showToast(discordFailToast(result), 'error');
         return;
       }
-      await DB.logActivity({ userId: uid, projectId: hook.projectId || null, action: 'sent_message', entityType: 'chat', details: content.slice(0, 120) });
+      await DB.logActivity({ userId: uid, projectId: hook.projectId || null, action: 'sent_message', entityType: 'chat', details: content.slice(0, 2000) });
       form.reset();
-      showToast('Message sent to Discord', 'success');
-      return; // Skip router refresh so user keeps typing
+      showToast('Message sent', 'success');
+      await renderChat();
+      return;
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
       if (!data.title) return;
@@ -2219,8 +2265,24 @@ async function init() {
     setupImport();
     const mt = document.getElementById('menu-toggle');
     const sb = document.getElementById('sidebar');
-    if (mt) mt.addEventListener('click', () => sb.classList.toggle('open'));
-    document.querySelectorAll('.nav-item').forEach(i => i.addEventListener('click', () => { sb.classList.remove('open'); closeUserMenu(); }));
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const closeSidebar = () => {
+      sb?.classList.remove('open');
+      backdrop?.classList.add('hidden');
+      document.body.classList.remove('sidebar-open');
+    };
+    const openSidebar = () => {
+      sb?.classList.add('open');
+      backdrop?.classList.remove('hidden');
+      document.body.classList.add('sidebar-open');
+    };
+    if (mt) mt.addEventListener('click', () => {
+      if (sb?.classList.contains('open')) closeSidebar();
+      else openSidebar();
+    });
+    backdrop?.addEventListener('click', closeSidebar);
+    document.querySelectorAll('.nav-item').forEach(i => i.addEventListener('click', () => { closeSidebar(); closeUserMenu(); }));
+    window.addEventListener('hashchange', closeSidebar);
     window.addEventListener('hashchange', () => { applyRoute(); });
 
     await applyRoute();

@@ -10,7 +10,7 @@ WorkTracker uses **Discord incoming webhooks** — one-way posts from the app in
 |--------|--------|
 | **#general channel** | Admin → Discord Integrations → paste webhook URL |
 | **Per-project channel** | Same section, one card per project |
-| **Chat page** (`#/chat`) | Send messages to the active channel’s webhook |
+| **Chat page** (`#/chat`) | Send messages to Discord and see your team’s sent messages in the app (Discord replies still open in Discord) |
 | **Auto notifications** | Task assigned, task marked done → posts to project webhook (falls back to #general) |
 | **@mentions** | Add each user’s **Discord ID** in Admin → Edit User (numeric snowflake) |
 
