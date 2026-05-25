@@ -68,6 +68,21 @@ function typeBadge(t)    { const c = TYPE_CFG[t] || TYPE_CFG_LEGACY[t] || TYPE_C
 function statusBadge(s)  { const c = STAT_CFG[s] || STAT_CFG.active; return badge(c.l, c.c); }
 function taskBadge(s)    { const c = TSTATUS[s] || TSTATUS.todo; return badge(c.l, c.c); }
 function prioBadge(p)    { const c = PRIO_CFG[p] || PRIO_CFG.medium; return badge(c.l, c.c); }
+function projectModeBadge(p) {
+  if (!p?.isOngoing) return '';
+  const label = p.cadence ? `Ongoing · ${p.cadence}` : 'Ongoing';
+  return badge(label, 'purple');
+}
+function userColor(user) {
+  const fallback = ['#4f46e5', '#0891b2', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0f766e'];
+  if (user?.color && /^#[0-9a-f]{6}$/i.test(user.color)) return user.color;
+  const seed = String(user?.id ?? user?.username ?? '0').split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  return fallback[seed % fallback.length];
+}
+function userColorStyle(user) {
+  const color = userColor(user);
+  return `style="--user-color:${esc(color)}"`;
+}
 function progressBar(pct, sz = '') {
   const cls = sz ? `progress-bar progress-bar-${sz}` : 'progress-bar';
   const tone = pct >= 100 ? 'progress-done' : pct >= 50 ? 'progress-mid' : 'progress-low';
@@ -110,7 +125,7 @@ function emptyState(opts) {
 /* ──── Session ──── */
 
 function getSession() { try { return JSON.parse(sessionStorage.getItem('wt-session')); } catch { return null; } }
-function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role })); }
+function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role, color: u.color || '' })); }
 function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
@@ -348,7 +363,41 @@ async function notifyUser({ userId, type, message, projectId = null, entityType 
   refreshNotificationBadge().catch(() => {});
 }
 
-/* ──── Last-seen / IP capture ──── */
+/* ──── Last-seen / device capture ──── */
+
+async function sha256Text(text) {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(text));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function deviceLabel() {
+  const ua = navigator.userAgent || 'Unknown browser';
+  const platform = navigator.platform || 'Unknown device';
+  const browser = ua.includes('Edg/') ? 'Edge' : ua.includes('Chrome/') ? 'Chrome' : ua.includes('Safari/') ? 'Safari' : ua.includes('Firefox/') ? 'Firefox' : 'Browser';
+  return `${browser} on ${platform}`;
+}
+
+async function getDeviceInfo() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const network = navigator.connection
+    ? `${navigator.connection.effectiveType || 'net'}-${navigator.connection.downlink || 'x'}-${navigator.connection.rtt || 'x'}`
+    : 'network-unavailable';
+  const raw = [
+    navigator.userAgent || '',
+    navigator.platform || '',
+    navigator.language || '',
+    `${screen.width}x${screen.height}x${screen.colorDepth}`,
+    tz,
+    navigator.hardwareConcurrency || '',
+    network
+  ].join('|');
+  return {
+    deviceId: (await sha256Text(raw)).slice(0, 24),
+    deviceLabel: deviceLabel(),
+    userAgent: navigator.userAgent || ''
+  };
+}
 
 async function captureLastSeen(userId) {
   if (!userId) return;
@@ -365,6 +414,10 @@ async function captureLastSeen(userId) {
     } catch (_) { /* offline / blocked / timeout */ }
     clearTimeout(t);
     await DB.touchLastSeen(userId, ip);
+    if (DB.recordLoginSession) {
+      const device = await getDeviceInfo();
+      await DB.recordLoginSession(userId, { ...device, ip: ip || '' });
+    }
   } catch (_) { /* ignore */ }
 }
 
@@ -600,7 +653,7 @@ function updateSidebarUser() {
   const isAdm = s.role === 'admin';
   const el = document.getElementById('sidebar-user');
   el.innerHTML = `
-    <div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}">${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>
+    <div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>
     <div class="user-details">
       <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
       <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
@@ -719,7 +772,7 @@ async function renderProjects() {
     }) :
     `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; return `
       <a href="#/projects/${p.id}" class="project-card">
-        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${!mine ? badge('View Only', 'muted') : ''}</div>
+        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${projectModeBadge(p)} ${!mine ? badge('View Only', 'muted') : ''}</div>
         <h3 class="project-card-title" title="${esc(p.name)}"><span class="title-text">${esc(p.name)}</span></h3>
         <p class="project-card-notes">${esc(p.notes || 'No description')}</p>
         <div class="project-card-progress">${progressBar(p.progress)}<span class="text-muted text-sm">${p.progress}% &middot; ${p.doneCount}/${p.taskCount} tasks</span></div>
@@ -793,7 +846,7 @@ async function renderProjectDetail(projectId) {
       </div>
     </div>
     <div class="project-hero">
-      <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${prioBadge(project.priority)}</div>
+      <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${prioBadge(project.priority)} ${projectModeBadge(project)}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
       <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
@@ -923,7 +976,7 @@ async function renderTab(tab, projectId, editable) {
               <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
               <div class="task-item-meta">
                 ${editable
-                  ? `<button type="button" class="btn-icon" data-action="assign-task" data-id="${t.id}" title="Reassign" style="padding:0;background:none;border:none">${assigneeChipHtml(assignee)}</button>`
+                  ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
                   : assigneeChipHtml(assignee)}
                 ${t.dueDate ? `<span class="${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
                 ${t.priority !== 'medium' ? prioBadge(t.priority) : ''}
@@ -975,15 +1028,14 @@ async function renderTab(tab, projectId, editable) {
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     const cards = items.map(item => {
       const blob = item.blob;
-      if (!blob) return '';
-      const url = URL.createObjectURL(blob);
-      state._libraryBlobUrls.push(url);
+      const url = blob ? URL.createObjectURL(blob) : (DB.getAttachmentUrl ? DB.getAttachmentUrl(item.storagePath) : '');
+      if (blob) state._libraryBlobUrls.push(url);
       const who = uMap[item.uploadedBy];
       const whoLabel = who ? esc(who.displayName || who.username) : 'Unknown';
       const isImg = item.mimeType && item.mimeType.startsWith('image/');
       const preview = isImg
-        ? `<button type="button" class="library-card-preview" data-action="preview-attachment" data-id="${item.id}"><img src="${url}" alt=""></button>`
-        : `<button type="button" class="library-card-file" data-action="preview-attachment" data-id="${item.id}">${esc(item.fileName)}</button>`;
+        ? `<button type="button" class="library-card-preview" data-action="preview-attachment" data-id="${item.id}">${url ? `<img src="${esc(url)}" alt="${esc(item.fileName || 'Image')}">` : ICONS.file}</button>`
+        : `<button type="button" class="library-card-file" data-action="preview-attachment" data-id="${item.id}"><span class="library-file-icon">${ICONS.file}</span><span>${esc(item.fileName)}</span></button>`;
       const del = editable ? `<button type="button" class="btn-icon" data-action="delete-attachment" data-id="${item.id}" title="Remove">${ICONS.trash}</button>` : '';
       return `<div class="library-card">
         ${preview}
@@ -1089,7 +1141,7 @@ async function renderTasks() {
         </div>
         <div class="task-table-right">
           ${editable
-            ? `<button type="button" class="btn-icon" data-action="assign-task" data-id="${t.id}" title="Reassign" style="padding:0;background:none;border:none">${assigneeChipHtml(assignee)}</button>`
+            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
             : assigneeChipHtml(assignee)}
           ${t.dueDate ? `<span class="due-date ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : ''}">${formatDateShort(t.dueDate)}</span>` : '<span class="text-muted text-sm">No date</span>'}
           ${prioBadge(t.priority)} ${taskBadge(t.status)}
@@ -1187,6 +1239,23 @@ async function renderAdmin() {
         </div>
       </div>
     </section>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>${ICONS.sparkles} AI + two-way chat roadmap</h2></div>
+      <div class="section-body" style="padding:20px">
+        <div class="integrations-grid">
+          <div class="integration-card">
+            <h3>Claude assistant</h3>
+            <p class="text-secondary text-sm">Claude can be added safely through a Supabase Edge Function, Cloudflare Worker, or other backend proxy. The API key must not live in this GitHub Pages app.</p>
+            <span class="integration-meta">Recommended first feature: summarize a project and suggest next tasks.</span>
+          </div>
+          <div class="integration-card">
+            <h3>Discord → WorkTracker</h3>
+            <p class="text-secondary text-sm">Normal Discord messages require a Discord bot/proxy to read channel messages, map Discord IDs to WorkTracker users, and write them into the chat activity log.</p>
+            <span class="integration-meta">The current chat UI is ready to show ingested messages once the bot/proxy exists.</span>
+          </div>
+        </div>
+      </div>
+    </section>
     <section class="section-card">
       <div class="section-header"><h2>Data Management</h2></div>
       <div class="section-body" style="padding:20px">
@@ -1222,7 +1291,7 @@ function renderChatMessagesHtml(messages, uMap) {
     const init = name.charAt(0).toUpperCase();
     const mine = m.userId === meId;
     return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''}">
-      <div class="chat-bubble-avatar" title="${esc(name)}">${init}</div>
+      <div class="chat-bubble-avatar" ${userColorStyle(who)} title="${esc(name)}">${init}</div>
       <div class="chat-bubble-wrap">
         <div class="chat-bubble-meta"><strong>${esc(name)}</strong><span>${timeAgo(m.createdAt)}</span></div>
         <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
@@ -1315,6 +1384,8 @@ async function renderAdminDashboard() {
   const content = document.getElementById('content');
   const { users, projects, tasks } = await getWorkspaceData();
   const log = await DB.getActivityLog({ limit: 30 });
+  let sessions = [];
+  try { sessions = DB.getUserSessions ? await DB.getUserSessions() : []; } catch (_) { sessions = []; }
   const now = Date.now();
   const sevenDays = 7 * 24 * 60 * 60 * 1000;
   const activeUsers = users.filter(u => u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays));
@@ -1324,6 +1395,10 @@ async function renderAdminDashboard() {
   const tasksByAssignee = tasks.reduce((m, t) => { if (t.assigneeId != null) m[t.assigneeId] = (m[t.assigneeId] || 0) + 1; return m; }, {});
 
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const sessionsByUser = sessions.reduce((m, row) => {
+    (m[row.userId] ||= []).push(row);
+    return m;
+  }, {});
 
   content.innerHTML = `
     <div class="view-header">
@@ -1368,20 +1443,35 @@ async function renderAdminDashboard() {
           const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
           return `<div class="admin-user-row">
             <span class="admin-user-name">
-              <span class="user-avatar-sm ${u.role === 'admin' ? 'user-avatar-admin' : ''}">${init}</span>
+              <span class="user-avatar-sm ${u.role === 'admin' ? 'user-avatar-admin' : ''}" ${userColorStyle(u)}>${init}</span>
               <strong>${esc(u.displayName || u.username)}</strong>
             </span>
             <span>${u.role === 'admin' ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : 'Member'}</span>
             <span>${u.discordId ? `<code>${esc(u.discordId)}</code>` : '<span class="text-muted">—</span>'}</span>
             <span class="text-muted">${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Never signed in'}</span>
             <span class="text-muted">${u.lastSeenIp ? `<code>${esc(u.lastSeenIp)}</code>` : '<span class="text-muted">—</span>'}</span>
-            <span class="text-muted" style="text-align:right">${pCount}p · ${tCount}t</span>
+            <span class="text-muted" style="text-align:right">${pCount}p · ${tCount}t · ${(sessionsByUser[u.id] || []).length} devices</span>
           </div>`;
         }).join('')}
       </div>
       <div class="section-body" style="padding:12px 20px;border-top:1px solid var(--border-light)">
-        <p class="text-muted text-sm">IP addresses are reported by the user's browser via <code>api.ipify.org</code> on each login and may be inaccurate (VPN, proxy, blocked request).</p>
+        <p class="text-muted text-sm">IP addresses are reported by the user's browser via <code>api.ipify.org</code>. Device identity is a privacy-safe browser fingerprint (browser, platform, screen, timezone, and network hints), not a MAC address or hostname.</p>
       </div>
+    </section>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>Known devices</h2></div>
+      <div class="section-body" style="padding:0">${
+        sessions.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No device logins recorded yet.</p>` :
+        `<div class="device-list">${sessions.slice(0, 20).map(row => {
+          const u = uMap[row.userId];
+          return `<div class="device-row">
+            <span><strong>${esc(u?.displayName || u?.username || 'Unknown')}</strong><small>${esc(row.deviceLabel || 'Unknown device')}</small></span>
+            <span class="text-muted">${row.ip ? `<code>${esc(row.ip)}</code>` : 'No IP'}</span>
+            <span class="text-muted">${esc(row.deviceId || '').slice(0, 12)}</span>
+            <span class="text-muted">${row.loginCount || 1} logins · ${timeAgo(row.lastSeenAt)}</span>
+          </div>`;
+        }).join('')}</div>`
+      }</div>
     </section>
     <section class="section-card">
       <div class="section-header"><h2>Recent activity</h2></div>
@@ -1422,6 +1512,7 @@ async function renderNotificationPanel() {
   panel.innerHTML = `
     <div class="notif-panel-header">
       <h3>${ICONS.bell} Notifications ${unread ? `<span class="nav-item-badge" style="margin-left:6px">${unread}</span>` : ''}</h3>
+      <button type="button" class="notif-panel-mark" data-action="open-notifications">View all</button>
       ${unread ? `<button type="button" class="notif-panel-mark" data-action="notif-mark-all">Mark all read</button>` : ''}
     </div>
     ${rows.length === 0
@@ -1448,6 +1539,35 @@ function toggleNotifPanel(force = null) {
 
 function closeNotifPanel() { toggleNotifPanel(false); }
 
+async function renderNotificationsPage() {
+  const content = document.getElementById('content');
+  const uid = actorId();
+  const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
+  const unread = rows.filter(r => !r.readAt).length;
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>${ICONS.bell} Notifications</h1><p class="view-subtitle">${rows.length} recent updates · ${unread} unread</p></div>
+      <div class="view-actions">
+        ${unread ? `<button type="button" class="btn btn-primary" data-action="notif-mark-all">${ICONS.checkCircle} Mark all read</button>` : ''}
+      </div>
+    </div>
+    <section class="section-card">
+      <div class="section-body" style="padding:0">
+        ${rows.length === 0 ? emptyState({
+          icon: 'activity',
+          title: 'No notifications yet',
+          description: 'Assignments, updates, and mentions will show up here.'
+        }) : `<div class="notification-page-list">${rows.map(n => {
+          const projectHref = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+          return `<button type="button" class="notification-page-item ${n.readAt ? '' : 'unread'}" data-action="notif-open" data-id="${n.id}" data-href="${projectHref}">
+            <span class="notif-dot"></span>
+            <span><strong>${esc(n.message)}</strong><small>${timeAgo(n.createdAt)}</small></span>
+          </button>`;
+        }).join('')}</div>`}
+      </div>
+    </section>`;
+}
+
 /* ──── Modal System ──── */
 
 function showModal(title, body) {
@@ -1470,6 +1590,19 @@ async function showProjectModal(editId = null) {
         <div class="form-group"><label>Type</label><select name="type">${Object.entries(TYPE_CFG).map(([v, c]) => `<option value="${v}" ${(p?.type || 'project') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
         <div class="form-group"><label>Priority</label><select name="priority">${Object.entries(PRIO_CFG).map(([v, c]) => `<option value="${v}" ${(p?.priority || 'medium') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
       </div>
+      <div class="form-row">
+        <label class="check-card">
+          <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing ? 'checked' : ''}>
+          <span><strong>Ongoing / recurring project</strong><small>Use for maintenance, stock counting, upgrades, and timeless work.</small></span>
+        </label>
+        <div class="form-group"><label>Cadence</label><select name="cadence">
+          <option value="" ${!p?.cadence ? 'selected' : ''}>No fixed repeat</option>
+          <option value="daily" ${p?.cadence === 'daily' ? 'selected' : ''}>Daily</option>
+          <option value="weekly" ${p?.cadence === 'weekly' ? 'selected' : ''}>Weekly</option>
+          <option value="monthly" ${p?.cadence === 'monthly' ? 'selected' : ''}>Monthly</option>
+          <option value="quarterly" ${p?.cadence === 'quarterly' ? 'selected' : ''}>Quarterly</option>
+        </select></div>
+      </div>
       ${isE ? `<div class="form-group"><label>Status</label><select name="status">${Object.entries(STAT_CFG).map(([v, c]) => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>` : ''}
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${isE ? 'Save' : 'Create Project'}</button></div>
     </form>`);
@@ -1484,15 +1617,16 @@ async function showTaskModal(preId = null) {
   const projectField = lockedProject
     ? `<input type="hidden" name="projectId" value="${lockedProject.id}">
        <div class="form-group"><label>Project</label><input type="text" value="${esc(lockedProject.name)}" disabled class="input-disabled"></div>`
-    : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`;
+    : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}" data-owner-id="${p.ownerId || ''}">${esc(p.name)}</option>`).join('')}</select></div>`;
   const users = await DB.getUsers();
   const meId = actorId();
-  const sorted = [...users].sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : 0));
+  const defaultAssigneeId = lockedProject?.ownerId || editable[0]?.ownerId || meId;
+  const sorted = [...users].sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0));
   const assigneeOptions = sorted
-    .map(u => `<option value="${u.id}" ${u.id === meId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
+    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
     .join('');
   showModal('New Task', `
-    <form data-form="task">
+    <form data-form="task" data-auto-project-owner="1">
       ${projectField}
       <div class="form-group"><label>Task Title</label><input name="title" type="text" placeholder="What needs to be done?" required autofocus></div>
       <div class="form-row">
@@ -1505,6 +1639,13 @@ async function showTaskModal(preId = null) {
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Add Task</button></div>
     </form>`);
+  const form = document.querySelector('form[data-form="task"][data-auto-project-owner="1"]');
+  const projectSelect = form?.querySelector('select[name="projectId"]');
+  const assigneeSelect = form?.querySelector('select[name="assigneeId"]');
+  projectSelect?.addEventListener('change', () => {
+    const ownerId = projectSelect.selectedOptions[0]?.dataset.ownerId;
+    if (ownerId && assigneeSelect?.querySelector(`option[value="${ownerId}"]`)) assigneeSelect.value = ownerId;
+  });
 }
 
 async function showAssignTaskModal(taskId) {
@@ -1528,7 +1669,7 @@ async function showAssignTaskModal(taskId) {
 function assigneeChipHtml(user) {
   if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
-  return `<span class="assignee-chip" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${initials}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+  return `<span class="assignee-chip" ${userColorStyle(user)} title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${initials}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
 
 function showMilestoneModal(pid) {
@@ -1557,6 +1698,7 @@ function showAddUserModal() {
       <div class="form-group"><label>Username</label><input name="username" type="text" placeholder="e.g. john" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" placeholder="john@example.com"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" placeholder="e.g. John Smith"></div>
+      <div class="form-group"><label>Color</label><input name="color" type="color" value="#4f46e5"></div>
       <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
@@ -1575,6 +1717,7 @@ async function showEditUserModal(uid) {
       <div class="form-group"><label>Username</label><input name="username" type="text" value="${esc(u.username)}" required autocomplete="off"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(u.displayName || '')}" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
+      <div class="form-group"><label>Color</label><input name="color" type="color" value="${esc(u.color || userColor(u))}"><p class="text-muted text-sm" style="margin-top:4px">Used for avatars, task chips, and chat bubbles.</p></div>
       <div class="form-group">
         <label>Discord User ID</label>
         <input name="discordId" type="text" value="${esc(u.discordId || '')}" placeholder="e.g. 123456789012345678" pattern="[0-9]*">
@@ -1676,7 +1819,14 @@ async function handleFormSubmit(e) {
   try {
     const uid = actorId();
     if (type === 'project') {
-      const data = { name: fd.get('name')?.trim(), notes: fd.get('notes')?.trim(), type: fd.get('type'), priority: fd.get('priority') };
+      const data = {
+        name: fd.get('name')?.trim(),
+        notes: fd.get('notes')?.trim(),
+        type: fd.get('type'),
+        priority: fd.get('priority'),
+        isOngoing: fd.get('isOngoing') === '1',
+        cadence: fd.get('cadence') || ''
+      };
       if (!data.name) return;
       const editId = form.dataset.editId;
       if (editId) {
@@ -1791,10 +1941,11 @@ async function handleFormSubmit(e) {
       const displayName = fd.get('displayName')?.trim() || username;
       const password = fd.get('password');
       const role = fd.get('role');
+      const color = fd.get('color') || '';
       if (!username || !password || password.length < 4) { showToast('Fill all fields (pw min 4 chars)', 'warning'); return; }
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
-      await DB.createUser({ username, displayName, email, password, role });
+      await DB.createUser({ username, displayName, email, password, role, color });
       bustWorkspaceCache();
       showToast('User created', 'success');
     } else if (type === 'reset-pw') {
@@ -1810,6 +1961,7 @@ async function handleFormSubmit(e) {
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
       const discordId = (fd.get('discordId') || '').toString().trim();
+      const color = (fd.get('color') || '').toString().trim();
       const role = fd.get('role');
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
@@ -1817,7 +1969,7 @@ async function handleFormSubmit(e) {
       if (discordId && !/^\d{6,30}$/.test(discordId)) { showToast('Discord ID must be a numeric snowflake (e.g. 123456789012345678)', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
-      const changes = { username, displayName, email, discordId };
+      const changes = { username, displayName, email, discordId, color };
       if (!isSelf && role) changes.role = role;
       try {
         await DB.updateUser(targetId, changes, s.userId);
@@ -1988,10 +2140,12 @@ const actions = {
   },
   'recovery-back-login': async () => { window.location.hash = ''; await applyRoute(); },
   'toggle-notif': () => { toggleNotifPanel(); },
+  'open-notifications': () => { closeNotifPanel(); window.location.hash = '#/notifications'; },
   'notif-mark-all': async () => {
     const uid = actorId(); if (!uid) return;
     await DB.markAllNotificationsRead(uid);
     await renderNotificationPanel();
+    if (window.location.hash === '#/notifications') await renderNotificationsPage();
     refreshNotificationBadge();
   },
   'notif-open': async (b) => {
@@ -2084,6 +2238,7 @@ async function router() {
   }
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/chat') await renderChat();
+  else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/admin') await renderAdmin();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => content?.classList.remove('content-fade'));

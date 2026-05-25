@@ -45,12 +45,18 @@ const SupabaseDB = {
     } catch (_) { /* RPC optional until schema is updated */ }
   },
 
+  _isMissingColumn(error) {
+    const msg = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+    return msg.includes('pgrst204') || msg.includes('schema cache') || msg.includes('column') || msg.includes('could not find');
+  },
+
   _mapUser(r) {
     if (!r) return null;
     return {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
-      discordId: r.discord_id || '', lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
+      discordId: r.discord_id || '', color: r.color || '',
+      lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
 
@@ -58,7 +64,17 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, name: r.name, notes: r.notes, type: r.type, status: r.status, priority: r.priority,
-      ownerId: r.owner_id, createdAt: r.created_at, updatedAt: r.updated_at
+      ownerId: r.owner_id, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
+      createdAt: r.created_at, updatedAt: r.updated_at
+    };
+  },
+
+  _mapSession(r) {
+    if (!r) return null;
+    return {
+      id: r.id, userId: r.user_id, deviceId: r.device_id || '', deviceLabel: r.device_label || '',
+      userAgent: r.user_agent || '', ip: r.ip || '', firstSeenAt: r.first_seen_at,
+      lastSeenAt: r.last_seen_at, loginCount: r.login_count || 1
     };
   },
 
@@ -143,14 +159,20 @@ const SupabaseDB = {
   async createUser(data) {
     const salt = window.WT_CRYPTO.generateSalt();
     const pwHash = await window.WT_CRYPTO.hashPassword(data.password, salt);
-    const { data: row, error } = await this._sb().from('wt_users').insert({
+    const payload = {
       username: data.username.toLowerCase(),
       display_name: data.displayName || data.username,
       email: data.email || '',
       password_hash: pwHash,
       salt,
-      role: data.role || 'user'
-    }).select().single();
+      role: data.role || 'user',
+      color: data.color || ''
+    };
+    let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
+    if (error && this._isMissingColumn(error)) {
+      delete payload.color;
+      ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
+    }
     if (error) throw error;
     return row.id;
   },
@@ -179,6 +201,7 @@ const SupabaseDB = {
     if (changes.email != null) patch.email = changes.email;
     if (changes.role != null) patch.role = changes.role;
     if (changes.discordId != null) patch.discord_id = changes.discordId;
+    if (changes.color != null) patch.color = changes.color;
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
     if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
     if (changes.username != null) {
@@ -188,9 +211,13 @@ const SupabaseDB = {
       if (conflict && conflict.id !== id) throw new Error('Username already taken');
       patch.username = next;
     }
-    const { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
+    let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
+    if (error && patch.color != null && this._isMissingColumn(error)) {
+      delete patch.color;
+      ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
+    }
     if (error) throw error;
-    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', discord_id: 'Discord ID', username: 'username' };
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', discord_id: 'Discord ID', color: 'color', username: 'username' };
     if (actorUserId) {
       await this.logActivity({
         userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
@@ -248,11 +275,19 @@ const SupabaseDB = {
   async createProject(data) {
     const actorUserId = data.actorUserId;
     const id = await this._nextTableId('wt_projects');
-    const { data: row, error } = await this._sb().from('wt_projects').insert({
+    const payload = {
       id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
-      owner_id: data.ownerId ?? actorUserId ?? 1
-    }).select().single();
+      owner_id: data.ownerId ?? actorUserId ?? 1,
+      is_ongoing: !!data.isOngoing,
+      cadence: data.cadence || ''
+    };
+    let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
+    if (error && this._isMissingColumn(error)) {
+      delete payload.is_ongoing;
+      delete payload.cadence;
+      ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
+    }
     if (error) throw error;
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name });
     return row.id;
@@ -277,7 +312,14 @@ const SupabaseDB = {
     if (changes.type != null) patch.type = changes.type;
     if (changes.status != null) patch.status = changes.status;
     if (changes.priority != null) patch.priority = changes.priority;
-    const { error } = await this._sb().from('wt_projects').update(patch).eq('id', id);
+    if (changes.isOngoing != null) patch.is_ongoing = !!changes.isOngoing;
+    if (changes.cadence != null) patch.cadence = changes.cadence || '';
+    let { error } = await this._sb().from('wt_projects').update(patch).eq('id', id);
+    if (error && this._isMissingColumn(error) && (patch.is_ongoing != null || patch.cadence != null)) {
+      delete patch.is_ongoing;
+      delete patch.cadence;
+      ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
+    }
     if (error) throw error;
     if (actorUserId) {
       const p = await this.getProject(id);
@@ -323,6 +365,12 @@ const SupabaseDB = {
     const { data: blob, error: dErr } = await this._sb().storage.from(this.BUCKET).download(data.storage_path);
     if (dErr) throw dErr;
     return this._mapAttachment(data, blob);
+  },
+
+  getAttachmentUrl(storagePath) {
+    if (!storagePath) return '';
+    const { data } = this._sb().storage.from(this.BUCKET).getPublicUrl(storagePath);
+    return data?.publicUrl || '';
   },
 
   async deleteAttachment(id, actorUserId = null) {
@@ -606,6 +654,49 @@ const SupabaseDB = {
     await this._sb().from('wt_users').update(patch).eq('id', userId);
   },
 
+  async recordLoginSession(userId, { deviceId = '', deviceLabel = '', userAgent = '', ip = '' } = {}) {
+    if (!userId || !deviceId) return;
+    const now = new Date().toISOString();
+    const { data: existing, error: readErr } = await this._sb()
+      .from('wt_sessions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('device_id', deviceId)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    if (existing) {
+      const { error } = await this._sb().from('wt_sessions').update({
+        device_label: deviceLabel,
+        user_agent: userAgent,
+        ip: ip || existing.ip || '',
+        last_seen_at: now,
+        login_count: (existing.login_count || 0) + 1
+      }).eq('id', existing.id);
+      if (error) throw error;
+      return existing.id;
+    }
+    const { data, error } = await this._sb().from('wt_sessions').insert({
+      user_id: userId,
+      device_id: deviceId,
+      device_label: deviceLabel,
+      user_agent: userAgent,
+      ip,
+      first_seen_at: now,
+      last_seen_at: now,
+      login_count: 1
+    }).select('id').single();
+    if (error) throw error;
+    return data?.id;
+  },
+
+  async getUserSessions(userId = null) {
+    let q = this._sb().from('wt_sessions').select('*').order('last_seen_at', { ascending: false });
+    if (userId != null) q = q.eq('user_id', userId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map(r => this._mapSession(r));
+  },
+
   async migrateFromLocalStorage() { return false; },
 
   async _clearTable(table) {
@@ -621,7 +712,7 @@ const SupabaseDB = {
   async exportAll() {
     const sb = this._sb();
     const [
-      projects, tasks, milestones, updates, users, activityLog, notifications, webhooks,
+      projects, tasks, milestones, updates, users, activityLog, notifications, webhooks, sessions,
       { data: attRows, error: attErr }, { data: settingsRows, error: sErr }
     ] = await Promise.all([
       this.getProjects(), this.getTasks(),
@@ -630,6 +721,7 @@ const SupabaseDB = {
       this.getUsers(), this.getActivityLog({}),
       sb.from('wt_notifications').select('*').then(({ data, error }) => { if (error) throw error; return (data || []).map(r => this._mapNotification(r)); }),
       this.getWebhooks(),
+      this.getUserSessions(),
       sb.from('wt_attachments').select('*'),
       sb.from('wt_settings').select('*')
     ]);
@@ -637,7 +729,7 @@ const SupabaseDB = {
     if (sErr) throw sErr;
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '',
+      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = (settingsRows || []).map(s => ({
@@ -655,9 +747,9 @@ const SupabaseDB = {
       });
     }
     return {
-      version: 6, exportedAt: new Date().toISOString(),
+      version: 7, exportedAt: new Date().toISOString(),
       projects, tasks, milestones, updates, users: safeUsers, settings, attachments: attOut,
-      activityLog, notifications, webhooks
+      activityLog, notifications, webhooks, sessions
     };
   },
 
@@ -692,6 +784,7 @@ const SupabaseDB = {
         salt,
         role: u.role || 'user',
         discord_id: u.discordId || '',
+        color: u.color || '',
         created_at: u.createdAt || new Date().toISOString()
       };
       if (u.id != null) row.id = u.id;
@@ -718,7 +811,7 @@ const SupabaseDB = {
     const validProjectIds = new Set((data.projects || []).map(p => p.id));
 
     const tables = [
-      'wt_webhooks', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
+      'wt_sessions', 'wt_webhooks', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
       'wt_updates', 'wt_tasks', 'wt_milestones', 'wt_projects'
     ];
     for (const table of tables) await this._clearTable(table);
@@ -731,6 +824,8 @@ const SupabaseDB = {
         id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
         status: p.status || 'active', priority: p.priority || 'medium',
         owner_id: mapUid(p.ownerId) ?? p.ownerId,
+        is_ongoing: !!p.isOngoing,
+        cadence: p.cadence || '',
         created_at: p.createdAt, updated_at: p.updatedAt
       })));
       if (error) throw error;
@@ -800,6 +895,25 @@ const SupabaseDB = {
         created_at: w.createdAt, updated_at: w.updatedAt
       })));
       if (error) throw error;
+    }
+    if (data.sessions?.length) {
+      const rows = data.sessions
+        .map(s => ({
+          id: s.id,
+          user_id: mapUid(s.userId),
+          device_id: s.deviceId || '',
+          device_label: s.deviceLabel || '',
+          user_agent: s.userAgent || '',
+          ip: s.ip || '',
+          first_seen_at: s.firstSeenAt || new Date().toISOString(),
+          last_seen_at: s.lastSeenAt || new Date().toISOString(),
+          login_count: s.loginCount || 1
+        }))
+        .filter(s => validUserIds.has(s.user_id) && s.device_id);
+      if (rows.length) {
+        const { error } = await sb.from('wt_sessions').insert(rows);
+        if (error) throw error;
+      }
     }
     if (replaceSettings && data.settings?.length) {
       for (const s of data.settings) {

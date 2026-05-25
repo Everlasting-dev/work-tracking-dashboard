@@ -2,7 +2,7 @@
 
 ## Discord (already built in)
 
-WorkTracker uses **Discord incoming webhooks** — one-way posts from the app into Discord channels. There is no Discord bot or OAuth yet.
+WorkTracker currently uses **Discord incoming webhooks** for app → Discord posting. True Discord → WorkTracker sync requires a small server-side bot/proxy because browsers cannot safely read Discord channel history.
 
 ### What works today
 
@@ -37,9 +37,21 @@ For assignment pings like `@jawad`:
 
 - Webhook URLs are **secrets** — anyone with the URL can post to that channel. Only admins can edit them in the app.
 - Messages are sent from the **browser** (GitHub Pages). Some networks block `fetch` to Discord; if sends fail, try another network or we can add a small server proxy later.
-- Discord does **not** push messages back into WorkTracker (no true two-way sync without a bot).
+- Discord does **not** push normal channel messages back into WorkTracker without a bot/proxy.
 - **Forum channels:** Discord returns `400` unless the payload includes a `thread_name`. The app retries automatically with thread name `WorkTracker`. For best results, create the webhook on a normal **text channel**, not a forum.
 - If test ping fails, the toast now shows Discord’s error message (e.g. invalid webhook, forum channel, revoked URL).
+
+### Two-way Discord chat plan
+
+To show normal Discord messages inside WorkTracker:
+
+1. Create a Discord bot with `MESSAGE CONTENT INTENT`.
+2. Host a small worker/Edge Function that receives Discord gateway events or polls channel messages.
+3. Store inbound messages in Supabase, ideally `wt_activity_log` with `action = 'sent_message'`, `entity_type = 'chat'`, `project_id`, `details`, and the mapped WorkTracker user.
+4. Map Discord user IDs to WorkTracker users using the Admin → Edit User → Discord ID field.
+5. The existing `#/chat` page can then render both browser-sent messages and bot-ingested Discord messages.
+
+Do not put a Discord bot token in `config.js` or any browser code.
 
 ### Optional next steps (not implemented)
 

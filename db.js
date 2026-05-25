@@ -72,6 +72,20 @@ db.version(6).stores({
   });
 });
 
+db.version(7).stores({
+  projects: '++id, name, type, status, priority, ownerId, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt'
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -190,6 +204,39 @@ const LocalDB = {
     await db.users.update(Number(userId), patch);
   },
 
+  async recordLoginSession(userId, { deviceId = '', deviceLabel = '', userAgent = '', ip = '' } = {}) {
+    if (!userId || !deviceId) return;
+    const now = new Date().toISOString();
+    const existing = await db.sessions.where('[userId+deviceId]').equals([Number(userId), deviceId]).first();
+    if (existing) {
+      await db.sessions.update(existing.id, {
+        deviceLabel,
+        userAgent,
+        ip: ip || existing.ip || '',
+        lastSeenAt: now,
+        loginCount: (existing.loginCount || 0) + 1
+      });
+      return existing.id;
+    }
+    return db.sessions.add({
+      userId: Number(userId),
+      deviceId,
+      deviceLabel,
+      userAgent,
+      ip,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      loginCount: 1
+    });
+  },
+
+  async getUserSessions(userId = null) {
+    const rows = userId
+      ? await db.sessions.where('userId').equals(Number(userId)).toArray()
+      : await db.sessions.toArray();
+    return rows.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
+  },
+
   /* Users */
   async createUser(data) {
     const salt = generateSalt();
@@ -202,6 +249,7 @@ const LocalDB = {
       passwordHash: pwHash,
       salt,
       role: data.role || 'user',
+      color: data.color || '',
       createdAt: now
     });
   },
@@ -280,6 +328,8 @@ const LocalDB = {
       status: data.status || 'active',
       priority: data.priority || 'medium',
       ownerId: data.ownerId || 1,
+      isOngoing: !!data.isOngoing,
+      cadence: data.cadence || '',
       createdAt: now,
       updatedAt: now
     });
@@ -340,6 +390,7 @@ const LocalDB = {
   },
 
   async getAttachment(id) { return db.attachments.get(id); },
+  getAttachmentUrl() { return null; },
 
   async deleteAttachment(id, actorUserId = null) {
     const row = await db.attachments.get(id);
@@ -553,7 +604,7 @@ const LocalDB = {
     ]);
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '',
+      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = await db.settings.toArray();
@@ -569,15 +620,16 @@ const LocalDB = {
     const activityLog = await db.activityLog.toArray();
     const notifications = await db.notifications.toArray();
     const webhooks = await db.webhooks.toArray();
-    return { version: 6, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks };
+    const sessions = await db.sessions.toArray();
+    return { version: 7, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
   },
 
   async importAll(data) {
     const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
-    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog, db.notifications, db.webhooks], async () => {
+    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog, db.notifications, db.webhooks, db.sessions], async () => {
       await Promise.all([
         db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(),
-        db.attachments.clear(), db.activityLog.clear(), db.notifications.clear(), db.webhooks.clear()
+        db.attachments.clear(), db.activityLog.clear(), db.notifications.clear(), db.webhooks.clear(), db.sessions.clear()
       ]);
       if (data.projects?.length) await db.projects.bulkAdd(data.projects);
       if (data.tasks?.length) await db.tasks.bulkAdd(data.tasks);
@@ -604,6 +656,7 @@ const LocalDB = {
       if (data.activityLog?.length) await db.activityLog.bulkAdd(data.activityLog);
       if (data.notifications?.length) await db.notifications.bulkAdd(data.notifications);
       if (data.webhooks?.length) await db.webhooks.bulkAdd(data.webhooks);
+      if (data.sessions?.length) await db.sessions.bulkAdd(data.sessions);
     });
   },
 
