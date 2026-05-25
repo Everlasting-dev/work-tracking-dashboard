@@ -321,6 +321,11 @@ async function handleAuth(e) {
   const type = form.dataset.form;
 
   if (type === 'login') {
+    if (!(await DB.hasUsers())) {
+      showAuthError('The cloud database has no accounts yet. Create the administrator account below.');
+      renderAdminSetup();
+      return;
+    }
     const username = fd.get('username')?.trim();
     const password = fd.get('password');
     if (!username || !password) return;
@@ -356,6 +361,7 @@ async function handleAuth(e) {
     const id = await DB.createUser({ username, displayName, email, password, role: 'admin' });
     await DB.setMasterKey(masterKey);
     setSession({ id, username, displayName, role: 'admin' });
+    showToast('Admin created. Use Import Data in the user menu to restore projects from a JSON backup.', 'success');
     await showApp();
   } else if (type === 'recovery-verify') {
     const mk = fd.get('masterKey');
@@ -392,7 +398,7 @@ async function showApp() {
   updateSidebarUser();
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
-  if (await DB.isEmpty()) await DB.createSampleData(s.userId);
+  if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
@@ -1853,8 +1859,13 @@ function setupImport() {
       const data = JSON.parse(await file.text());
       if (!data.projects || !data.tasks) { showToast('Invalid file', 'error'); return; }
       if (!confirm('Replace all current data?')) return;
-      await DB.importAll(data); showToast('Data imported', 'success'); await router();
-    } catch { showToast('Import failed', 'error'); }
+      await DB.importAll(data);
+      showToast('Data imported into cloud database', 'success');
+      await router();
+    } catch (err) {
+      console.error(err);
+      showToast(err?.message || 'Import failed', 'error');
+    }
     e.target.value = '';
   });
 }
@@ -1869,8 +1880,7 @@ async function applyRoute() {
     document.getElementById('app').style.display = 'none';
     document.getElementById('menu-toggle').style.display = 'none';
     document.getElementById('auth-screen').style.display = 'flex';
-    if (hash === '/setup') renderAdminSetup();
-    else renderLogin();
+    renderAdminSetup();
     return;
   }
 

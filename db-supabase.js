@@ -580,12 +580,145 @@ const SupabaseDB = {
 
   async migrateFromLocalStorage() { return false; },
 
+  async _clearTable(table) {
+    const { error } = await this._sb().from(table).delete().gte('id', 0);
+    if (error) throw error;
+  },
+
+  async _clearSettings() {
+    const { error } = await this._sb().from('wt_settings').delete().neq('key', '');
+    if (error) throw error;
+  },
+
   async exportAll() {
-    return window.LocalDB.exportAll();
+    const sb = this._sb();
+    const [
+      projects, tasks, milestones, updates, users, activityLog, notifications, webhooks,
+      { data: attRows, error: attErr }, { data: settingsRows, error: sErr }
+    ] = await Promise.all([
+      this.getProjects(), this.getTasks(),
+      sb.from('wt_milestones').select('*').then(({ data, error }) => { if (error) throw error; return (data || []).map(r => this._mapMilestone(r)); }),
+      sb.from('wt_updates').select('*').then(({ data, error }) => { if (error) throw error; return (data || []).map(r => this._mapUpdate(r)); }),
+      this.getUsers(), this.getActivityLog({}),
+      sb.from('wt_notifications').select('*').then(({ data, error }) => { if (error) throw error; return (data || []).map(r => this._mapNotification(r)); }),
+      this.getWebhooks(),
+      sb.from('wt_attachments').select('*'),
+      sb.from('wt_settings').select('*')
+    ]);
+    if (attErr) throw attErr;
+    if (sErr) throw sErr;
+    const safeUsers = users.map(u => ({
+      id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
+      role: u.role, createdAt: u.createdAt
+    }));
+    const settings = (settingsRows || []).map(s => ({
+      key: s.key, passwordHash: s.password_hash, salt: s.salt
+    }));
+    const attOut = [];
+    for (const row of attRows || []) {
+      const a = this._mapAttachment(row);
+      const full = await this.getAttachment(a.id);
+      if (!full?.blob) continue;
+      attOut.push({
+        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+        mimeType: a.mimeType, createdAt: a.createdAt,
+        dataBase64: await this.blobToBase64(full.blob)
+      });
+    }
+    return {
+      version: 6, exportedAt: new Date().toISOString(),
+      projects, tasks, milestones, updates, users: safeUsers, settings, attachments: attOut,
+      activityLog, notifications, webhooks
+    };
   },
 
   async importAll(data) {
-    return window.LocalDB.importAll(data);
+    const sb = this._sb();
+    const tables = [
+      'wt_webhooks', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
+      'wt_updates', 'wt_tasks', 'wt_milestones', 'wt_projects'
+    ];
+    for (const table of tables) await this._clearTable(table);
+
+    const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
+    if (replaceSettings) await this._clearSettings();
+
+    if (data.projects?.length) {
+      const { error } = await sb.from('wt_projects').insert(data.projects.map(p => ({
+        id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
+        status: p.status || 'active', priority: p.priority || 'medium', owner_id: p.ownerId,
+        created_at: p.createdAt, updated_at: p.updatedAt
+      })));
+      if (error) throw error;
+    }
+    if (data.milestones?.length) {
+      const { error } = await sb.from('wt_milestones').insert(data.milestones.map(m => ({
+        id: m.id, project_id: m.projectId, title: m.title || '', due_date: m.dueDate || '',
+        status: m.status || 'pending', weight: m.weight ?? 1, created_at: m.createdAt
+      })));
+      if (error) throw error;
+    }
+    if (data.tasks?.length) {
+      const { error } = await sb.from('wt_tasks').insert(data.tasks.map(t => ({
+        id: t.id, project_id: t.projectId, milestone_id: t.milestoneId ?? null,
+        assignee_id: t.assigneeId ?? null, title: t.title || '', due_date: t.dueDate || '',
+        status: t.status || 'todo', priority: t.priority || 'medium',
+        created_at: t.createdAt, updated_at: t.updatedAt
+      })));
+      if (error) throw error;
+    }
+    if (data.updates?.length) {
+      const { error } = await sb.from('wt_updates').insert(data.updates.map(u => ({
+        id: u.id, project_id: u.projectId, user_id: u.userId ?? null,
+        content: u.content || '', created_at: u.createdAt
+      })));
+      if (error) throw error;
+    }
+    if (data.activityLog?.length) {
+      const { error } = await sb.from('wt_activity_log').insert(data.activityLog.map(a => ({
+        id: a.id, user_id: a.userId, project_id: a.projectId ?? null, action: a.action,
+        entity_type: a.entityType || 'system', entity_id: a.entityId ?? null,
+        details: a.details || '', created_at: a.createdAt
+      })));
+      if (error) throw error;
+    }
+    if (data.notifications?.length) {
+      const { error } = await sb.from('wt_notifications').insert(data.notifications.map(n => ({
+        id: n.id, user_id: n.userId, actor_user_id: n.actorUserId ?? null, type: n.type || 'info',
+        entity_type: n.entityType ?? null, entity_id: n.entityId ?? null,
+        project_id: n.projectId ?? null, message: n.message || '',
+        read_at: n.readAt ?? null, created_at: n.createdAt
+      })));
+      if (error) throw error;
+    }
+    if (data.webhooks?.length) {
+      const { error } = await sb.from('wt_webhooks').insert(data.webhooks.map(w => ({
+        id: w.id, scope: w.scope, project_id: w.projectId ?? null, name: w.name || '',
+        url: w.url, channel_url: w.channelUrl || '',
+        created_at: w.createdAt, updated_at: w.updatedAt
+      })));
+      if (error) throw error;
+    }
+    if (replaceSettings && data.settings?.length) {
+      for (const s of data.settings) {
+        if (s.key === 'masterKey' && s.passwordHash && s.salt) {
+          const { error } = await sb.from('wt_settings').upsert({
+            key: 'masterKey', password_hash: s.passwordHash, salt: s.salt
+          });
+          if (error) throw error;
+        }
+      }
+    }
+    if (data.attachments?.length) {
+      for (const a of data.attachments) {
+        if (!a.dataBase64) continue;
+        const blob = this.base64ToBlob(a.dataBase64, a.mimeType);
+        await this.addAttachment({
+          projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+          mimeType: a.mimeType, blob
+        });
+      }
+    }
   },
 
   async createSampleData(ownerId) {
