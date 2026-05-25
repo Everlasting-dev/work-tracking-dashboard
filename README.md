@@ -117,6 +117,15 @@ When no users exist yet, the public landing page shows only the sign-in screen. 
 
 ---
 
+## Discord & AI integrations
+
+See **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** for:
+
+- Step-by-step **Discord webhook** setup (Admin panel, Chat, @mentions)
+- **Claude / Anthropic** integration options (requires a server-side proxy — do not put API keys in the public site)
+
+---
+
 ## Project structure
 
 ```

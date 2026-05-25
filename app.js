@@ -118,20 +118,52 @@ function actorId() { return getSession()?.userId ?? null; }
 
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
 
-const WORKSPACE_CACHE_MS = 8000;
-const USERS_CACHE_MS = 30000;
+const WORKSPACE_CACHE_MS = 120000;
+const USERS_CACHE_MS = 300000;
+const SESSION_CACHE_MS = 600000;
+const SESSION_CACHE_KEY = 'wt-workspace-v1';
+const WEBHOOKS_CACHE_MS = 120000;
+
 let _workspaceCache = null;
 let _workspaceCacheAt = 0;
 let _usersCache = null;
 let _usersCacheAt = 0;
-let _workspaceRefresh = null;
+let _webhooksCache = null;
+let _webhooksCacheAt = 0;
+let _workspaceFetchPromise = null;
+
+function persistWorkspaceCache(data) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+      at: Date.now(),
+      projects: data.projects,
+      tasks: data.tasks,
+      users: data.users
+    }));
+  } catch (_) { /* quota / private mode */ }
+}
+
+function loadPersistedWorkspaceCache() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.projects || Date.now() - parsed.at > SESSION_CACHE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 function bustWorkspaceCache() {
   _workspaceCache = null;
   _workspaceCacheAt = 0;
   _usersCache = null;
   _usersCacheAt = 0;
-  _workspaceRefresh = null;
+  _webhooksCache = null;
+  _webhooksCacheAt = 0;
+  _workspaceFetchPromise = null;
+  try { sessionStorage.removeItem(SESSION_CACHE_KEY); } catch (_) {}
 }
 
 async function getUsersCached(force = false) {
@@ -142,40 +174,62 @@ async function getUsersCached(force = false) {
   return _usersCache;
 }
 
-async function refreshWorkspaceInBackground() {
-  try {
+async function getWebhooksCached(force = false) {
+  const now = Date.now();
+  if (!force && _webhooksCache && now - _webhooksCacheAt < WEBHOOKS_CACHE_MS) return _webhooksCache;
+  _webhooksCache = await DB.getWebhooks();
+  _webhooksCacheAt = now;
+  return _webhooksCache;
+}
+
+async function fetchWorkspaceData() {
+  if (_workspaceFetchPromise) return _workspaceFetchPromise;
+  _workspaceFetchPromise = (async () => {
     const [projects, tasks, users] = await Promise.all([
       DB.getProjects(),
       DB.getTasks(),
       getUsersCached(true)
     ]);
-    _workspaceCache = { projects, tasks, users };
+    const data = { projects, tasks, users };
+    _workspaceCache = data;
     _workspaceCacheAt = Date.now();
-  } catch (err) {
-    console.warn('workspace refresh failed', err);
-  } finally {
-    _workspaceRefresh = null;
-  }
+    persistWorkspaceCache(data);
+    return data;
+  })().finally(() => { _workspaceFetchPromise = null; });
+  return _workspaceFetchPromise;
 }
 
 async function getWorkspaceData(force = false) {
   const now = Date.now();
-  const fresh = !force && _workspaceCache && now - _workspaceCacheAt < WORKSPACE_CACHE_MS;
-  if (fresh) return _workspaceCache;
-
-  if (!force && _workspaceCache && !_workspaceRefresh) {
-    _workspaceRefresh = refreshWorkspaceInBackground();
+  if (!force && _workspaceCache && now - _workspaceCacheAt < WORKSPACE_CACHE_MS) {
     return _workspaceCache;
   }
 
-  const [projects, tasks, users] = await Promise.all([
-    DB.getProjects(),
-    DB.getTasks(),
-    getUsersCached(force)
-  ]);
-  _workspaceCache = { projects, tasks, users };
-  _workspaceCacheAt = now;
-  return _workspaceCache;
+  if (!force && !_workspaceCache) {
+    const persisted = loadPersistedWorkspaceCache();
+    if (persisted) {
+      _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+      _workspaceCacheAt = persisted.at;
+      _usersCache = persisted.users;
+      _usersCacheAt = persisted.at;
+      if (now - persisted.at < WORKSPACE_CACHE_MS) return _workspaceCache;
+    }
+  }
+
+  return fetchWorkspaceData();
+}
+
+function prewarmWorkspaceCache() {
+  if (_workspaceCache || _workspaceFetchPromise) return;
+  const persisted = loadPersistedWorkspaceCache();
+  if (persisted && Date.now() - persisted.at < WORKSPACE_CACHE_MS) {
+    _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+    _workspaceCacheAt = persisted.at;
+    _usersCache = persisted.users;
+    _usersCacheAt = persisted.at;
+    return;
+  }
+  fetchWorkspaceData().catch(err => console.warn('prewarm failed', err));
 }
 
 function projectStatsFromTasks(tasks, projectId) {
@@ -476,6 +530,7 @@ async function showApp() {
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
   if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
+  prewarmWorkspaceCache();
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
@@ -991,12 +1046,12 @@ async function renderAdmin() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   const s = getSession();
-  const [{ users, projects }, hasMk, generalHook, projectHooksAll] = await Promise.all([
+  const [{ users, projects }, hasMk, projectHooksAll] = await Promise.all([
     getWorkspaceData(),
     DB.hasMasterKey(),
-    DB.getGeneralWebhook(),
-    DB.getWebhooks()
+    getWebhooksCached()
   ]);
+  const generalHook = projectHooksAll.find(h => h.scope === 'general');
   const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const masterKeySection = !hasMk ? `
     <section class="section-card" style="margin-bottom:24px">
@@ -1039,7 +1094,7 @@ async function renderAdmin() {
       <div class="section-body" style="padding:20px">
         <p class="text-secondary text-sm" style="margin-bottom:14px">
           Each channel is bound to a <strong>Discord webhook URL</strong>. The app posts chat messages and event notifications to that URL.
-          Webhook URLs are stored only in this browser. To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
+          Webhook URLs are saved in your cloud database (visible to all admins). To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
         </p>
         <div class="integrations-grid">
           <div class="integration-card">
@@ -1089,9 +1144,9 @@ async function renderAdmin() {
 
 async function renderChat() {
   const content = document.getElementById('content');
-  const projects = await DB.getProjects();
+  const { projects } = await getWorkspaceData();
   const myProjects = isAdmin() ? projects : projects.filter(p => p.ownerId === actorId());
-  const allHooks = await DB.getWebhooks();
+  const allHooks = await getWebhooksCached();
   const generalHook = allHooks.find(h => h.scope === 'general');
   const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
 
@@ -1863,7 +1918,10 @@ const actions = {
     if (!isAdmin()) return;
     if (!confirm('Remove this Discord webhook?')) return;
     await DB.deleteWebhook(Number(b.dataset.id));
+    _webhooksCache = null;
+    _webhooksCacheAt = 0;
     showToast('Webhook removed', 'info');
+    bustWorkspaceCache();
     await router();
   }
 };
