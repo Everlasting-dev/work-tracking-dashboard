@@ -116,7 +116,21 @@ const LocalDB = {
 
   async getUsers() { return db.users.toArray(); },
 
-  async updateUser(id, changes) { return db.users.update(id, changes); },
+  async updateUser(id, changes, actorUserId = null) {
+    const patch = { ...changes };
+    if (patch.username != null) {
+      const next = String(patch.username).trim().toLowerCase();
+      if (!next) throw new Error('Username cannot be empty');
+      const existing = await db.users.where('username').equals(next).first();
+      if (existing && existing.id !== id) throw new Error('Username already taken');
+      patch.username = next;
+    }
+    await db.users.update(id, patch);
+    if (actorUserId) {
+      const details = Object.keys(patch).join(',');
+      await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'updated', entityType: 'user', entityId: id, details });
+    }
+  },
 
   async changePassword(userId, newPassword, actorUserId = null) {
     const salt = generateSalt();

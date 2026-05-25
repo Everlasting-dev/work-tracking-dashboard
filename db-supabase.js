@@ -121,13 +121,21 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapUser(r));
   },
 
-  async updateUser(id, changes) {
+  async updateUser(id, changes, actorUserId = null) {
     const patch = {};
     if (changes.displayName != null) patch.display_name = changes.displayName;
     if (changes.email != null) patch.email = changes.email;
     if (changes.role != null) patch.role = changes.role;
+    if (changes.username != null) {
+      const next = String(changes.username).trim().toLowerCase();
+      if (!next) throw new Error('Username cannot be empty');
+      const { data: conflict } = await this._sb().from('wt_users').select('id').eq('username', next).maybeSingle();
+      if (conflict && conflict.id !== id) throw new Error('Username already taken');
+      patch.username = next;
+    }
     const { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
     if (error) throw error;
+    if (actorUserId) await this.logActivity({ userId: actorUserId, action: 'updated', entityType: 'user', entityId: id, details: Object.keys(patch).join(',') });
   },
 
   async changePassword(userId, newPassword, actorUserId = null) {

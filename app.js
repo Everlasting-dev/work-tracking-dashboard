@@ -753,6 +753,7 @@ async function renderAdmin() {
             ${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')}
           </div>
           <div class="user-row-actions">
+            <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
             ${u.id !== s.userId ? `<button class="btn-icon" data-action="delete-user" data-id="${u.id}" title="Delete user">${ICONS.trash}</button>` : ''}
           </div>
@@ -847,6 +848,29 @@ function showAddUserModal() {
       <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
+    </form>`);
+}
+
+async function showEditUserModal(uid) {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const u = await DB.getUser(uid);
+  if (!u) { showToast('User not found', 'error'); return; }
+  const s = getSession();
+  const isSelf = u.id === s.userId;
+  showModal('Edit User', `
+    <form data-form="edit-user" data-user-id="${u.id}">
+      <p class="text-muted text-sm" style="margin-bottom:12px">Rename the account, change the display name, email, or role.${isSelf ? ' <strong>This is your own account.</strong>' : ''}</p>
+      <div class="form-group"><label>Username</label><input name="username" type="text" value="${esc(u.username)}" required autocomplete="off"></div>
+      <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(u.displayName || '')}" required></div>
+      <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
+      <div class="form-group"><label>Role</label>
+        <select name="role" ${isSelf ? 'disabled' : ''}>
+          <option value="user" ${u.role === 'user' ? 'selected' : ''}>Member</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        ${isSelf ? '<p class="text-muted text-sm" style="margin-top:4px">You cannot change your own role.</p>' : ''}
+      </div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save changes</button></div>
     </form>`);
 }
 
@@ -978,6 +1002,32 @@ async function handleFormSubmit(e) {
       if (pw !== confirm) { showToast('Passwords do not match', 'error'); return; }
       await DB.changePassword(Number(form.dataset.userId), pw, actorId());
       showToast('Password reset', 'success');
+    } else if (type === 'edit-user') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const targetId = Number(form.dataset.userId);
+      const username = fd.get('username')?.trim().toLowerCase();
+      const displayName = fd.get('displayName')?.trim();
+      const email = fd.get('email')?.trim() || '';
+      const role = fd.get('role');
+      if (!username) { showToast('Username is required', 'warning'); return; }
+      if (!displayName) { showToast('Display name is required', 'warning'); return; }
+      if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2–32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
+      const s = getSession();
+      const isSelf = targetId === s.userId;
+      const changes = { username, displayName, email };
+      if (!isSelf && role) changes.role = role;
+      try {
+        await DB.updateUser(targetId, changes, s.userId);
+      } catch (err) {
+        showToast(err?.message || 'Could not update user', 'error');
+        return;
+      }
+      if (isSelf) {
+        const updated = await DB.getUser(targetId);
+        if (updated) setSession(updated);
+        updateSidebarUser();
+      }
+      showToast('User updated', 'success');
     } else if (type === 'edit-profile') {
       const s = getSession(); if (!s) return;
       const displayName = fd.get('displayName')?.trim();
@@ -1100,6 +1150,7 @@ const actions = {
     await router();
   },
   'add-user': () => showAddUserModal(),
+  'edit-user': (b) => showEditUserModal(Number(b.dataset.id)),
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
