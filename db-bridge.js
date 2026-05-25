@@ -12,6 +12,7 @@ async function bootstrapDB() {
       return;
     } catch (err) {
       console.error('Supabase connection failed, falling back to IndexedDB:', err);
+      window.WT_SUPABASE_ERROR = err?.message || String(err);
     }
   }
 

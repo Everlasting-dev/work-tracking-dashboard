@@ -49,6 +49,29 @@ db.version(5).stores({
   activityLog: '++id, userId, projectId, action, entityType, createdAt'
 });
 
+db.version(6).stores({
+  projects: '++id, name, type, status, priority, ownerId, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt'
+}).upgrade(tx => {
+  // Backfill assigneeId on existing tasks to the project owner so nothing looks unassigned.
+  return tx.table('tasks').toCollection().modify(async task => {
+    if (task.assigneeId == null) {
+      try {
+        const proj = await tx.table('projects').get(task.projectId);
+        task.assigneeId = proj?.ownerId ?? null;
+      } catch { task.assigneeId = null; }
+    }
+  });
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -89,7 +112,82 @@ const LocalDB = {
     if (filters.viewerUserId != null && !filters.isAdmin) {
       rows = rows.filter(r => r.userId === filters.viewerUserId);
     }
+    if (filters.limit) rows = rows.slice(0, filters.limit);
     return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
+  /* Notifications (in-app bell) */
+  async createNotification({ userId, type, entityType = null, entityId = null, projectId = null, message = '', actorUserId = null }) {
+    if (!userId) return;
+    return db.notifications.add({
+      userId: Number(userId),
+      type: type || 'info',
+      entityType,
+      entityId,
+      projectId,
+      message,
+      actorUserId: actorUserId ?? null,
+      readAt: null,
+      createdAt: new Date().toISOString()
+    });
+  },
+  async getNotifications(userId, { unreadOnly = false, limit = 50 } = {}) {
+    let rows = await db.notifications.where('userId').equals(Number(userId)).toArray();
+    if (unreadOnly) rows = rows.filter(r => !r.readAt);
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return rows.slice(0, limit);
+  },
+  async getUnreadNotificationCount(userId) {
+    const rows = await db.notifications.where('userId').equals(Number(userId)).toArray();
+    return rows.filter(r => !r.readAt).length;
+  },
+  async markNotificationRead(id) {
+    return db.notifications.update(Number(id), { readAt: new Date().toISOString() });
+  },
+  async markAllNotificationsRead(userId) {
+    const rows = await db.notifications.where('userId').equals(Number(userId)).toArray();
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      if (!r.readAt) await db.notifications.update(r.id, { readAt: now });
+    }
+  },
+
+  /* Webhooks (Discord bridge config) */
+  async getWebhooks() { return db.webhooks.toArray(); },
+  async getGeneralWebhook() {
+    const rows = await db.webhooks.where('scope').equals('general').toArray();
+    return rows[0] || null;
+  },
+  async getProjectWebhook(projectId) {
+    const rows = await db.webhooks.where('projectId').equals(Number(projectId)).toArray();
+    return rows[0] || null;
+  },
+  async saveGeneralWebhook({ url, channelUrl = '' }) {
+    const existing = await this.getGeneralWebhook();
+    const now = new Date().toISOString();
+    if (existing) {
+      await db.webhooks.update(existing.id, { url, channelUrl, updatedAt: now });
+      return existing.id;
+    }
+    return db.webhooks.add({ scope: 'general', projectId: null, name: '#general', url, channelUrl, createdAt: now, updatedAt: now });
+  },
+  async saveProjectWebhook(projectId, { url, channelUrl = '', name = '' }) {
+    const existing = await this.getProjectWebhook(projectId);
+    const now = new Date().toISOString();
+    if (existing) {
+      await db.webhooks.update(existing.id, { url, channelUrl, name: name || existing.name, updatedAt: now });
+      return existing.id;
+    }
+    return db.webhooks.add({ scope: 'project', projectId: Number(projectId), name: name || `#project-${projectId}`, url, channelUrl, createdAt: now, updatedAt: now });
+  },
+  async deleteWebhook(id) { return db.webhooks.delete(Number(id)); },
+
+  /* Last-seen / IP capture (client-reported) */
+  async touchLastSeen(userId, ip = null) {
+    if (!userId) return;
+    const patch = { lastSeenAt: new Date().toISOString() };
+    if (ip) patch.lastSeenIp = ip;
+    await db.users.update(Number(userId), patch);
   },
 
   /* Users */
@@ -277,9 +375,11 @@ const LocalDB = {
     const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
     const title = data.title || '';
+    const assigneeId = data.assigneeId != null ? Number(data.assigneeId) : (actorUserId ?? null);
     const taskId = await db.tasks.add({
       projectId: data.projectId,
       milestoneId: data.milestoneId || null,
+      assigneeId,
       title,
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
@@ -304,6 +404,7 @@ const LocalDB = {
   async updateTask(id, changes, actorUserId = null) {
     const patch = { ...changes };
     delete patch.actorUserId;
+    if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
     patch.updatedAt = new Date().toISOString();
     const task = await db.tasks.get(id);
     await db.tasks.update(id, patch);
@@ -314,6 +415,7 @@ const LocalDB = {
         await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
+    return task;
   },
 
   async deleteTask(id, actorUserId = null) {
@@ -460,13 +562,18 @@ const LocalDB = {
       });
     }
     const activityLog = await db.activityLog.toArray();
-    return { version: 5, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog };
+    const notifications = await db.notifications.toArray();
+    const webhooks = await db.webhooks.toArray();
+    return { version: 6, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks };
   },
 
   async importAll(data) {
     const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
-    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog], async () => {
-      await Promise.all([db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(), db.attachments.clear(), db.activityLog.clear()]);
+    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog, db.notifications, db.webhooks], async () => {
+      await Promise.all([
+        db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(),
+        db.attachments.clear(), db.activityLog.clear(), db.notifications.clear(), db.webhooks.clear()
+      ]);
       if (data.projects?.length) await db.projects.bulkAdd(data.projects);
       if (data.tasks?.length) await db.tasks.bulkAdd(data.tasks);
       if (data.milestones?.length) await db.milestones.bulkAdd(data.milestones);
@@ -490,6 +597,8 @@ const LocalDB = {
         }
       }
       if (data.activityLog?.length) await db.activityLog.bulkAdd(data.activityLog);
+      if (data.notifications?.length) await db.notifications.bulkAdd(data.notifications);
+      if (data.webhooks?.length) await db.webhooks.bulkAdd(data.webhooks);
     });
   },
 

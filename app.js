@@ -23,6 +23,11 @@ const ICONS = {
   crown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.5 19h19l-1.5-9-4.5 4-3-7-3 7-4.5-4z"/></svg>',
   userCog: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><circle cx="18" cy="15" r="3"/><path d="m21.7 16.4-.9-.3M15.2 13.9l-.9-.3M16.6 18.7l.3-.9M13.9 12.2l.3-.9M19.7 18.3l-.4 1M15.3 12.6l-.4 1M20.6 13.8l-.9.3M14.1 16.3l-.9.3"/></svg>',
   sparkles: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>',
+  bell: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+  chat: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  externalLink: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>',
+  gauge: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>',
+  send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
 };
 
 /* ──── Utilities ──── */
@@ -70,7 +75,36 @@ function progressBar(pct, sz = '') {
 function statCard(label, val, color, icon) {
   return `<div class="stat-card"><div class="stat-icon stat-icon-${color}">${icon}</div><div class="stat-info"><span class="stat-value">${val}</span><span class="stat-label">${label}</span></div></div>`;
 }
-function emptyState(m) { return `<div class="empty-state">${m}</div>`; }
+const EMPTY_ICONS = {
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
+};
+
+function emptyState(opts) {
+  if (typeof opts === 'string') return `<div class="empty-state">${esc(opts)}</div>`;
+  const {
+    icon = 'folder',
+    title = 'Nothing here yet',
+    description = '',
+    cta = '',
+    ctaAction = '',
+    ctaData = {}
+  } = opts;
+  const iconSvg = EMPTY_ICONS[icon] || EMPTY_ICONS.folder;
+  const ctaAttrs = Object.entries(ctaData).map(([k, v]) => ` data-${k}="${esc(String(v))}"`).join('');
+  const ctaHtml = cta && ctaAction
+    ? `<button type="button" class="btn btn-primary" data-action="${esc(ctaAction)}"${ctaAttrs}>${esc(cta)}</button>`
+    : '';
+  return `<div class="empty-state-rich">
+    <div class="empty-state-icon">${iconSvg}</div>
+    <h3>${esc(title)}</h3>
+    ${description ? `<p>${esc(description)}</p>` : ''}
+    ${ctaHtml}
+  </div>`;
+}
 
 /* ──── Session ──── */
 
@@ -80,6 +114,72 @@ function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
 function actorId() { return getSession()?.userId ?? null; }
+
+/* ──── Discord webhook helper ──── */
+
+async function postToDiscordWebhook(url, payload) {
+  if (!url) return { ok: false, reason: 'no-url' };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal
+    });
+    clearTimeout(t);
+    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.name === 'AbortError' ? 'timeout' : 'network' };
+  }
+}
+
+async function fireDiscordEvent({ projectId = null, content, username = null }) {
+  let hook = null;
+  if (projectId != null) hook = await DB.getProjectWebhook(projectId);
+  if (!hook) hook = await DB.getGeneralWebhook();
+  if (!hook?.url) return { ok: false, reason: 'no-hook' };
+  const session = getSession();
+  return postToDiscordWebhook(hook.url, {
+    username: username || (session?.displayName ? `${session.displayName} · WorkTracker` : 'WorkTracker'),
+    content,
+    allowed_mentions: { parse: ['users', 'roles'] }
+  });
+}
+
+/* ──── In-app notification helper ──── */
+
+async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null, discordContent = null }) {
+  if (userId) {
+    await DB.createNotification({ userId, type, message, projectId, entityType, entityId, actorUserId });
+  }
+  if (discordContent) {
+    await fireDiscordEvent({ projectId, content: discordContent });
+  }
+  refreshNotificationBadge().catch(() => {});
+}
+
+/* ──── Last-seen / IP capture ──── */
+
+async function captureLastSeen(userId) {
+  if (!userId) return;
+  try {
+    let ip = null;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2200);
+    try {
+      const r = await fetch('https://api.ipify.org?format=json', { signal: ctrl.signal });
+      if (r.ok) {
+        const d = await r.json();
+        ip = d?.ip || null;
+      }
+    } catch (_) { /* offline / blocked / timeout */ }
+    clearTimeout(t);
+    await DB.touchLastSeen(userId, ip);
+  } catch (_) { /* ignore */ }
+}
 
 function effectiveWorkspaceScope() {
   if (isAdmin()) return state.workspaceScope ?? 'everyone';
@@ -112,6 +212,8 @@ const state = {
   workspaceScope: null,
   docPanelOpen: true,
   userMenuOpen: false,
+  notifOpen: false,
+  chatChannel: null,
   _libraryBlobUrls: [],
   _previewUrl: null
 };
@@ -227,7 +329,12 @@ async function handleAuth(e) {
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
     setSession(user);
-    await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: user.username });
+    // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
+    captureLastSeen(user.id).then(async () => {
+      const fresh = await DB.getUser(user.id);
+      const ip = fresh?.lastSeenIp;
+      await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: ip ? `${user.username} · ${ip}` : user.username });
+    }).catch(() => {});
     await showApp();
   } else if (type === 'admin-setup') {
     if (await DB.hasUsers()) { showAuthError('An account already exists. Sign in.'); return; }
@@ -306,8 +413,10 @@ function updateSidebarUser() {
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
-  const nav = document.getElementById('nav-admin');
-  if (nav) nav.style.display = s.role === 'admin' ? '' : 'none';
+  const adminNav = document.getElementById('nav-admin');
+  const dashNav = document.getElementById('nav-dashboard');
+  if (adminNav) adminNav.style.display = s.role === 'admin' ? '' : 'none';
+  if (dashNav) dashNav.style.display = s.role === 'admin' ? '' : 'none';
   renderUserMenu();
 }
 
@@ -399,18 +508,35 @@ async function renderProjects() {
     <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
       <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
     </div>
-    ${pData.length === 0 ? emptyState(f === 'all' ? 'No projects yet.' : `No ${fLabels[f].toLowerCase()} projects.`) :
+    ${pData.length === 0 ? emptyState(f === 'all' ? {
+      icon: 'folder',
+      title: 'No projects yet',
+      description: 'Create a project to organize tasks, milestones, and files for your team.',
+      cta: 'Create your first project',
+      ctaAction: 'add-project'
+    } : {
+      icon: 'folder',
+      title: `No ${fLabels[f].toLowerCase()} projects`,
+      description: 'Try another filter or create a new project.'
+    }) :
     `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; return `
       <a href="#/projects/${p.id}" class="project-card">
         <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${!mine ? badge('View Only', 'muted') : ''}</div>
-        <h3 class="project-card-title">${esc(p.name)}</h3>
+        <h3 class="project-card-title" title="${esc(p.name)}"><span class="title-text">${esc(p.name)}</span></h3>
         <p class="project-card-notes">${esc(p.notes || 'No description')}</p>
         <div class="project-card-progress">${progressBar(p.progress)}<span class="text-muted text-sm">${p.progress}% &middot; ${p.doneCount}/${p.taskCount} tasks</span></div>
         <div class="project-card-footer">
           <span class="text-muted text-sm">${ICONS.clock} ${timeAgo(p.updatedAt)}</span>
-          <span class="text-muted text-sm">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}</span>
+          <span class="text-muted text-sm">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
         </div>
       </a>`; }).join('')}</div>`}`;
+
+  // Tag overflowing card titles so CSS can animate them on hover.
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.project-card-title > .title-text').forEach(el => {
+      if (el.scrollWidth - el.clientWidth > 2) el.classList.add('is-overflowing');
+    });
+  });
 }
 
 async function renderProjectDetail(projectId) {
@@ -430,9 +556,12 @@ async function renderProjectDetail(projectId) {
 
   const s = getSession();
   const editable = canEdit(project);
-  const canSeeTasks = editable; // Tasks are private: only owner/admin can see them
-  const progress = canSeeTasks ? await DB.getProjectProgress(projectId) : null;
-  const tasks = canSeeTasks ? await DB.getTasks({ projectId }) : [];
+  // Owner/admin sees everything; non-owners see only tasks assigned to them.
+  const allProjectTasks = await DB.getTasks({ projectId });
+  const visibleTasks = editable ? allProjectTasks : allProjectTasks.filter(t => t.assigneeId === s.userId);
+  const canSeeTasks = editable || visibleTasks.length > 0;
+  const progress = editable ? await DB.getProjectProgress(projectId) : null;
+  const tasks = visibleTasks;
   const milestones = await DB.getMilestones(projectId);
   const users = await DB.getUsers();
   const owner = users.find(u => u.id === project.ownerId);
@@ -567,11 +696,22 @@ async function renderTab(tab, projectId, editable) {
   const el = document.getElementById('tab-content'); if (!el) return;
 
   if (tab === 'tasks') {
-    const tasks = await DB.getTasks({ projectId });
+    const s = getSession();
+    const allTasks = await DB.getTasks({ projectId });
+    const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
+    const users = await DB.getUsers();
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button></div>` : ''}
-      ${tasks.length === 0 ? emptyState('No tasks yet.') :
-      `<div class="task-list">${tasks.map(t => { const od = isOverdue(t.dueDate) && t.status !== 'done'; return `
+      ${tasks.length === 0 ? emptyState({
+        icon: 'tasks',
+        title: 'No tasks in this project',
+        description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
+        cta: editable ? 'Add a task' : '',
+        ctaAction: editable ? 'add-task' : '',
+        ctaData: editable ? { 'project-id': projectId } : {}
+      }) :
+      `<div class="task-list">${tasks.map(t => { const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
         <div class="task-item ${t.status === 'done' ? 'task-done' : ''}">
           <div class="task-item-left">
             ${editable
@@ -580,6 +720,9 @@ async function renderTab(tab, projectId, editable) {
             <div class="task-item-info">
               <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
               <div class="task-item-meta">
+                ${editable
+                  ? `<button type="button" class="btn-icon" data-action="assign-task" data-id="${t.id}" title="Reassign" style="padding:0;background:none;border:none">${assigneeChipHtml(assignee)}</button>`
+                  : assigneeChipHtml(assignee)}
                 ${t.dueDate ? `<span class="${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
                 ${t.priority !== 'medium' ? prioBadge(t.priority) : ''}
               </div>
@@ -594,7 +737,14 @@ async function renderTab(tab, projectId, editable) {
     const ms = await DB.getMilestones(projectId);
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-milestone" data-project-id="${projectId}">${ICONS.plus} Add Milestone</button></div>` : ''}
-      ${ms.length === 0 ? emptyState('No milestones yet.') :
+      ${ms.length === 0 ? emptyState({
+        icon: 'flag',
+        title: 'No milestones yet',
+        description: 'Milestones help track bigger goals inside this project.',
+        cta: editable ? 'Add milestone' : '',
+        ctaAction: editable ? 'add-milestone' : '',
+        ctaData: editable ? { 'project-id': projectId } : {}
+      }) :
       `<div class="milestone-list">${ms.map(m => `
         <div class="milestone-item">
           <div class="milestone-icon">${ICONS.flag}</div>
@@ -641,7 +791,14 @@ async function renderTab(tab, projectId, editable) {
     }).join('');
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button type="button" class="btn btn-sm btn-primary" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.plus} Upload files</button><span class="text-muted text-sm tab-hint">Max 10 MB per file. Click to preview.</span></div>` : `<p class="text-muted text-sm tab-hint">View files in the panel on the right, or open from the grid below.</p>`}
-      ${items.length === 0 ? emptyState('No files yet. Use the Documents panel or Upload to add files.') : `<div class="library-grid">${cards}</div>`}`;
+      ${items.length === 0 ? emptyState({
+        icon: 'file',
+        title: 'No files in the library',
+        description: 'Upload PDFs, images, or documents from the panel on the right or the button above.',
+        cta: editable ? 'Upload files' : '',
+        ctaAction: editable ? 'library-pick-upload' : '',
+        ctaData: editable ? { 'project-id': projectId } : {}
+      }) : `<div class="library-grid">${cards}</div>`}`;
     await renderDocumentPanel(projectId, editable);
   } else if (tab === 'updates') {
     const s = getSession();
@@ -655,7 +812,11 @@ async function renderTab(tab, projectId, editable) {
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add Note</button></div>` : ''}
       <p class="text-muted text-sm tab-hint activity-hint">Activity log — visible to you${isAdmin() ? ' and all admins' : ''}.</p>
-      ${logs.length === 0 ? emptyState('No activity recorded yet.') :
+      ${logs.length === 0 ? emptyState({
+        icon: 'activity',
+        title: 'No activity yet',
+        description: 'Changes to this project will appear here automatically.'
+      }) :
       `<div class="activity-log">${logs.map(entry => {
         const who = uMap[entry.userId];
         const init = who ? (who.displayName || who.username).charAt(0).toUpperCase() : '?';
@@ -674,11 +835,14 @@ async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
   const allProjects = await DB.getProjects();
-  // Tasks are private per project: only the owner (or admin) can see them.
-  const myProjects = isAdmin() ? allProjects : allProjects.filter(p => p.ownerId === s.userId);
-  const pids = new Set(myProjects.map(p => p.id));
+  // Tasks are private per project owner. Non-admin members ALSO see tasks assigned to them.
+  const myProjectIds = new Set(allProjects.filter(p => p.ownerId === s.userId).map(p => p.id));
+  const allUsers = await DB.getUsers();
+  const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
   let all = await DB.getTasks();
-  all = all.filter(t => pids.has(t.projectId));
+  if (!isAdmin()) {
+    all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
+  }
   const f = state.taskFilter;
   const tasks = f === 'all' ? all : all.filter(t => t.status === f);
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
@@ -686,20 +850,30 @@ async function renderTasks() {
   const fLabels = { all: 'All', todo: 'To Do', doing: 'In Progress', done: 'Done' };
 
   const privacyHint = !isAdmin()
-    ? `<p class="text-muted text-sm workspace-hint">Tasks are private to each project owner. You see only your own tasks here.</p>`
+    ? `<p class="text-muted text-sm workspace-hint">You see tasks from projects you own plus any task assigned to you.</p>`
     : '';
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} ${isAdmin() ? 'tasks in this workspace' : 'of your tasks'}</p></div>
+      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} ${isAdmin() ? 'tasks in this workspace' : 'tasks visible to you'}</p></div>
       <div class="view-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
     </div>
     ${privacyHint}
     <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
       <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-tasks" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
     </div>
-    ${tasks.length === 0 ? emptyState(f === 'all' ? 'No tasks yet.' : `No ${fLabels[f].toLowerCase()} tasks.`) :
-    `<div class="task-table">${tasks.map(t => { const proj = pMap[t.projectId]; const editable = proj && canEdit(proj); const od = isOverdue(t.dueDate) && t.status !== 'done'; return `
+    ${tasks.length === 0 ? emptyState(f === 'all' ? {
+      icon: 'tasks',
+      title: 'No tasks yet',
+      description: 'Add tasks from a project or use New Task to pick a project.',
+      cta: 'New Task',
+      ctaAction: 'add-task'
+    } : {
+      icon: 'tasks',
+      title: `No ${fLabels[f].toLowerCase()} tasks`,
+      description: 'Try another status filter or create a new task.'
+    }) :
+    `<div class="task-table">${tasks.map(t => { const proj = pMap[t.projectId]; const editable = proj && canEdit(proj); const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
       <div class="task-table-row ${t.status === 'done' ? 'task-done' : ''}">
         <div class="task-table-left">
           ${editable
@@ -711,6 +885,9 @@ async function renderTasks() {
           </div>
         </div>
         <div class="task-table-right">
+          ${editable
+            ? `<button type="button" class="btn-icon" data-action="assign-task" data-id="${t.id}" title="Reassign" style="padding:0;background:none;border:none">${assigneeChipHtml(assignee)}</button>`
+            : assigneeChipHtml(assignee)}
           ${t.dueDate ? `<span class="due-date ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : ''}">${formatDateShort(t.dueDate)}</span>` : '<span class="text-muted text-sm">No date</span>'}
           ${prioBadge(t.priority)} ${taskBadge(t.status)}
           ${editable ? `<button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
@@ -724,6 +901,10 @@ async function renderAdmin() {
   const users = await DB.getUsers();
   const s = getSession();
   const hasMk = await DB.hasMasterKey();
+  const generalHook = await DB.getGeneralWebhook();
+  const projects = await DB.getProjects();
+  const projectHooksAll = await DB.getWebhooks();
+  const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const masterKeySection = !hasMk ? `
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header"><h2>Master recovery key</h2></div>
@@ -760,6 +941,48 @@ async function renderAdmin() {
         </div>`).join('')}
       </div>
     </section>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>${ICONS.chat} Discord Integrations</h2></div>
+      <div class="section-body" style="padding:20px">
+        <p class="text-secondary text-sm" style="margin-bottom:14px">
+          Each channel is bound to a <strong>Discord webhook URL</strong>. The app posts chat messages and event notifications to that URL.
+          Webhook URLs are stored only in this browser. To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
+        </p>
+        <div class="integrations-grid">
+          <div class="integration-card">
+            <h3>${ICONS.chat} #general channel</h3>
+            <p class="text-secondary text-sm">The default channel for events that don't belong to a specific project.</p>
+            <form data-form="webhook-general">
+              <div class="webhook-input">
+                <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(generalHook?.url || '')}">
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              </div>
+              <div class="webhook-input">
+                <input type="url" name="channelUrl" placeholder="Optional: https://discord.com/channels/SERVER/CHANNEL (for 'Open in Discord' link)" value="${esc(generalHook?.channelUrl || '')}">
+              </div>
+              ${generalHook ? `<span class="integration-meta">Saved ${timeAgo(generalHook.updatedAt || generalHook.createdAt)} · <button type="button" class="btn-link" data-action="test-webhook" data-scope="general">Send test ping</button></span>` : ''}
+            </form>
+          </div>
+          ${projects.map(p => {
+            const h = hookByProject[p.id];
+            return `<div class="integration-card">
+              <h3>${ICONS.folder} ${esc(p.name)}</h3>
+              <p class="text-secondary text-sm">Project channel for ${esc(p.name)} events.</p>
+              <form data-form="webhook-project" data-project-id="${p.id}">
+                <div class="webhook-input">
+                  <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(h?.url || '')}">
+                  <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                </div>
+                <div class="webhook-input">
+                  <input type="url" name="channelUrl" placeholder="Optional: Discord channel URL" value="${esc(h?.channelUrl || '')}">
+                </div>
+                ${h ? `<span class="integration-meta">Saved ${timeAgo(h.updatedAt || h.createdAt)} · <button type="button" class="btn-link" data-action="test-webhook" data-scope="project" data-project-id="${p.id}">Send test ping</button> · <button type="button" class="btn-link btn-danger-text" data-action="delete-webhook" data-id="${h.id}">Remove</button></span>` : ''}
+              </form>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </section>
     <section class="section-card">
       <div class="section-header"><h2>Data Management</h2></div>
       <div class="section-body" style="padding:20px">
@@ -768,6 +991,213 @@ async function renderAdmin() {
       </div>
     </section>`;
 }
+
+/* ──── Chat (Discord bridge) ──── */
+
+async function renderChat() {
+  const content = document.getElementById('content');
+  const projects = await DB.getProjects();
+  const myProjects = isAdmin() ? projects : projects.filter(p => p.ownerId === actorId());
+  const allHooks = await DB.getWebhooks();
+  const generalHook = allHooks.find(h => h.scope === 'general');
+  const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
+
+  const channels = [
+    { id: 'general', name: 'general', label: '#general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '' }
+  ];
+  for (const p of projects) {
+    const h = projectHookMap[p.id];
+    if (h?.url) channels.push({ id: `project-${p.id}`, name: p.name, label: `#${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}`, webhook: h, channelUrl: h.channelUrl || '', projectId: p.id });
+  }
+
+  if (!state.chatChannel) state.chatChannel = channels[0]?.id || 'general';
+  const active = channels.find(c => c.id === state.chatChannel) || channels[0];
+
+  const channelList = `
+    <div class="chat-channels">
+      <h3>Channels</h3>
+      ${channels.map(c => `
+        <button type="button" class="chat-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
+          <span class="channel-hash">#</span>
+          <span class="chat-channel-name">${esc(c.name)}</span>
+        </button>`).join('')}
+      ${isAdmin() ? `<button type="button" class="chat-channel-btn" data-action="configure-chat" style="margin-top:8px;color:var(--accent-text)">${ICONS.plus} Configure channels</button>` : ''}
+    </div>`;
+
+  const configuredMain = active?.webhook?.url ? `
+    <div class="chat-main">
+      <div class="chat-header">
+        <h2>${ICONS.chat} ${esc(active.name)}</h2>
+        ${active.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Open in Discord</a>` : ''}
+      </div>
+      <div class="chat-body">
+        <div class="chat-empty-icon">${ICONS.chat}</div>
+        <h3 style="color:var(--text);margin-bottom:4px">Messages live in Discord</h3>
+        <p>Anything you send here gets posted to the bound Discord channel.<br>${active.channelUrl ? 'Use the <em>Open in Discord</em> button to read replies.' : 'Add a Discord channel URL in Admin → Integrations to enable an Open-in-Discord button.'}</p>
+      </div>
+      <form class="chat-compose" data-form="chat-send" data-channel-id="${active.id}">
+        <textarea name="content" rows="1" placeholder="Type a message — sent as ${esc(getSession()?.displayName || 'you')} · ⏎ to send, Shift+⏎ for newline" required></textarea>
+        <button type="submit" class="btn btn-primary" title="Send">${ICONS.send}</button>
+      </form>
+    </div>` : `
+    <div class="chat-main">
+      <div class="chat-not-configured">
+        <h3>${ICONS.chat} No webhook for this channel yet</h3>
+        <p>${isAdmin() ? 'Open <strong>Admin → Discord Integrations</strong> to paste a webhook URL.' : 'Ask an admin to configure a Discord webhook for this channel.'}</p>
+        ${isAdmin() ? `<button class="btn btn-primary" data-action="configure-chat" style="margin-top:14px">${ICONS.externalLink} Open Integrations</button>` : ''}
+      </div>
+    </div>`;
+
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>Chat</h1><p class="view-subtitle">Discord bridge — messages route to your team server</p></div>
+    </div>
+    <div class="chat-layout">
+      ${channelList}
+      ${configuredMain}
+    </div>`;
+}
+
+/* ──── Admin Dashboard ──── */
+
+async function renderAdminDashboard() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  const [users, projects, tasks, log] = await Promise.all([
+    DB.getUsers(), DB.getProjects(), DB.getTasks(), DB.getActivityLog({ limit: 30 })
+  ]);
+  const now = Date.now();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const activeUsers = users.filter(u => u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays));
+  const recentLogins = log.filter(l => l.action === 'logged_in').slice(0, 10);
+  const taskByProject = tasks.reduce((m, t) => { m[t.projectId] = (m[t.projectId] || 0) + 1; return m; }, {});
+  const projectByOwner = projects.reduce((m, p) => { m[p.ownerId] = (m[p.ownerId] || 0) + 1; return m; }, {});
+  const tasksByAssignee = tasks.reduce((m, t) => { if (t.assigneeId != null) m[t.assigneeId] = (m[t.assigneeId] || 0) + 1; return m; }, {});
+
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>${ICONS.gauge} Dashboard</h1><p class="view-subtitle">Admin telemetry · ${users.length} users · ${projects.length} projects</p></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-value">${users.length}</span>
+        <span class="stat-label">Total users</span>
+        <span class="stat-sub">${activeUsers.length} active in last 7 days</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">${projects.length}</span>
+        <span class="stat-label">Projects</span>
+        <span class="stat-sub">${projects.filter(p => p.status === 'active').length} active · ${projects.filter(p => p.status === 'on-hold').length} on hold</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">${tasks.length}</span>
+        <span class="stat-label">Tasks</span>
+        <span class="stat-sub">${tasks.filter(t => t.status === 'done').length} done · ${tasks.filter(t => t.status === 'doing').length} in progress</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">${recentLogins.length}</span>
+        <span class="stat-label">Recent logins</span>
+        <span class="stat-sub">Last 30 audit entries</span>
+      </div>
+    </div>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>Users</h2></div>
+      <div class="section-body" style="padding:0">
+        <div class="admin-user-row admin-user-head">
+          <span>Member</span>
+          <span>Role</span>
+          <span>Discord ID</span>
+          <span>Last seen</span>
+          <span>Last IP</span>
+          <span style="text-align:right">Workload</span>
+        </div>
+        ${users.map(u => {
+          const pCount = projectByOwner[u.id] || 0;
+          const tCount = tasksByAssignee[u.id] || 0;
+          const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
+          return `<div class="admin-user-row">
+            <span class="admin-user-name">
+              <span class="user-avatar-sm ${u.role === 'admin' ? 'user-avatar-admin' : ''}">${init}</span>
+              <strong>${esc(u.displayName || u.username)}</strong>
+            </span>
+            <span>${u.role === 'admin' ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : 'Member'}</span>
+            <span>${u.discordId ? `<code>${esc(u.discordId)}</code>` : '<span class="text-muted">—</span>'}</span>
+            <span class="text-muted">${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Never signed in'}</span>
+            <span class="text-muted">${u.lastSeenIp ? `<code>${esc(u.lastSeenIp)}</code>` : '<span class="text-muted">—</span>'}</span>
+            <span class="text-muted" style="text-align:right">${pCount}p · ${tCount}t</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="section-body" style="padding:12px 20px;border-top:1px solid var(--border-light)">
+        <p class="text-muted text-sm">IP addresses are reported by the user's browser via <code>api.ipify.org</code> on each login and may be inaccurate (VPN, proxy, blocked request).</p>
+      </div>
+    </section>
+    <section class="section-card">
+      <div class="section-header"><h2>Recent activity</h2></div>
+      <div class="section-body">${
+        log.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No activity recorded yet.</p>` :
+        `<div class="activity-log">${log.map(entry => `
+          <div class="activity-log-row">
+            <span class="activity-dot"></span>
+            <div class="activity-text">
+              ${esc(formatActivityMessage(entry, uMap))}
+              <span class="text-muted text-sm">${timeAgo(entry.createdAt)}</span>
+            </div>
+          </div>`).join('')}</div>`
+      }</div>
+    </section>`;
+}
+
+/* ──── Notifications dropdown ──── */
+
+async function refreshNotificationBadge() {
+  const uid = actorId();
+  if (!uid) return;
+  try {
+    const count = await DB.getUnreadNotificationCount(uid);
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    if (count > 0) { badge.textContent = String(count > 99 ? '99+' : count); badge.classList.remove('hidden'); }
+    else { badge.classList.add('hidden'); }
+  } catch (_) {}
+}
+
+async function renderNotificationPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  const uid = actorId();
+  const rows = uid ? await DB.getNotifications(uid, { limit: 25 }) : [];
+  const unread = rows.filter(r => !r.readAt).length;
+  panel.innerHTML = `
+    <div class="notif-panel-header">
+      <h3>${ICONS.bell} Notifications ${unread ? `<span class="nav-item-badge" style="margin-left:6px">${unread}</span>` : ''}</h3>
+      ${unread ? `<button type="button" class="notif-panel-mark" data-action="notif-mark-all">Mark all read</button>` : ''}
+    </div>
+    ${rows.length === 0
+      ? `<div class="notif-empty">No notifications yet. Assignments and updates will show up here.</div>`
+      : `<ul class="notif-list">${rows.map(n => {
+          const projectHref = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+          return `<li><button type="button" class="notif-item ${n.readAt ? '' : 'unread'}" data-action="notif-open" data-id="${n.id}" data-href="${projectHref}">
+            <span class="notif-dot"></span>
+            <span class="notif-body">
+              <span class="notif-msg">${esc(n.message)}</span>
+              <span class="notif-meta">${timeAgo(n.createdAt)}</span>
+            </span>
+          </button></li>`;
+        }).join('')}</ul>`}`;
+}
+
+function toggleNotifPanel(force = null) {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  const willOpen = force == null ? panel.classList.contains('hidden') : force;
+  if (willOpen) { panel.classList.remove('hidden'); renderNotificationPanel(); }
+  else panel.classList.add('hidden');
+}
+
+function closeNotifPanel() { toggleNotifPanel(false); }
 
 /* ──── Modal System ──── */
 
@@ -806,17 +1236,49 @@ async function showTaskModal(preId = null) {
     ? `<input type="hidden" name="projectId" value="${lockedProject.id}">
        <div class="form-group"><label>Project</label><input type="text" value="${esc(lockedProject.name)}" disabled class="input-disabled"></div>`
     : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`;
+  const users = await DB.getUsers();
+  const meId = actorId();
+  const assigneeOptions = users
+    .map(u => `<option value="${u.id}" ${u.id === meId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
+    .join('');
   showModal('New Task', `
     <form data-form="task">
       ${projectField}
       <div class="form-group"><label>Task Title</label><input name="title" type="text" placeholder="What needs to be done?" required autofocus></div>
       <div class="form-row">
+        <div class="form-group"><label>Assignee</label><select name="assigneeId">${assigneeOptions}</select></div>
         <div class="form-group"><label>Due Date</label><input name="dueDate" type="date"></div>
-        <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
       </div>
-      <div class="form-group"><label>Status</label><select name="status"><option value="todo" selected>To Do</option><option value="doing">In Progress</option><option value="done">Done</option></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
+        <div class="form-group"><label>Status</label><select name="status"><option value="todo" selected>To Do</option><option value="doing">In Progress</option><option value="done">Done</option></select></div>
+      </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Add Task</button></div>
     </form>`);
+}
+
+async function showAssignTaskModal(taskId) {
+  const task = await DB.getTask(taskId); if (!task) { showToast('Task not found', 'error'); return; }
+  const project = await DB.getProject(task.projectId);
+  if (!project || !canEdit(project)) { showToast('Permission denied', 'error'); return; }
+  const users = await DB.getUsers();
+  showModal('Reassign Task', `
+    <form data-form="reassign-task" data-task-id="${task.id}">
+      <p class="text-muted text-sm" style="margin-bottom:12px">Reassign <strong>${esc(task.title)}</strong> to another team member.</p>
+      <div class="form-group"><label>Assignee</label>
+        <select name="assigneeId">
+          <option value="">Unassigned</option>
+          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.role === 'admin' ? ' · Admin' : ''}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save assignment</button></div>
+    </form>`);
+}
+
+function assigneeChipHtml(user) {
+  if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  return `<span class="assignee-chip" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${initials}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
 
 function showMilestoneModal(pid) {
@@ -859,10 +1321,15 @@ async function showEditUserModal(uid) {
   const isSelf = u.id === s.userId;
   showModal('Edit User', `
     <form data-form="edit-user" data-user-id="${u.id}">
-      <p class="text-muted text-sm" style="margin-bottom:12px">Rename the account, change the display name, email, or role.${isSelf ? ' <strong>This is your own account.</strong>' : ''}</p>
+      <p class="text-muted text-sm" style="margin-bottom:12px">Rename the account, change the display name, email, role, or Discord ID.${isSelf ? ' <strong>This is your own account.</strong>' : ''}</p>
       <div class="form-group"><label>Username</label><input name="username" type="text" value="${esc(u.username)}" required autocomplete="off"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(u.displayName || '')}" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
+      <div class="form-group">
+        <label>Discord User ID</label>
+        <input name="discordId" type="text" value="${esc(u.discordId || '')}" placeholder="e.g. 123456789012345678" pattern="[0-9]*">
+        <p class="text-muted text-sm" style="margin-top:4px">Used to <code>@mention</code> this user in Discord notifications. In Discord, enable Developer Mode then right-click the user → Copy User ID.</p>
+      </div>
       <div class="form-group"><label>Role</label>
         <select name="role" ${isSelf ? 'disabled' : ''}>
           <option value="user" ${u.role === 'user' ? 'selected' : ''}>Member</option>
@@ -974,9 +1441,88 @@ async function handleFormSubmit(e) {
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
-      const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), actorUserId: uid };
+      const assigneeRaw = fd.get('assigneeId');
+      const assigneeId = assigneeRaw ? Number(assigneeRaw) : uid;
+      const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
       if (!data.title || !data.projectId) return;
-      await DB.createTask(data); showToast('Task added', 'success');
+      const newId = await DB.createTask(data);
+      showToast('Task added', 'success');
+      // Notify the assignee (skip if assigning to self)
+      if (assigneeId && assigneeId !== uid) {
+        const project = await DB.getProject(data.projectId);
+        const actor = await DB.getUser(uid);
+        const assignee = await DB.getUser(assigneeId);
+        const msg = `${actor?.displayName || 'Someone'} assigned you the task "${data.title}" in ${project?.name || 'a project'}.`;
+        const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
+        await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId: data.projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
+      }
+    } else if (type === 'reassign-task') {
+      const taskId = Number(form.dataset.taskId);
+      const task = await DB.getTask(taskId); if (!task) return;
+      const project = await DB.getProject(task.projectId);
+      if (!project || !canEdit(project)) { showToast('Permission denied', 'error'); return; }
+      const newAssigneeRaw = fd.get('assigneeId');
+      const newAssigneeId = newAssigneeRaw ? Number(newAssigneeRaw) : null;
+      await DB.updateTask(taskId, { assigneeId: newAssigneeId }, uid);
+      showToast('Task reassigned', 'success');
+      if (newAssigneeId && newAssigneeId !== uid && newAssigneeId !== task.assigneeId) {
+        const actor = await DB.getUser(uid);
+        const assignee = await DB.getUser(newAssigneeId);
+        const msg = `${actor?.displayName || 'Someone'} assigned you the task "${task.title}" in ${project.name}.`;
+        const discordMsg = `**${actor?.displayName || 'Someone'}** reassigned **${task.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project.name}*.`;
+        await notifyUser({ userId: newAssigneeId, type: 'assignment', message: msg, projectId: project.id, entityType: 'task', entityId: taskId, actorUserId: uid, discordContent: discordMsg });
+      }
+    } else if (type === 'webhook-general') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const url = fd.get('url')?.trim();
+      const channelUrl = fd.get('channelUrl')?.trim() || '';
+      if (url && !/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) { showToast('That doesn\'t look like a Discord webhook URL', 'warning'); return; }
+      if (!url) {
+        const existing = await DB.getGeneralWebhook();
+        if (existing) await DB.deleteWebhook(existing.id);
+        showToast('General webhook cleared', 'info');
+      } else {
+        await DB.saveGeneralWebhook({ url, channelUrl });
+        showToast('General webhook saved', 'success');
+      }
+    } else if (type === 'webhook-project') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const pid = Number(form.dataset.projectId);
+      const url = fd.get('url')?.trim();
+      const channelUrl = fd.get('channelUrl')?.trim() || '';
+      const project = await DB.getProject(pid);
+      if (!project) return;
+      if (url && !/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) { showToast('That doesn\'t look like a Discord webhook URL', 'warning'); return; }
+      if (!url) {
+        const existing = await DB.getProjectWebhook(pid);
+        if (existing) await DB.deleteWebhook(existing.id);
+        showToast('Project webhook cleared', 'info');
+      } else {
+        await DB.saveProjectWebhook(pid, { url, channelUrl, name: project.name });
+        showToast(`Webhook saved for ${project.name}`, 'success');
+      }
+    } else if (type === 'chat-send') {
+      const channelId = form.dataset.channelId;
+      const content = fd.get('content')?.trim();
+      if (!content) return;
+      const session = getSession();
+      let hook = null;
+      if (channelId === 'general') hook = await DB.getGeneralWebhook();
+      else if (channelId?.startsWith('project-')) hook = await DB.getProjectWebhook(Number(channelId.split('-')[1]));
+      if (!hook?.url) { showToast('No webhook configured for this channel', 'error'); return; }
+      const result = await postToDiscordWebhook(hook.url, {
+        username: session?.displayName || session?.username || 'WorkTracker',
+        content,
+        allowed_mentions: { parse: ['users', 'roles'] }
+      });
+      if (!result.ok) {
+        showToast(`Send failed: ${result.reason}`, 'error');
+        return;
+      }
+      await DB.logActivity({ userId: uid, projectId: hook.projectId || null, action: 'sent_message', entityType: 'chat', details: content.slice(0, 120) });
+      form.reset();
+      showToast('Message sent to Discord', 'success');
+      return; // Skip router refresh so user keeps typing
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
       if (!data.title) return;
@@ -1008,13 +1554,15 @@ async function handleFormSubmit(e) {
       const username = fd.get('username')?.trim().toLowerCase();
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
+      const discordId = (fd.get('discordId') || '').toString().trim();
       const role = fd.get('role');
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
       if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2–32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
+      if (discordId && !/^\d{6,30}$/.test(discordId)) { showToast('Discord ID must be a numeric snowflake (e.g. 123456789012345678)', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
-      const changes = { username, displayName, email };
+      const changes = { username, displayName, email, discordId };
       if (!isSelf && role) changes.role = role;
       try {
         await DB.updateUser(targetId, changes, s.userId);
@@ -1071,9 +1619,19 @@ const actions = {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.updateTask(t.id, { status: { todo: 'doing', doing: 'done', done: 'todo' }[t.status] }, actorId());
+    const nextStatus = { todo: 'doing', doing: 'done', done: 'todo' }[t.status];
+    const uid = actorId();
+    await DB.updateTask(t.id, { status: nextStatus }, uid);
+    // Notify project owner when an assignee completes a task they didn't own.
+    if (nextStatus === 'done' && p.ownerId && p.ownerId !== uid) {
+      const actor = await DB.getUser(uid);
+      const msg = `${actor?.displayName || 'Someone'} marked "${t.title}" as done in ${p.name}.`;
+      const discordMsg = `${actor?.displayName || 'Someone'} marked **${t.title}** as done in *${p.name}*.`;
+      await notifyUser({ userId: p.ownerId, type: 'task_done', message: msg, projectId: p.id, entityType: 'task', entityId: t.id, actorUserId: uid, discordContent: discordMsg });
+    }
     await router();
   },
+  'assign-task': (b) => showAssignTaskModal(Number(b.dataset.id)),
   'delete-task': async (b) => {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
@@ -1164,7 +1722,49 @@ const actions = {
     await DB.createSampleData(getSession().userId);
     showToast('Data reset', 'success'); await router();
   },
-  'recovery-back-login': async () => { window.location.hash = ''; await applyRoute(); }
+  'recovery-back-login': async () => { window.location.hash = ''; await applyRoute(); },
+  'toggle-notif': () => { toggleNotifPanel(); },
+  'notif-mark-all': async () => {
+    const uid = actorId(); if (!uid) return;
+    await DB.markAllNotificationsRead(uid);
+    await renderNotificationPanel();
+    refreshNotificationBadge();
+  },
+  'notif-open': async (b) => {
+    const id = Number(b.dataset.id);
+    const href = b.dataset.href || '#/projects';
+    await DB.markNotificationRead(id);
+    closeNotifPanel();
+    if (window.location.hash !== href) window.location.hash = href;
+    else await applyRoute();
+    refreshNotificationBadge();
+  },
+  'select-chat-channel': async (b) => {
+    state.chatChannel = b.dataset.channelId;
+    await renderChat();
+  },
+  'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
+  'test-webhook': async (b) => {
+    const scope = b.dataset.scope;
+    const pid = b.dataset.projectId ? Number(b.dataset.projectId) : null;
+    let hook = null;
+    if (scope === 'general') hook = await DB.getGeneralWebhook();
+    else if (scope === 'project' && pid) hook = await DB.getProjectWebhook(pid);
+    if (!hook?.url) { showToast('No webhook to test', 'warning'); return; }
+    const session = getSession();
+    const result = await postToDiscordWebhook(hook.url, {
+      username: 'WorkTracker',
+      content: `:white_check_mark: Test ping from **${session?.displayName || 'WorkTracker'}**. If you see this, the webhook is wired up.`
+    });
+    showToast(result.ok ? 'Test message sent' : `Failed: ${result.reason}`, result.ok ? 'success' : 'error');
+  },
+  'delete-webhook': async (b) => {
+    if (!isAdmin()) return;
+    if (!confirm('Remove this Discord webhook?')) return;
+    await DB.deleteWebhook(Number(b.dataset.id));
+    showToast('Webhook removed', 'info');
+    await router();
+  }
 };
 
 /* ──── Toast ──── */
@@ -1203,7 +1803,11 @@ async function router() {
   updateNav(hash);
   const content = document.getElementById('content');
   if (content) content.classList.add('content-fade');
-  if (hash === '/dashboard' || hash === '/' || hash === '/projects') await renderProjects();
+  if (hash === '/' || hash === '/projects') await renderProjects();
+  else if (hash === '/dashboard') {
+    if (isAdmin()) await renderAdminDashboard();
+    else await renderProjects();
+  }
   else if (hash.startsWith('/projects/')) {
     const id = parseInt(hash.split('/')[2]);
     if (!isNaN(id)) {
@@ -1212,16 +1816,19 @@ async function router() {
     } else await renderProjects();
   }
   else if (hash === '/tasks') await renderTasks();
+  else if (hash === '/chat') await renderChat();
   else if (hash === '/admin') await renderAdmin();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => content?.classList.remove('content-fade'));
+  refreshNotificationBadge().catch(() => {});
 }
 
 function updateNav(route) {
   document.querySelectorAll('.nav-item').forEach(item => {
     const n = item.dataset.nav;
+    if (!n) return;
     item.classList.toggle('active',
-      route === `/${n}` || (n === 'projects' && (route === '/' || route === '/dashboard' || route.startsWith('/projects'))));
+      route === `/${n}` || (n === 'projects' && (route === '/' || route.startsWith('/projects'))));
   });
 }
 
@@ -1308,14 +1915,34 @@ async function applyRoute() {
 
 async function init() {
   try {
+    if (window.WT_SUPABASE_ERROR) {
+      showToast('Cloud database unavailable — using browser-only storage. Run supabase/schema.sql in your Supabase SQL Editor.', 'warning');
+    }
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
     document.addEventListener('click', async (e) => {
       const userBtn = e.target.closest('#sidebar-user');
       const menu = document.getElementById('user-menu');
       if (userBtn) { e.stopPropagation(); toggleUserMenu(); return; }
       if (menu && !menu.contains(e.target)) closeUserMenu();
+      const notifPanel = document.getElementById('notif-panel');
+      const notifTrigger = e.target.closest('#nav-notif');
+      if (notifPanel && !notifPanel.classList.contains('hidden') && !notifPanel.contains(e.target) && !notifTrigger) {
+        closeNotifPanel();
+      }
       const b = e.target.closest('[data-action]');
-      if (b && actions[b.dataset.action]) await actions[b.dataset.action](b);
+      if (b && actions[b.dataset.action]) {
+        // Prevent the nav-item anchor href="#" from changing the route
+        if (b.tagName === 'A' && b.getAttribute('href') === '#') e.preventDefault();
+        await actions[b.dataset.action](b);
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      const ta = e.target.closest('.chat-compose textarea');
+      if (ta && e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const form = ta.closest('form');
+        if (form) form.requestSubmit();
+      }
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);

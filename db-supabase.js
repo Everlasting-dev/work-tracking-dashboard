@@ -7,8 +7,17 @@ const SupabaseDB = {
   async init(url, anonKey) {
     if (!window.supabase?.createClient) throw new Error('Supabase SDK not loaded');
     this._client = window.supabase.createClient(url, anonKey);
-    const { error } = await this._client.from('wt_users').select('id').limit(1);
-    if (error && !error.message.includes('0 rows')) throw error;
+    const required = ['wt_users', 'wt_projects', 'wt_tasks', 'wt_settings'];
+    for (const table of required) {
+      const { error } = await this._client.from(table).select('id').limit(1);
+      if (error) {
+        const msg = (error.message || '').toLowerCase();
+        if (msg.includes('does not exist') || msg.includes('404') || msg.includes('schema cache')) {
+          throw new Error(`Supabase table "${table}" is missing. Open Supabase → SQL Editor → run the full script in supabase/schema.sql, then reload the app.`);
+        }
+        if (!msg.includes('0 rows')) throw error;
+      }
+    }
   },
 
   _sb() { return this._client; },
@@ -17,7 +26,8 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
-      passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at
+      passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
+      discordId: r.discord_id || '', lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
 
@@ -32,8 +42,26 @@ const SupabaseDB = {
   _mapTask(r) {
     if (!r) return null;
     return {
-      id: r.id, projectId: r.project_id, milestoneId: r.milestone_id, title: r.title,
-      dueDate: r.due_date || '', status: r.status, priority: r.priority,
+      id: r.id, projectId: r.project_id, milestoneId: r.milestone_id, assigneeId: r.assignee_id,
+      title: r.title, dueDate: r.due_date || '', status: r.status, priority: r.priority,
+      createdAt: r.created_at, updatedAt: r.updated_at
+    };
+  },
+
+  _mapNotification(r) {
+    if (!r) return null;
+    return {
+      id: r.id, userId: r.user_id, type: r.type, entityType: r.entity_type, entityId: r.entity_id,
+      projectId: r.project_id, message: r.message || '', actorUserId: r.actor_user_id,
+      readAt: r.read_at, createdAt: r.created_at
+    };
+  },
+
+  _mapWebhook(r) {
+    if (!r) return null;
+    return {
+      id: r.id, scope: r.scope, projectId: r.project_id, name: r.name,
+      url: r.url, channelUrl: r.channel_url || '',
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -126,6 +154,9 @@ const SupabaseDB = {
     if (changes.displayName != null) patch.display_name = changes.displayName;
     if (changes.email != null) patch.email = changes.email;
     if (changes.role != null) patch.role = changes.role;
+    if (changes.discordId != null) patch.discord_id = changes.discordId;
+    if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
+    if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
     if (changes.username != null) {
       const next = String(changes.username).trim().toLowerCase();
       if (!next) throw new Error('Username cannot be empty');
@@ -283,9 +314,11 @@ const SupabaseDB = {
 
   async createTask(data) {
     const actorUserId = data.actorUserId;
+    const assigneeId = data.assigneeId != null ? Number(data.assigneeId) : (actorUserId ?? null);
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
-      project_id: data.projectId, milestone_id: data.milestoneId || null, title: data.title || '',
-      due_date: data.dueDate || '', status: data.status || 'todo', priority: data.priority || 'medium'
+      project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
+      title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
+      priority: data.priority || 'medium'
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
@@ -316,6 +349,7 @@ const SupabaseDB = {
     if (changes.priority != null) patch.priority = changes.priority;
     if (changes.dueDate != null) patch.due_date = changes.dueDate;
     if (changes.milestoneId !== undefined) patch.milestone_id = changes.milestoneId;
+    if (changes.assigneeId !== undefined) patch.assignee_id = changes.assigneeId == null ? null : Number(changes.assigneeId);
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
     if (task) {
@@ -325,6 +359,7 @@ const SupabaseDB = {
         await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
+    return task;
   },
 
   async deleteTask(id, actorUserId = null) {
@@ -450,6 +485,87 @@ const SupabaseDB = {
     const { count, error } = await this._sb().from('wt_projects').select('*', { count: 'exact', head: true });
     if (error) throw error;
     return (count || 0) === 0;
+  },
+
+  /* Notifications */
+  async createNotification({ userId, type, entityType = null, entityId = null, projectId = null, message = '', actorUserId = null }) {
+    if (!userId) return;
+    const { data, error } = await this._sb().from('wt_notifications').insert({
+      user_id: userId, type: type || 'info', entity_type: entityType, entity_id: entityId,
+      project_id: projectId, message, actor_user_id: actorUserId
+    }).select().single();
+    if (error) throw error;
+    return data?.id;
+  },
+  async getNotifications(userId, { unreadOnly = false, limit = 50 } = {}) {
+    let q = this._sb().from('wt_notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(limit);
+    if (unreadOnly) q = q.is('read_at', null);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map(r => this._mapNotification(r));
+  },
+  async getUnreadNotificationCount(userId) {
+    const { count, error } = await this._sb().from('wt_notifications').select('*', { count: 'exact', head: true }).eq('user_id', userId).is('read_at', null);
+    if (error) throw error;
+    return count || 0;
+  },
+  async markNotificationRead(id) {
+    const { error } = await this._sb().from('wt_notifications').update({ read_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+  },
+  async markAllNotificationsRead(userId) {
+    const { error } = await this._sb().from('wt_notifications').update({ read_at: new Date().toISOString() }).eq('user_id', userId).is('read_at', null);
+    if (error) throw error;
+  },
+
+  /* Webhooks */
+  async getWebhooks() {
+    const { data, error } = await this._sb().from('wt_webhooks').select('*');
+    if (error) throw error;
+    return (data || []).map(r => this._mapWebhook(r));
+  },
+  async getGeneralWebhook() {
+    const { data, error } = await this._sb().from('wt_webhooks').select('*').eq('scope', 'general').maybeSingle();
+    if (error) throw error;
+    return this._mapWebhook(data);
+  },
+  async getProjectWebhook(projectId) {
+    const { data, error } = await this._sb().from('wt_webhooks').select('*').eq('scope', 'project').eq('project_id', projectId).maybeSingle();
+    if (error) throw error;
+    return this._mapWebhook(data);
+  },
+  async saveGeneralWebhook({ url, channelUrl = '' }) {
+    const existing = await this.getGeneralWebhook();
+    if (existing) {
+      const { error } = await this._sb().from('wt_webhooks').update({ url, channel_url: channelUrl, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      if (error) throw error;
+      return existing.id;
+    }
+    const { data, error } = await this._sb().from('wt_webhooks').insert({ scope: 'general', name: '#general', url, channel_url: channelUrl }).select().single();
+    if (error) throw error;
+    return data?.id;
+  },
+  async saveProjectWebhook(projectId, { url, channelUrl = '', name = '' }) {
+    const existing = await this.getProjectWebhook(projectId);
+    if (existing) {
+      const { error } = await this._sb().from('wt_webhooks').update({ url, channel_url: channelUrl, name: name || existing.name, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      if (error) throw error;
+      return existing.id;
+    }
+    const { data, error } = await this._sb().from('wt_webhooks').insert({ scope: 'project', project_id: projectId, name: name || `#project-${projectId}`, url, channel_url: channelUrl }).select().single();
+    if (error) throw error;
+    return data?.id;
+  },
+  async deleteWebhook(id) {
+    const { error } = await this._sb().from('wt_webhooks').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async touchLastSeen(userId, ip = null) {
+    if (!userId) return;
+    const patch = { last_seen_at: new Date().toISOString() };
+    if (ip) patch.last_seen_ip = ip;
+    await this._sb().from('wt_users').update(patch).eq('id', userId);
   },
 
   async migrateFromLocalStorage() { return false; },

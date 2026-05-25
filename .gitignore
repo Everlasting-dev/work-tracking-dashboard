@@ -2,3 +2,5 @@
 Thumbs.db
 *.log
 desktop.ini
+backup-pre-server.bundle
+config.local.js
