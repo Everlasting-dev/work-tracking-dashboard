@@ -15,6 +15,11 @@ const ICONS = {
   target: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
   alertTriangle: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
   user: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  file: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+  chevronDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+  upload: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>',
+  download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>',
+  logOut: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>',
 };
 
 /* ──── Utilities ──── */
@@ -56,8 +61,8 @@ function taskBadge(s)    { const c = TSTATUS[s] || TSTATUS.todo; return badge(c.
 function prioBadge(p)    { const c = PRIO_CFG[p] || PRIO_CFG.medium; return badge(c.l, c.c); }
 function progressBar(pct, sz = '') {
   const cls = sz ? `progress-bar progress-bar-${sz}` : 'progress-bar';
-  const col = pct >= 100 ? 'var(--green)' : pct >= 50 ? 'var(--accent)' : 'var(--amber)';
-  return `<div class="${cls}"><div class="progress-fill" style="width:${pct}%;background:${col}"></div></div>`;
+  const tone = pct >= 100 ? 'progress-done' : pct >= 50 ? 'progress-mid' : 'progress-low';
+  return `<div class="${cls}"><div class="progress-fill ${tone}" style="width:${pct}%"></div></div>`;
 }
 function statCard(label, val, color, icon) {
   return `<div class="stat-card"><div class="stat-icon stat-icon-${color}">${icon}</div><div class="stat-info"><span class="stat-value">${val}</span><span class="stat-label">${label}</span></div></div>`;
@@ -71,6 +76,7 @@ function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ u
 function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
+function actorId() { return getSession()?.userId ?? null; }
 
 function effectiveWorkspaceScope() {
   if (isAdmin()) return state.workspaceScope ?? 'everyone';
@@ -95,7 +101,17 @@ function workspaceScopeBarHtml() {
 
 /* ──── State ──── */
 
-const state = { projectFilter: 'all', taskFilter: 'all', projectTab: 'tasks', currentProjectId: null, workspaceScope: null, _libraryBlobUrls: [] };
+const state = {
+  projectFilter: 'all',
+  taskFilter: 'all',
+  projectTab: 'tasks',
+  currentProjectId: null,
+  workspaceScope: null,
+  docPanelOpen: true,
+  userMenuOpen: false,
+  _libraryBlobUrls: [],
+  _previewUrl: null
+};
 
 let wtAppBootstrapped = false;
 
@@ -208,6 +224,7 @@ async function handleAuth(e) {
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
     setSession(user);
+    await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: user.username });
     await showApp();
   } else if (type === 'admin-setup') {
     if (await DB.hasUsers()) { showAuthError('An account already exists. Sign in.'); return; }
@@ -248,7 +265,7 @@ async function handleAuth(e) {
     const cf = fd.get('confirmPassword');
     if (!uid || !pw || pw.length < 4) { showAuthError('Choose a user and enter a password (min 4 characters)'); return; }
     if (pw !== cf) { showAuthError('Passwords do not match'); return; }
-    await DB.changePassword(uid, pw);
+    await DB.changePassword(uid, pw, uid);
     clearRecoveryUnlock();
     window.location.hash = '';
     renderLogin();
@@ -260,7 +277,7 @@ async function handleAuth(e) {
 
 async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'grid';
+  document.getElementById('app').style.display = 'flex';
   document.getElementById('menu-toggle').style.display = '';
   updateSidebarUser();
   const s = getSession();
@@ -273,101 +290,70 @@ async function showApp() {
 function updateSidebarUser() {
   const s = getSession(); if (!s) return;
   const init = (s.displayName || s.username).charAt(0).toUpperCase();
-  document.getElementById('sidebar-user').innerHTML = `
+  const el = document.getElementById('sidebar-user');
+  el.innerHTML = `
     <div class="user-avatar">${init}</div>
     <div class="user-details">
       <span class="user-name">${esc(s.displayName || s.username)}</span>
-      <span class="user-role">@${esc(s.username)} &middot; ${s.role === 'admin' ? 'Admin' : 'Member'}</span>
-    </div>`;
+      <span class="user-role">@${esc(s.username)}</span>
+    </div>
+    <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
+  el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
   const nav = document.getElementById('nav-admin');
   if (nav) nav.style.display = s.role === 'admin' ? '' : 'none';
+  renderUserMenu();
+}
+
+function renderUserMenu() {
+  const menu = document.getElementById('user-menu');
+  if (!menu) return;
+  const s = getSession();
+  if (!s || !state.userMenuOpen) {
+    menu.classList.add('hidden');
+    menu.innerHTML = '';
+    return;
+  }
+  menu.classList.remove('hidden');
+  const adminItems = isAdmin() ? `
+    <button type="button" class="user-menu-item" data-action="user-export">${ICONS.download} Export Data</button>
+    <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
+  menu.innerHTML = `
+    ${adminItems}
+    <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
+}
+
+function toggleUserMenu() {
+  state.userMenuOpen = !state.userMenuOpen;
+  updateSidebarUser();
+}
+
+function closeUserMenu() {
+  if (!state.userMenuOpen) return;
+  state.userMenuOpen = false;
+  updateSidebarUser();
+}
+
+function formatActivityMessage(entry, uMap) {
+  const who = uMap[entry.userId];
+  const name = who ? (who.displayName || who.username) : 'Someone';
+  const actionLabels = {
+    created: 'created', updated: 'updated', deleted: 'deleted', uploaded: 'uploaded',
+    noted: 'added a note on', password_changed: 'changed password for', logged_in: 'signed in', logged_out: 'signed out'
+  };
+  const typeLabels = {
+    project: 'project', task: 'task', milestone: 'milestone', attachment: 'file',
+    update: 'update', user: 'account'
+  };
+  const verb = actionLabels[entry.action] || entry.action;
+  const type = typeLabels[entry.entityType] || entry.entityType;
+  const detail = entry.details ? `: <em>${esc(entry.details)}</em>` : '';
+  if (entry.action === 'password_changed') return `${esc(name)} ${verb} an account`;
+  if (entry.action === 'logged_in' || entry.action === 'logged_out') return `${esc(name)} ${verb}`;
+  if (entry.action === 'noted') return `${esc(name)} ${verb} ${type}${detail}`;
+  return `${esc(name)} ${verb} ${type}${detail}`;
 }
 
 /* ──── Views ──── */
-
-async function renderDashboard() {
-  const content = document.getElementById('content');
-  const s = getSession();
-  const mineOnly = effectiveWorkspaceScope() === 'mine';
-  const stats = await DB.getStats(mineOnly ? { mineOnly: true, userId: s.userId } : {});
-  const allProjects = await DB.getProjects();
-  const projects = filterProjectsByWorkspace(allProjects);
-  const active = projects.filter(p => p.status === 'active');
-  let tasks = await DB.getTasks();
-  const visIds = new Set(projects.map(p => p.id));
-  tasks = tasks.filter(t => visIds.has(t.projectId));
-  const users = await DB.getUsers();
-  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-
-  const pData = await Promise.all(active.slice(0, 6).map(async p => ({
-    ...p, progress: await DB.getProjectProgress(p.id),
-    taskCount: (await DB.getTasks({ projectId: p.id })).length
-  })));
-
-  const upcoming = tasks.filter(t => t.status !== 'done' && t.dueDate)
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 6);
-
-  const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
-
-  const teamHint = !isAdmin() && mineOnly ? `<p class="text-muted text-sm" style="margin-top:12px">Use <strong>Everyone</strong> in the workspace filter to browse teammates&apos; projects and tasks (read-only).</p>` : '';
-
-  content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Dashboard</h1><p class="view-subtitle">${mineOnly ? 'Your workspace overview' : 'Team overview'}</p></div>
-      <div class="view-actions"><button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button></div>
-    </div>
-    ${workspaceScopeBarHtml()}
-    <div class="stats-grid">
-      ${statCard('Active Projects', stats.activeProjects, 'accent', ICONS.folder)}
-      ${statCard('Total Tasks', stats.totalTasks, 'blue', ICONS.checkCircle)}
-      ${statCard('Completed', stats.completedTasks, 'green', ICONS.target)}
-      ${statCard('Overdue', stats.overdueTasks, 'red', ICONS.alertTriangle)}
-    </div>
-    ${teamHint}
-    <div class="dashboard-grid">
-      <section class="section-card">
-        <div class="section-header"><h2>Active Projects</h2><a href="#/projects" class="link-subtle">View all ${ICONS.chevronRight}</a></div>
-        <div class="section-body">${pData.length === 0 ? emptyState('No active projects yet.') :
-          pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; return `
-            <a href="#/projects/${p.id}" class="project-row">
-              <div class="project-row-info">
-                ${typeBadge(p.type)}
-                <strong>${esc(p.name)}</strong>
-                ${!mine && owner ? `<span class="text-muted text-sm">${ICONS.user} ${esc(owner.displayName)}</span>` : ''}
-              </div>
-              <div class="project-row-meta">
-                <span class="text-muted text-sm">${p.taskCount} tasks</span>
-                ${progressBar(p.progress)}
-                <span class="text-muted text-sm">${p.progress}%</span>
-              </div>
-            </a>`; }).join('')}
-        </div>
-      </section>
-      <section class="section-card">
-        <div class="section-header"><h2>Upcoming Tasks</h2><a href="#/tasks" class="link-subtle">View all ${ICONS.chevronRight}</a></div>
-        <div class="section-body">${upcoming.length === 0 ? emptyState('No upcoming tasks with due dates.') :
-          upcoming.map(t => {
-            const proj = pMap[t.projectId];
-            const editable = proj && canEdit(proj);
-            const od = isOverdue(t.dueDate);
-            return `
-            <div class="task-row-compact">
-              <div class="task-row-left">
-                ${editable
-                  ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Change status"></button>`
-                  : `<span class="status-dot status-dot-${t.status}"></span>`}
-                <span class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</span>
-              </div>
-              <div class="task-row-right">
-                <span class="text-muted text-sm">${proj ? esc(proj.name) : ''}</span>
-                <span class="due-date ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : ''}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>
-      </section>
-    </div>`;
-}
 
 async function renderProjects() {
   const content = document.getElementById('content');
@@ -388,11 +374,18 @@ async function renderProjects() {
   const cnt = { all: all.length, active: all.filter(p => p.status === 'active').length, completed: all.filter(p => p.status === 'completed').length, 'on-hold': all.filter(p => p.status === 'on-hold').length, archived: all.filter(p => p.status === 'archived').length };
   const fLabels = { all: 'All', active: 'Active', completed: 'Completed', 'on-hold': 'On Hold', archived: 'Archived' };
 
+  const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
+    ? `<p class="text-muted text-sm workspace-hint">Use <strong>Everyone</strong> to browse teammates&apos; projects (read-only).</p>` : '';
+
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Projects</h1><p class="view-subtitle">${all.length} in this workspace &middot; ${allRaw.length} total</p></div>
-      <div class="view-actions"><button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button></div>
+      <div class="view-actions">
+        <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} New Task</button>
+        <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
+      </div>
     </div>
+    ${teamHint}
     ${workspaceScopeBarHtml()}
     <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
       <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
@@ -413,12 +406,18 @@ async function renderProjects() {
 
 async function renderProjectDetail(projectId) {
   const content = document.getElementById('content');
+  const main = document.getElementById('main-content');
   if (state._libraryBlobUrls?.length) {
     state._libraryBlobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
     state._libraryBlobUrls = [];
   }
   const project = await DB.getProject(projectId);
-  if (!project) { content.innerHTML = `<div class="view-header"><a href="#/projects" class="btn btn-ghost">${ICONS.arrowLeft} Back</a></div>${emptyState('Project not found.')}`; return; }
+  if (!project) {
+    hideDocumentPanel();
+    if (main) main.classList.remove('with-doc-panel');
+    content.innerHTML = `<div class="view-header"><a href="#/projects" class="btn btn-ghost">${ICONS.arrowLeft} Back</a></div>${emptyState('Project not found.')}`;
+    return;
+  }
 
   const s = getSession();
   const editable = canEdit(project);
@@ -431,6 +430,9 @@ async function renderProjectDetail(projectId) {
   const attList = await DB.getAttachments(projectId);
   const attCount = attList.length;
 
+  if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
+  await renderDocumentPanel(projectId, editable);
+
   content.innerHTML = `
     <div class="view-header">
       <div class="breadcrumb">
@@ -438,6 +440,7 @@ async function renderProjectDetail(projectId) {
         <span class="breadcrumb-sep">/</span><span>${esc(project.name)}</span>
       </div>
       <div class="view-actions">
+        <button type="button" class="btn btn-ghost ${state.docPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" title="Documents panel">${ICONS.file} Files (${attCount})</button>
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>
         <button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` :
         badge('View Only', 'muted')}
@@ -458,6 +461,90 @@ async function renderProjectDetail(projectId) {
     </div>
     <div id="tab-content"></div>`;
   await renderTab(tab, projectId, editable);
+}
+
+function hideDocumentPanel() {
+  const panel = document.getElementById('document-panel');
+  if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+}
+
+async function renderDocumentPanel(projectId, editable) {
+  const panel = document.getElementById('document-panel');
+  const main = document.getElementById('main-content');
+  if (!panel) return;
+  if (!state.docPanelOpen) {
+    panel.classList.add('hidden');
+    if (main) main.classList.remove('with-doc-panel');
+    return;
+  }
+  const items = await DB.getAttachments(projectId);
+  const users = await DB.getUsers();
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  panel.classList.remove('hidden');
+  if (main) main.classList.add('with-doc-panel');
+
+  const listHtml = items.length === 0
+    ? `<p class="doc-panel-empty">No documents yet.</p>`
+    : items.map(item => {
+      const who = uMap[item.uploadedBy];
+      const isImg = item.mimeType?.startsWith('image/');
+      const icon = isImg ? '🖼' : (item.mimeType === 'application/pdf' ? '📄' : '📎');
+      return `<button type="button" class="doc-panel-item" data-action="preview-attachment" data-id="${item.id}">
+        <span class="doc-panel-icon">${icon}</span>
+        <span class="doc-panel-info">
+          <span class="doc-panel-name">${esc(item.fileName)}</span>
+          <span class="doc-panel-meta">${who ? esc(who.displayName) : 'Unknown'} · ${timeAgo(item.createdAt)}</span>
+        </span>
+      </button>`;
+    }).join('');
+
+  panel.innerHTML = `
+    <div class="doc-panel-header">
+      <h3>Documents</h3>
+      <button type="button" class="btn-icon" data-action="toggle-doc-panel" title="Close panel">${ICONS.x}</button>
+    </div>
+    ${editable ? `<button type="button" class="btn btn-sm btn-primary doc-panel-upload" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.upload} Upload</button>` : ''}
+    <div class="doc-panel-list">${listHtml}</div>`;
+}
+
+function closeFilePreview() {
+  if (state._previewUrl) {
+    try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
+    state._previewUrl = null;
+  }
+  const ov = document.getElementById('file-preview-overlay');
+  if (ov) {
+    ov.classList.add('hidden');
+    document.getElementById('file-preview-body').innerHTML = '';
+    document.getElementById('file-preview-title').textContent = '';
+  }
+}
+
+async function openFilePreview(attachmentId) {
+  const item = await DB.getAttachment(attachmentId);
+  if (!item?.blob) { showToast('File not found', 'error'); return; }
+  const url = URL.createObjectURL(item.blob);
+  if (state._previewUrl) try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
+  state._previewUrl = url;
+  const ov = document.getElementById('file-preview-overlay');
+  const body = document.getElementById('file-preview-body');
+  const title = document.getElementById('file-preview-title');
+  title.textContent = item.fileName;
+  const mime = item.mimeType || '';
+  if (mime.startsWith('image/')) {
+    body.innerHTML = `<img src="${url}" alt="${esc(item.fileName)}" class="file-preview-image">`;
+  } else if (mime === 'application/pdf') {
+    body.innerHTML = `<iframe src="${url}" class="file-preview-pdf" title="${esc(item.fileName)}"></iframe>`;
+  } else if (mime.startsWith('text/')) {
+    const text = await item.blob.text();
+    body.innerHTML = `<pre class="file-preview-text">${esc(text)}</pre>`;
+  } else {
+    body.innerHTML = `<div class="file-preview-fallback">
+      <p>Preview not available for this file type.</p>
+      <a href="${url}" download="${esc(item.fileName)}" class="btn btn-primary">${ICONS.download} Download</a>
+    </div>`;
+  }
+  ov.classList.remove('hidden');
 }
 
 async function renderTab(tab, projectId, editable) {
@@ -525,8 +612,8 @@ async function renderTab(tab, projectId, editable) {
       const whoLabel = who ? esc(who.displayName || who.username) : 'Unknown';
       const isImg = item.mimeType && item.mimeType.startsWith('image/');
       const preview = isImg
-        ? `<a href="${url}" download="${esc(item.fileName)}" class="library-card-preview"><img src="${url}" alt=""></a>`
-        : `<a href="${url}" download="${esc(item.fileName)}" class="library-card-file">${esc(item.fileName)}</a>`;
+        ? `<button type="button" class="library-card-preview" data-action="preview-attachment" data-id="${item.id}"><img src="${url}" alt=""></button>`
+        : `<button type="button" class="library-card-file" data-action="preview-attachment" data-id="${item.id}">${esc(item.fileName)}</button>`;
       const del = editable ? `<button type="button" class="btn-icon" data-action="delete-attachment" data-id="${item.id}" title="Remove">${ICONS.trash}</button>` : '';
       return `<div class="library-card">
         ${preview}
@@ -537,19 +624,33 @@ async function renderTab(tab, projectId, editable) {
       </div>`;
     }).join('');
     el.innerHTML = `
-      ${editable ? `<div class="tab-header"><button type="button" class="btn btn-sm btn-primary" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.plus} Upload files</button><span class="text-muted text-sm" style="margin-left:12px">Max 10 MB per file. Team can view; only editors remove.</span></div>` : `<p class="text-muted text-sm" style="margin-bottom:12px">You can view and download files. Upload and delete are limited to project editors.</p>`}
-      ${items.length === 0 ? emptyState('No files yet.') : `<div class="library-grid">${cards}</div>`}`;
+      ${editable ? `<div class="tab-header"><button type="button" class="btn btn-sm btn-primary" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.plus} Upload files</button><span class="text-muted text-sm tab-hint">Max 10 MB per file. Click to preview.</span></div>` : `<p class="text-muted text-sm tab-hint">View files in the panel on the right, or open from the grid below.</p>`}
+      ${items.length === 0 ? emptyState('No files yet. Use the Documents panel or Upload to add files.') : `<div class="library-grid">${cards}</div>`}`;
+    await renderDocumentPanel(projectId, editable);
   } else if (tab === 'updates') {
-    const ups = await DB.getUpdates(projectId);
+    const s = getSession();
+    const logs = await DB.getActivityLog({
+      projectId,
+      viewerUserId: s.userId,
+      isAdmin: isAdmin()
+    });
+    const users = await DB.getUsers();
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `
-      ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add Update</button></div>` : ''}
-      ${ups.length === 0 ? emptyState('No updates yet.') :
-      `<div class="update-list">${ups.map(u => `
-        <div class="update-item">
-          <div class="update-dot"></div>
-          <div class="update-content"><p>${esc(u.content)}</p><span class="text-muted text-sm">${timeAgo(u.createdAt)}</span></div>
-          ${editable ? `<button class="btn-icon" data-action="delete-update" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
-        </div>`).join('')}</div>`}`;
+      ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add Note</button></div>` : ''}
+      <p class="text-muted text-sm tab-hint activity-hint">Activity log — visible to you${isAdmin() ? ' and all admins' : ''}.</p>
+      ${logs.length === 0 ? emptyState('No activity recorded yet.') :
+      `<div class="activity-log">${logs.map(entry => {
+        const who = uMap[entry.userId];
+        const init = who ? (who.displayName || who.username).charAt(0).toUpperCase() : '?';
+        return `<div class="activity-log-item">
+          <div class="activity-log-avatar">${init}</div>
+          <div class="activity-log-body">
+            <p class="activity-log-text">${formatActivityMessage(entry, uMap)}</p>
+            <span class="text-muted text-sm">${timeAgo(entry.createdAt)}</span>
+          </div>
+        </div>`;
+      }).join('')}</div>`}`;
   }
 }
 
@@ -597,7 +698,7 @@ async function renderTasks() {
 }
 
 async function renderAdmin() {
-  if (!isAdmin()) { window.location.hash = '#/dashboard'; return; }
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   const users = await DB.getUsers();
   const s = getSession();
@@ -675,13 +776,18 @@ async function showProjectModal(editId = null) {
 
 async function showTaskModal(preId = null) {
   const projects = await DB.getProjects();
-  const s = getSession();
   const editable = projects.filter(p => canEdit(p));
   if (editable.length === 0) { showToast('No projects you can add tasks to', 'warning'); return; }
+  const lockedProject = preId ? editable.find(p => p.id === preId) : null;
+  if (preId && !lockedProject) { showToast('You cannot add tasks to this project', 'error'); return; }
+  const projectField = lockedProject
+    ? `<input type="hidden" name="projectId" value="${lockedProject.id}">
+       <div class="form-group"><label>Project</label><input type="text" value="${esc(lockedProject.name)}" disabled class="input-disabled"></div>`
+    : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`;
   showModal('New Task', `
     <form data-form="task">
-      <div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}" ${p.id === preId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
-      <div class="form-group"><label>Task Title</label><input name="title" type="text" placeholder="What needs to be done?" required></div>
+      ${projectField}
+      <div class="form-group"><label>Task Title</label><input name="title" type="text" placeholder="What needs to be done?" required autofocus></div>
       <div class="form-row">
         <div class="form-group"><label>Due Date</label><input name="dueDate" type="date"></div>
         <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
@@ -738,32 +844,34 @@ async function handleFormSubmit(e) {
   const form = e.target; if (!form.dataset.form) return;
   const fd = new FormData(form); const type = form.dataset.form;
   try {
+    const uid = actorId();
     if (type === 'project') {
       const data = { name: fd.get('name')?.trim(), notes: fd.get('notes')?.trim(), type: fd.get('type'), priority: fd.get('priority') };
       if (!data.name) return;
       const editId = form.dataset.editId;
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
-        await DB.updateProject(Number(editId), data);
+        await DB.updateProject(Number(editId), data, uid);
         showToast('Project updated', 'success');
       } else {
         data.ownerId = getSession().userId;
+        data.actorUserId = uid;
         const nid = await DB.createProject(data);
         showToast('Project created', 'success'); hideModal();
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
-      const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status') };
+      const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), actorUserId: uid };
       if (!data.title || !data.projectId) return;
       await DB.createTask(data); showToast('Task added', 'success');
     } else if (type === 'milestone') {
-      const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1 };
+      const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
       if (!data.title) return;
       await DB.createMilestone(data); showToast('Milestone added', 'success');
     } else if (type === 'update') {
-      const data = { projectId: Number(form.dataset.projectId), content: fd.get('content')?.trim() };
+      const data = { projectId: Number(form.dataset.projectId), content: fd.get('content')?.trim(), actorUserId: uid };
       if (!data.content) return;
-      await DB.createUpdate(data); showToast('Update logged', 'success');
+      await DB.createUpdate(data); showToast('Note added', 'success');
     } else if (type === 'add-user') {
       const username = fd.get('username')?.trim();
       const email = fd.get('email')?.trim() || '';
@@ -779,7 +887,7 @@ async function handleFormSubmit(e) {
       const pw = fd.get('password'); const confirm = fd.get('confirm');
       if (!pw || pw.length < 4) { showToast('Password min 4 characters', 'warning'); return; }
       if (pw !== confirm) { showToast('Passwords do not match', 'error'); return; }
-      await DB.changePassword(Number(form.dataset.userId), pw);
+      await DB.changePassword(Number(form.dataset.userId), pw, actorId());
       showToast('Password reset', 'success');
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
@@ -807,25 +915,59 @@ const actions = {
     const p = await DB.getProject(Number(b.dataset.id));
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     if (!confirm('Delete this project and all its data?')) return;
-    await DB.deleteProject(p.id); showToast('Project deleted', 'success');
+    await DB.deleteProject(p.id, actorId()); showToast('Project deleted', 'success');
     window.location.hash = '#/projects';
   },
   'cycle-task-status': async (b) => {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.updateTask(t.id, { status: { todo: 'doing', doing: 'done', done: 'todo' }[t.status] });
+    await DB.updateTask(t.id, { status: { todo: 'doing', doing: 'done', done: 'todo' }[t.status] }, actorId());
     await router();
   },
   'delete-task': async (b) => {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteTask(t.id); showToast('Task deleted', 'success'); await router();
+    await DB.deleteTask(t.id, actorId()); showToast('Task deleted', 'success'); await router();
   },
-  'delete-milestone': async (b) => { await DB.deleteMilestone(Number(b.dataset.id)); showToast('Milestone deleted', 'success'); await router(); },
-  'complete-milestone': async (b) => { await DB.updateMilestone(Number(b.dataset.id), { status: 'completed' }); showToast('Milestone completed', 'success'); await router(); },
-  'delete-update': async (b) => { await DB.deleteUpdate(Number(b.dataset.id)); showToast('Update deleted', 'success'); await router(); },
+  'delete-milestone': async (b) => {
+    const id = Number(b.dataset.id);
+    const m = await db.milestones.get(id);
+    if (!m) return;
+    const p = await DB.getProject(m.projectId);
+    if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
+    await DB.deleteMilestone(id, actorId()); showToast('Milestone deleted', 'success'); await router();
+  },
+  'complete-milestone': async (b) => {
+    const id = Number(b.dataset.id);
+    const ms = await db.milestones.get(id);
+    const p = ms ? await DB.getProject(ms.projectId) : null;
+    if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
+    await DB.updateMilestone(id, { status: 'completed' }, actorId()); showToast('Milestone completed', 'success'); await router();
+  },
+  'delete-update': async (b) => {
+    const row = await db.updates.get(Number(b.dataset.id));
+    const p = row ? await DB.getProject(row.projectId) : null;
+    if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
+    await DB.deleteUpdate(Number(b.dataset.id), actorId()); showToast('Note deleted', 'success'); await router();
+  },
+  'toggle-doc-panel': async () => {
+    state.docPanelOpen = !state.docPanelOpen;
+    await router();
+  },
+  'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
+  'user-export': async () => { closeUserMenu(); await exportData(); },
+  'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
+  'user-logout': async () => {
+    closeUserMenu();
+    const s = getSession();
+    if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username });
+    clearSession();
+    wtAppBootstrapped = false;
+    window.location.hash = '';
+    await applyRoute();
+  },
   'switch-tab': async (b) => {
     const tab = b.dataset.tab; const pid = Number(b.dataset.projectId);
     state.projectTab = tab;
@@ -851,7 +993,7 @@ const actions = {
     const p = await DB.getProject(row.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     if (!confirm('Remove this file from the project?')) return;
-    await DB.deleteAttachment(row.id);
+    await DB.deleteAttachment(row.id, actorId());
     showToast('File removed', 'success');
     await router();
   },
@@ -874,12 +1016,16 @@ const actions = {
 
 /* ──── Toast ──── */
 
+const TOAST_ICONS = { success: '✓', error: '✕', warning: '!', info: 'i' };
+
 function showToast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
-  const t = document.createElement('div'); t.className = `toast toast-${type}`; t.textContent = msg;
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.innerHTML = `<span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span><span>${esc(msg)}</span>`;
   c.appendChild(t);
   requestAnimationFrame(() => t.classList.add('toast-visible'));
-  setTimeout(() => { t.classList.remove('toast-visible'); setTimeout(() => t.remove(), 300); }, 3000);
+  setTimeout(() => { t.classList.remove('toast-visible'); setTimeout(() => t.remove(), 300); }, 3200);
 }
 
 function revokeLibraryPreviewUrls() {
@@ -892,26 +1038,37 @@ function revokeLibraryPreviewUrls() {
 /* ──── Router ──── */
 
 async function router() {
-  const hash = window.location.hash.slice(1) || '/dashboard';
+  const hash = window.location.hash.slice(1) || '/projects';
   if (hash === '/recovery') return;
-  if (!hash.startsWith('/projects/')) revokeLibraryPreviewUrls();
+  if (!hash.startsWith('/projects/')) {
+    revokeLibraryPreviewUrls();
+    hideDocumentPanel();
+    const main = document.getElementById('main-content');
+    if (main) main.classList.remove('with-doc-panel');
+    state.currentProjectId = null;
+  }
   updateNav(hash);
-  if (hash === '/dashboard' || hash === '/') await renderDashboard();
-  else if (hash === '/projects') await renderProjects();
+  const content = document.getElementById('content');
+  if (content) content.classList.add('content-fade');
+  if (hash === '/dashboard' || hash === '/' || hash === '/projects') await renderProjects();
   else if (hash.startsWith('/projects/')) {
     const id = parseInt(hash.split('/')[2]);
-    if (!isNaN(id)) { if (state.currentProjectId !== id) { state.projectTab = 'tasks'; state.currentProjectId = id; } await renderProjectDetail(id); }
+    if (!isNaN(id)) {
+      if (state.currentProjectId !== id) { state.projectTab = 'tasks'; state.currentProjectId = id; }
+      await renderProjectDetail(id);
+    } else await renderProjects();
   }
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/admin') await renderAdmin();
-  else window.location.hash = '#/dashboard';
+  else window.location.hash = '#/projects';
+  requestAnimationFrame(() => content?.classList.remove('content-fade'));
 }
 
 function updateNav(route) {
   document.querySelectorAll('.nav-item').forEach(item => {
     const n = item.dataset.nav;
     item.classList.toggle('active',
-      route === `/${n}` || (n === 'projects' && route.startsWith('/projects/')) || (n === 'dashboard' && (route === '/' || route === '/dashboard')));
+      route === `/${n}` || (n === 'projects' && (route === '/' || route === '/dashboard' || route.startsWith('/projects'))));
   });
 }
 
@@ -980,7 +1137,7 @@ async function applyRoute() {
       return;
     }
     document.getElementById('auth-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'grid';
+    document.getElementById('app').style.display = 'flex';
     document.getElementById('menu-toggle').style.display = '';
     updateSidebarUser();
     await router();
@@ -998,25 +1155,40 @@ async function applyRoute() {
 async function init() {
   try {
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
-    document.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (b && actions[b.dataset.action]) await actions[b.dataset.action](b); });
+    document.addEventListener('click', async (e) => {
+      const userBtn = e.target.closest('#sidebar-user');
+      const menu = document.getElementById('user-menu');
+      if (userBtn) { e.stopPropagation(); toggleUserMenu(); return; }
+      if (menu && !menu.contains(e.target)) closeUserMenu();
+      const b = e.target.closest('[data-action]');
+      if (b && actions[b.dataset.action]) await actions[b.dataset.action](b);
+    });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
     document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') hideModal(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideModal(); });
-    document.getElementById('btn-export').addEventListener('click', exportData);
-    document.getElementById('btn-import').addEventListener('click', () => document.getElementById('import-input').click());
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
+        else hideModal();
+      }
+    });
+    document.getElementById('file-preview-close')?.addEventListener('click', closeFilePreview);
+    document.getElementById('file-preview-overlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'file-preview-overlay') closeFilePreview();
+    });
     document.getElementById('library-file-input').addEventListener('change', async (e) => {
       const inp = e.target;
       const pid = Number(inp.dataset.projectId);
       inp.removeAttribute('data-project-id');
-      const files = inp.files;
+      const fileList = inp.files?.length ? Array.from(inp.files) : [];
       inp.value = '';
-      if (!pid || !files?.length) return;
+      if (!pid || !fileList.length) return;
       const project = await DB.getProject(pid);
       if (!project || !canEdit(project)) { showToast('Permission denied', 'error'); return; }
       const s = getSession();
       const max = 10 * 1024 * 1024;
-      for (const file of Array.from(files)) {
+      let uploaded = 0;
+      for (const file of fileList) {
         if (file.size > max) { showToast(`${file.name} is over 10 MB`, 'warning'); continue; }
         await DB.addAttachment({
           projectId: pid,
@@ -1025,21 +1197,16 @@ async function init() {
           mimeType: file.type || 'application/octet-stream',
           blob: file
         });
+        uploaded++;
       }
-      showToast('Upload complete', 'success');
+      if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
       await router();
-    });
-    document.getElementById('btn-logout').addEventListener('click', async () => {
-      clearSession();
-      wtAppBootstrapped = false;
-      window.location.hash = '';
-      await applyRoute();
     });
     setupImport();
     const mt = document.getElementById('menu-toggle');
     const sb = document.getElementById('sidebar');
     if (mt) mt.addEventListener('click', () => sb.classList.toggle('open'));
-    document.querySelectorAll('.nav-item').forEach(i => i.addEventListener('click', () => sb.classList.remove('open')));
+    document.querySelectorAll('.nav-item').forEach(i => i.addEventListener('click', () => { sb.classList.remove('open'); closeUserMenu(); }));
     window.addEventListener('hashchange', () => { applyRoute(); });
 
     await applyRoute();

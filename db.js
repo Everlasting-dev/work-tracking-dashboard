@@ -38,6 +38,17 @@ db.version(4).stores({
   attachments: '++id, projectId, uploadedBy, createdAt'
 });
 
+db.version(5).stores({
+  projects: '++id, name, type, status, priority, ownerId, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, createdAt'
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -54,9 +65,33 @@ function generateSalt() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/* ── Database helpers ── */
+/* ── Database helpers (Supabase-ready: swap Dexie calls for supabase.from() later) ── */
 
 const DB = {
+  /* Activity audit log */
+  async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
+    if (!userId || !action) return;
+    return db.activityLog.add({
+      userId,
+      projectId: projectId ?? null,
+      action,
+      entityType: entityType || 'system',
+      entityId: entityId ?? null,
+      details: details || '',
+      createdAt: new Date().toISOString()
+    });
+  },
+
+  async getActivityLog(filters = {}) {
+    let rows = await db.activityLog.toArray();
+    if (filters.projectId != null) rows = rows.filter(r => r.projectId === filters.projectId);
+    if (filters.userId != null) rows = rows.filter(r => r.userId === filters.userId);
+    if (filters.viewerUserId != null && !filters.isAdmin) {
+      rows = rows.filter(r => r.userId === filters.viewerUserId);
+    }
+    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
   /* Users */
   async createUser(data) {
     const salt = generateSalt();
@@ -83,10 +118,11 @@ const DB = {
 
   async updateUser(id, changes) { return db.users.update(id, changes); },
 
-  async changePassword(userId, newPassword) {
+  async changePassword(userId, newPassword, actorUserId = null) {
     const salt = generateSalt();
     const pwHash = await hashPassword(newPassword, salt);
-    return db.users.update(userId, { passwordHash: pwHash, salt });
+    await db.users.update(userId, { passwordHash: pwHash, salt });
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: null, action: 'password_changed', entityType: 'user', entityId: userId, details: '' });
   },
 
   async verifyPassword(password, user) {
@@ -122,9 +158,11 @@ const DB = {
 
   /* Projects */
   async createProject(data) {
+    const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
-    return db.projects.add({
-      name: data.name || '',
+    const name = data.name || '';
+    const id = await db.projects.add({
+      name,
       notes: data.notes || '',
       type: data.type || 'project',
       status: data.status || 'active',
@@ -133,6 +171,8 @@ const DB = {
       createdAt: now,
       updatedAt: now
     });
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: id, action: 'created', entityType: 'project', entityId: id, details: name });
+    return id;
   },
 
   async getProjects() {
@@ -142,31 +182,43 @@ const DB = {
 
   async getProject(id) { return db.projects.get(id); },
 
-  async updateProject(id, changes) {
-    changes.updatedAt = new Date().toISOString();
-    return db.projects.update(id, changes);
+  async updateProject(id, changes, actorUserId = null) {
+    const patch = { ...changes };
+    delete patch.actorUserId;
+    patch.updatedAt = new Date().toISOString();
+    await db.projects.update(id, patch);
+    if (actorUserId) {
+      const p = await db.projects.get(id);
+      await DB.logActivity({ userId: actorUserId, projectId: id, action: 'updated', entityType: 'project', entityId: id, details: p?.name || '' });
+    }
+    return id;
   },
 
-  async deleteProject(id) {
+  async deleteProject(id, actorUserId = null) {
+    const p = await db.projects.get(id);
     await db.tasks.where('projectId').equals(id).delete();
     await db.milestones.where('projectId').equals(id).delete();
     await db.updates.where('projectId').equals(id).delete();
     await db.attachments.where('projectId').equals(id).delete();
-    return db.projects.delete(id);
+    await db.activityLog.where('projectId').equals(id).delete();
+    await db.projects.delete(id);
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: null, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
 
   /* Attachments (files stored in IndexedDB) */
   async addAttachment(data) {
     const now = new Date().toISOString();
+    const fileName = data.fileName || 'file';
     const id = await db.attachments.add({
       projectId: data.projectId,
       uploadedBy: data.uploadedBy,
-      fileName: data.fileName || 'file',
+      fileName,
       mimeType: data.mimeType || 'application/octet-stream',
       blob: data.blob,
       createdAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
+    if (data.uploadedBy) await DB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: id, details: fileName });
     return id;
   },
 
@@ -177,10 +229,13 @@ const DB = {
 
   async getAttachment(id) { return db.attachments.get(id); },
 
-  async deleteAttachment(id) {
+  async deleteAttachment(id, actorUserId = null) {
     const row = await db.attachments.get(id);
     await db.attachments.delete(id);
-    if (row) await db.projects.update(row.projectId, { updatedAt: new Date().toISOString() });
+    if (row) {
+      await db.projects.update(row.projectId, { updatedAt: new Date().toISOString() });
+      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
+    }
   },
 
   async blobToBase64(blob) {
@@ -205,11 +260,13 @@ const DB = {
 
   /* Tasks */
   async createTask(data) {
+    const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
+    const title = data.title || '';
     const taskId = await db.tasks.add({
       projectId: data.projectId,
       milestoneId: data.milestoneId || null,
-      title: data.title || '',
+      title,
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
       priority: data.priority || 'medium',
@@ -217,6 +274,7 @@ const DB = {
       updatedAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: taskId, details: title });
     return taskId;
   },
 
@@ -229,31 +287,45 @@ const DB = {
 
   async getTask(id) { return db.tasks.get(id); },
 
-  async updateTask(id, changes) {
-    changes.updatedAt = new Date().toISOString();
+  async updateTask(id, changes, actorUserId = null) {
+    const patch = { ...changes };
+    delete patch.actorUserId;
+    patch.updatedAt = new Date().toISOString();
     const task = await db.tasks.get(id);
-    await db.tasks.update(id, changes);
-    if (task) await db.projects.update(task.projectId, { updatedAt: changes.updatedAt });
+    await db.tasks.update(id, patch);
+    if (task) {
+      await db.projects.update(task.projectId, { updatedAt: patch.updatedAt });
+      if (actorUserId) {
+        const detail = patch.status ? `status → ${patch.status}` : (task.title || '');
+        await DB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
+      }
+    }
   },
 
-  async deleteTask(id) {
+  async deleteTask(id, actorUserId = null) {
     const task = await db.tasks.get(id);
     await db.tasks.delete(id);
-    if (task) await db.projects.update(task.projectId, { updatedAt: new Date().toISOString() });
+    if (task) {
+      await db.projects.update(task.projectId, { updatedAt: new Date().toISOString() });
+      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title || '' });
+    }
   },
 
   /* Milestones */
   async createMilestone(data) {
+    const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
+    const title = data.title || '';
     const id = await db.milestones.add({
       projectId: data.projectId,
-      title: data.title || '',
+      title,
       dueDate: data.dueDate || '',
       status: data.status || 'pending',
       weight: data.weight || 1,
       createdAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'milestone', entityId: id, details: title });
     return id;
   },
 
@@ -261,22 +333,37 @@ const DB = {
     return db.milestones.where('projectId').equals(projectId).toArray();
   },
 
-  async updateMilestone(id, changes) { return db.milestones.update(id, changes); },
+  async updateMilestone(id, changes, actorUserId = null) {
+    const patch = { ...changes };
+    delete patch.actorUserId;
+    const ms = await db.milestones.get(id);
+    await db.milestones.update(id, patch);
+    if (ms) {
+      await db.projects.update(ms.projectId, { updatedAt: new Date().toISOString() });
+      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'updated', entityType: 'milestone', entityId: id, details: ms.title || '' });
+    }
+    return id;
+  },
 
-  async deleteMilestone(id) {
+  async deleteMilestone(id, actorUserId = null) {
     const ms = await db.milestones.get(id);
     if (ms) {
       await db.tasks.where('milestoneId').equals(id).modify({ milestoneId: null });
       await db.projects.update(ms.projectId, { updatedAt: new Date().toISOString() });
+      if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: ms.projectId, action: 'deleted', entityType: 'milestone', entityId: id, details: ms.title || '' });
     }
     return db.milestones.delete(id);
   },
 
   /* Updates / Activity */
   async createUpdate(data) {
+    const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
+    const content = data.content || '';
     await db.projects.update(data.projectId, { updatedAt: now });
-    return db.updates.add({ projectId: data.projectId, content: data.content || '', createdAt: now });
+    const id = await db.updates.add({ projectId: data.projectId, userId: actorUserId || null, content, createdAt: now });
+    if (actorUserId) await DB.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'noted', entityType: 'update', entityId: id, details: content.slice(0, 120) });
+    return id;
   },
 
   async getUpdates(projectId) {
@@ -284,7 +371,11 @@ const DB = {
     return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
-  async deleteUpdate(id) { return db.updates.delete(id); },
+  async deleteUpdate(id, actorUserId = null) {
+    const row = await db.updates.get(id);
+    await db.updates.delete(id);
+    if (row && actorUserId) await DB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'update', entityId: id, details: '' });
+  },
 
   /* Stats & Progress */
   async getProjectProgress(projectId) {
@@ -350,13 +441,14 @@ const DB = {
         id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName, mimeType: a.mimeType, createdAt: a.createdAt, dataBase64
       });
     }
-    return { version: 4, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments };
+    const activityLog = await db.activityLog.toArray();
+    return { version: 5, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog };
   },
 
   async importAll(data) {
     const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
-    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments], async () => {
-      await Promise.all([db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(), db.attachments.clear()]);
+    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog], async () => {
+      await Promise.all([db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(), db.attachments.clear(), db.activityLog.clear()]);
       if (data.projects?.length) await db.projects.bulkAdd(data.projects);
       if (data.tasks?.length) await db.tasks.bulkAdd(data.tasks);
       if (data.milestones?.length) await db.milestones.bulkAdd(data.milestones);
@@ -379,6 +471,7 @@ const DB = {
           });
         }
       }
+      if (data.activityLog?.length) await db.activityLog.bulkAdd(data.activityLog);
     });
   },
 
