@@ -55,7 +55,7 @@ const SupabaseDB = {
     return {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
-      discordId: r.discord_id || '', color: r.color || '',
+      department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
@@ -64,7 +64,8 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, name: r.name, notes: r.notes, type: r.type, status: r.status, priority: r.priority,
-      ownerId: r.owner_id, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
+      ownerId: r.owner_id, department: r.department || '', workflowTemplate: r.workflow_template || '',
+      completedAt: r.completed_at || null, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -82,6 +83,7 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, projectId: r.project_id, milestoneId: r.milestone_id, assigneeId: r.assignee_id,
+      workflowStepKey: r.workflow_step_key || '',
       title: r.title, dueDate: r.due_date || '', status: r.status, priority: r.priority,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
@@ -122,7 +124,8 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, projectId: r.project_id, uploadedBy: r.uploaded_by, fileName: r.file_name,
-      mimeType: r.mime_type, storagePath: r.storage_path, createdAt: r.created_at, blob
+      mimeType: r.mime_type, documentType: r.document_type || '', storagePath: r.storage_path,
+      createdAt: r.created_at, blob
     };
   },
 
@@ -166,10 +169,12 @@ const SupabaseDB = {
       password_hash: pwHash,
       salt,
       role: data.role || 'user',
+      department: data.department || '',
       color: data.color || ''
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
+      delete payload.department;
       delete payload.color;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
@@ -200,6 +205,7 @@ const SupabaseDB = {
     if (changes.displayName != null) patch.display_name = changes.displayName;
     if (changes.email != null) patch.email = changes.email;
     if (changes.role != null) patch.role = changes.role;
+    if (changes.department != null) patch.department = changes.department || '';
     if (changes.discordId != null) patch.discord_id = changes.discordId;
     if (changes.color != null) patch.color = changes.color;
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
@@ -212,12 +218,13 @@ const SupabaseDB = {
       patch.username = next;
     }
     let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
-    if (error && patch.color != null && this._isMissingColumn(error)) {
+    if (error && this._isMissingColumn(error) && (patch.color != null || patch.department != null)) {
+      delete patch.department;
       delete patch.color;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;
-    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', discord_id: 'Discord ID', color: 'color', username: 'username' };
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username' };
     if (actorUserId) {
       await this.logActivity({
         userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
@@ -274,16 +281,23 @@ const SupabaseDB = {
 
   async createProject(data) {
     const actorUserId = data.actorUserId;
+    const now = new Date().toISOString();
     const id = await this._nextTableId('wt_projects');
     const payload = {
       id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
       owner_id: data.ownerId ?? actorUserId ?? 1,
+      department: data.department || '',
+      workflow_template: data.workflowTemplate || '',
+      completed_at: data.status === 'completed' ? now : null,
       is_ongoing: !!data.isOngoing,
       cadence: data.cadence || ''
     };
     let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
+      delete payload.department;
+      delete payload.workflow_template;
+      delete payload.completed_at;
       delete payload.is_ongoing;
       delete payload.cadence;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
@@ -306,16 +320,26 @@ const SupabaseDB = {
   },
 
   async updateProject(id, changes, actorUserId = null) {
+    const existing = await this.getProject(id);
     const patch = { updated_at: new Date().toISOString() };
     if (changes.name != null) patch.name = changes.name;
     if (changes.notes != null) patch.notes = changes.notes;
     if (changes.type != null) patch.type = changes.type;
     if (changes.status != null) patch.status = changes.status;
     if (changes.priority != null) patch.priority = changes.priority;
+    if (changes.department != null) patch.department = changes.department || '';
+    if (changes.workflowTemplate != null) patch.workflow_template = changes.workflowTemplate || '';
     if (changes.isOngoing != null) patch.is_ongoing = !!changes.isOngoing;
     if (changes.cadence != null) patch.cadence = changes.cadence || '';
+    if (changes.status != null) {
+      if (changes.status === 'completed') patch.completed_at = existing?.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') patch.completed_at = null;
+    }
     let { error } = await this._sb().from('wt_projects').update(patch).eq('id', id);
-    if (error && this._isMissingColumn(error) && (patch.is_ongoing != null || patch.cadence != null)) {
+    if (error && this._isMissingColumn(error)) {
+      delete patch.department;
+      delete patch.workflow_template;
+      delete patch.completed_at;
       delete patch.is_ongoing;
       delete patch.cadence;
       ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
@@ -344,7 +368,7 @@ const SupabaseDB = {
     if (upErr) throw upErr;
     const { data: row, error } = await this._sb().from('wt_attachments').insert({
       project_id: data.projectId, uploaded_by: data.uploadedBy, file_name: fileName,
-      mime_type: data.mimeType || 'application/octet-stream', storage_path: path
+      mime_type: data.mimeType || 'application/octet-stream', document_type: data.documentType || '', storage_path: path
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
@@ -399,6 +423,7 @@ const SupabaseDB = {
     const id = await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
       id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
+      workflow_step_key: data.workflowStepKey || '',
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium'
     }).select().single();
@@ -432,6 +457,7 @@ const SupabaseDB = {
     if (changes.dueDate != null) patch.due_date = changes.dueDate;
     if (changes.milestoneId !== undefined) patch.milestone_id = changes.milestoneId;
     if (changes.assigneeId !== undefined) patch.assignee_id = changes.assigneeId == null ? null : Number(changes.assigneeId);
+    if (changes.workflowStepKey !== undefined) patch.workflow_step_key = changes.workflowStepKey || '';
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
     if (task) {
@@ -729,7 +755,8 @@ const SupabaseDB = {
     if (sErr) throw sErr;
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
+      role: u.role, department: u.department || '', createdAt: u.createdAt,
+      discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = (settingsRows || []).map(s => ({
@@ -742,12 +769,12 @@ const SupabaseDB = {
       if (!full?.blob) continue;
       attOut.push({
         id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
-        mimeType: a.mimeType, createdAt: a.createdAt,
+        mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt,
         dataBase64: await this.blobToBase64(full.blob)
       });
     }
     return {
-      version: 7, exportedAt: new Date().toISOString(),
+      version: 8, exportedAt: new Date().toISOString(),
       projects, tasks, milestones, updates, users: safeUsers, settings, attachments: attOut,
       activityLog, notifications, webhooks, sessions
     };
@@ -783,6 +810,7 @@ const SupabaseDB = {
         password_hash: passwordHash,
         salt,
         role: u.role || 'user',
+        department: u.department || '',
         discord_id: u.discordId || '',
         color: u.color || '',
         created_at: u.createdAt || new Date().toISOString()
@@ -824,6 +852,9 @@ const SupabaseDB = {
         id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
         status: p.status || 'active', priority: p.priority || 'medium',
         owner_id: mapUid(p.ownerId) ?? p.ownerId,
+        department: p.department || '',
+        workflow_template: p.workflowTemplate || '',
+        completed_at: p.completedAt || null,
         is_ongoing: !!p.isOngoing,
         cadence: p.cadence || '',
         created_at: p.createdAt, updated_at: p.updatedAt
@@ -841,6 +872,7 @@ const SupabaseDB = {
       const { error } = await sb.from('wt_tasks').insert(data.tasks.map(t => ({
         id: t.id, project_id: t.projectId, milestone_id: t.milestoneId ?? null,
         assignee_id: t.assigneeId != null ? mapUid(t.assigneeId) : null,
+        workflow_step_key: t.workflowStepKey || '',
         title: t.title || '', due_date: t.dueDate || '', status: t.status || 'todo',
         priority: t.priority || 'medium', created_at: t.createdAt, updated_at: t.updatedAt
       })));
@@ -934,7 +966,7 @@ const SupabaseDB = {
         if (!validUserIds.has(uploadedBy)) continue;
         await this.addAttachment({
           projectId: a.projectId, uploadedBy, fileName: a.fileName,
-          mimeType: a.mimeType, blob
+          mimeType: a.mimeType, documentType: a.documentType || '', blob
         });
         attachmentsImported++;
       }

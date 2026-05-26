@@ -86,6 +86,35 @@ db.version(7).stores({
   sessions: '++id, userId, &[userId+deviceId], lastSeenAt'
 });
 
+db.version(8).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt'
+}).upgrade(async tx => {
+  await tx.table('users').toCollection().modify(user => {
+    if (user.department == null) user.department = '';
+  });
+  await tx.table('projects').toCollection().modify(project => {
+    if (project.department == null) project.department = '';
+    if (project.workflowTemplate == null) project.workflowTemplate = '';
+    if (project.completedAt == null) project.completedAt = null;
+  });
+  await tx.table('tasks').toCollection().modify(task => {
+    if (task.workflowStepKey == null) task.workflowStepKey = '';
+  });
+  await tx.table('attachments').toCollection().modify(att => {
+    if (att.documentType == null) att.documentType = '';
+  });
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -249,6 +278,7 @@ const LocalDB = {
       passwordHash: pwHash,
       salt,
       role: data.role || 'user',
+      department: data.department || '',
       color: data.color || '',
       createdAt: now
     });
@@ -271,6 +301,7 @@ const LocalDB = {
       if (existing && existing.id !== id) throw new Error('Username already taken');
       patch.username = next;
     }
+    if (patch.department != null) patch.department = patch.department || '';
     await db.users.update(id, patch);
     if (actorUserId) {
       const details = Object.keys(patch).join(',');
@@ -328,6 +359,9 @@ const LocalDB = {
       status: data.status || 'active',
       priority: data.priority || 'medium',
       ownerId: data.ownerId || 1,
+      department: data.department || '',
+      workflowTemplate: data.workflowTemplate || '',
+      completedAt: data.status === 'completed' ? now : null,
       isOngoing: !!data.isOngoing,
       cadence: data.cadence || '',
       createdAt: now,
@@ -345,8 +379,15 @@ const LocalDB = {
   async getProject(id) { return db.projects.get(id); },
 
   async updateProject(id, changes, actorUserId = null) {
+    const existing = await db.projects.get(id);
     const patch = { ...changes };
     delete patch.actorUserId;
+    if (patch.department != null) patch.department = patch.department || '';
+    if (patch.workflowTemplate != null) patch.workflowTemplate = patch.workflowTemplate || '';
+    if (patch.status != null) {
+      if (patch.status === 'completed') patch.completedAt = existing?.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') patch.completedAt = null;
+    }
     patch.updatedAt = new Date().toISOString();
     await db.projects.update(id, patch);
     if (actorUserId) {
@@ -376,6 +417,7 @@ const LocalDB = {
       uploadedBy: data.uploadedBy,
       fileName,
       mimeType: data.mimeType || 'application/octet-stream',
+      documentType: data.documentType || '',
       blob: data.blob,
       createdAt: now
     });
@@ -432,6 +474,7 @@ const LocalDB = {
       projectId: data.projectId,
       milestoneId: data.milestoneId || null,
       assigneeId,
+      workflowStepKey: data.workflowStepKey || '',
       title,
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
@@ -457,6 +500,7 @@ const LocalDB = {
     const patch = { ...changes };
     delete patch.actorUserId;
     if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
+    if (patch.workflowStepKey != null) patch.workflowStepKey = patch.workflowStepKey || '';
     patch.updatedAt = new Date().toISOString();
     const task = await db.tasks.get(id);
     await db.tasks.update(id, patch);
@@ -604,7 +648,8 @@ const LocalDB = {
     ]);
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
+      role: u.role, department: u.department || '', createdAt: u.createdAt,
+      discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = await db.settings.toArray();
@@ -614,14 +659,15 @@ const LocalDB = {
       if (!a.blob) continue;
       const dataBase64 = await LocalDB.blobToBase64(a.blob);
       attachments.push({
-        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName, mimeType: a.mimeType, createdAt: a.createdAt, dataBase64
+        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+        mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt, dataBase64
       });
     }
     const activityLog = await db.activityLog.toArray();
     const notifications = await db.notifications.toArray();
     const webhooks = await db.webhooks.toArray();
     const sessions = await db.sessions.toArray();
-    return { version: 7, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
+    return { version: 8, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
   },
 
   async importAll(data) {
@@ -648,6 +694,7 @@ const LocalDB = {
             uploadedBy: a.uploadedBy,
             fileName: a.fileName || 'file',
             mimeType: a.mimeType || 'application/octet-stream',
+            documentType: a.documentType || '',
             blob,
             createdAt: a.createdAt || new Date().toISOString()
           });

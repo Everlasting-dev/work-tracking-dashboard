@@ -59,6 +59,52 @@ const TYPE_CFG  = { 'project': { l: 'Project', c: 'blue' }, 'research': { l: 'Re
 const STAT_CFG  = { 'active': { l: 'Active', c: 'green' }, 'completed': { l: 'Completed', c: 'blue' }, 'on-hold': { l: 'On Hold', c: 'amber' }, 'archived': { l: 'Archived', c: 'muted' } };
 const TSTATUS   = { 'todo': { l: 'To Do', c: 'amber' }, 'doing': { l: 'In Progress', c: 'blue' }, 'done': { l: 'Done', c: 'green' } };
 const PRIO_CFG  = { 'low': { l: 'Low', c: 'muted' }, 'medium': { l: 'Medium', c: 'blue' }, 'high': { l: 'High', c: 'amber' }, 'urgent': { l: 'Urgent', c: 'red' } };
+const DEPARTMENT_CFG = {
+  '': { l: 'Unassigned', c: 'muted' },
+  it: { l: 'IT', c: 'blue' },
+  logistics: { l: 'Logistics', c: 'amber' },
+  sales: { l: 'Sales', c: 'green' },
+  purchase: { l: 'Purchase', c: 'purple' },
+  rnd: { l: 'R&D', c: 'red' }
+};
+const WORKFLOW_TEMPLATE_CFG = {
+  '': { l: 'Standard workflow' },
+  'logistics-shipment': { l: 'Logistics shipment flow', department: 'logistics' }
+};
+const LOGISTICS_WORKFLOW_STEPS = [
+  {
+    key: 'shipping-list',
+    title: 'Attach approved shipping list',
+    helper: 'Upload the approved shipping list before the shipment can move.',
+    priority: 'high',
+    documentType: 'shipping-list'
+  },
+  {
+    key: 'packaging',
+    title: 'Packaging complete',
+    helper: 'Confirm the part is packed and ready for courier pickup.',
+    priority: 'high'
+  },
+  {
+    key: 'courier-pickup',
+    title: 'Picked up by courier',
+    helper: 'Record when the courier has collected the shipment.',
+    priority: 'urgent'
+  },
+  {
+    key: 'waybill-tracking',
+    title: 'Upload waybill and tracking',
+    helper: 'Store the waybill and tracking reference in the project files.',
+    priority: 'high',
+    documentType: 'waybill'
+  },
+  {
+    key: 'delivery-confirmation',
+    title: 'Delivery confirmed',
+    helper: 'Confirm receipt so the shipment can be closed out.',
+    priority: 'medium'
+  }
+];
 
 /* ──── Template Helpers ──── */
 
@@ -68,6 +114,53 @@ function typeBadge(t)    { const c = TYPE_CFG[t] || TYPE_CFG_LEGACY[t] || TYPE_C
 function statusBadge(s)  { const c = STAT_CFG[s] || STAT_CFG.active; return badge(c.l, c.c); }
 function taskBadge(s)    { const c = TSTATUS[s] || TSTATUS.todo; return badge(c.l, c.c); }
 function prioBadge(p)    { const c = PRIO_CFG[p] || PRIO_CFG.medium; return badge(c.l, c.c); }
+function departmentBadge(dept) {
+  const cfg = DEPARTMENT_CFG[dept || ''] || { l: String(dept || 'Unassigned'), c: 'muted' };
+  return badge(cfg.l, cfg.c);
+}
+function departmentLabel(dept) {
+  return (DEPARTMENT_CFG[dept || ''] || { l: dept || 'Unassigned' }).l;
+}
+function workflowTemplateLabel(template) {
+  return (WORKFLOW_TEMPLATE_CFG[template || ''] || WORKFLOW_TEMPLATE_CFG['']).l;
+}
+function documentTypeLabel(type) {
+  if (type === 'shipping-list') return 'Shipping list';
+  if (type === 'waybill') return 'Waybill';
+  return 'General file';
+}
+function formatMonthInput(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+function monthRange(monthInput) {
+  const safe = /^\d{4}-\d{2}$/.test(monthInput || '') ? monthInput : formatMonthInput();
+  const [yy, mm] = safe.split('-').map(Number);
+  const start = new Date(Date.UTC(yy, mm - 1, 1));
+  const end = new Date(Date.UTC(yy, mm, 1));
+  const label = start.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return { safe, start, end, label };
+}
+function dateInRange(iso, start, end) {
+  if (!iso) return false;
+  const dt = new Date(iso);
+  return dt >= start && dt < end;
+}
+function completedAtForReport(project) {
+  if (!project) return null;
+  if (project.completedAt) return project.completedAt;
+  return project.status === 'completed' ? project.updatedAt : null;
+}
+function projectDepartmentValue(project, uMap = {}) {
+  return project?.department || uMap?.[project?.ownerId]?.department || '';
+}
+function isLogisticsWorkflow(project) {
+  return project?.workflowTemplate === 'logistics-shipment';
+}
+function logisticsStepByKey(key) {
+  return LOGISTICS_WORKFLOW_STEPS.find(step => step.key === key) || null;
+}
 function projectModeBadge(p) {
   if (!p?.isOngoing) return '';
   const label = p.cadence ? `Ongoing · ${p.cadence}` : 'Ongoing';
@@ -125,7 +218,7 @@ function emptyState(opts) {
 /* ──── Session ──── */
 
 function getSession() { try { return JSON.parse(sessionStorage.getItem('wt-session')); } catch { return null; } }
-function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role, color: u.color || '' })); }
+function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role, department: u.department || '', color: u.color || '' })); }
 function clearSession() { sessionStorage.removeItem('wt-session'); }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
@@ -351,6 +444,16 @@ async function fireDiscordEvent({ projectId = null, content, username = null }) 
   });
 }
 
+async function mirrorBacklogActivity(content) {
+  const hook = await DB.getGeneralWebhook();
+  if (!hook?.url) return { ok: false, reason: 'no-hook' };
+  const session = getSession();
+  return postToDiscordWebhook(hook.url, {
+    username: discordWebhookUsername(session),
+    content
+  });
+}
+
 /* ──── In-app notification helper ──── */
 
 async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null, discordContent = null }) {
@@ -442,10 +545,144 @@ function workspaceScopeBarHtml() {
   </div>`;
 }
 
+function normalizeSearchText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function projectMatchesSearch(project, owner, query) {
+  const q = normalizeSearchText(query);
+  if (!q) return true;
+  const parts = [
+    project.name,
+    project.notes,
+    owner?.displayName,
+    owner?.username,
+    departmentLabel(projectDepartmentValue(project, owner ? { [owner.id]: owner } : {})),
+    workflowTemplateLabel(project.workflowTemplate)
+  ];
+  return parts.some(part => normalizeSearchText(part).includes(q));
+}
+
+function logisticsStepTaskMap(tasks) {
+  return Object.fromEntries(tasks.filter(t => t.workflowStepKey).map(t => [t.workflowStepKey, t]));
+}
+
+function logisticsAttachmentMap(attachments) {
+  return attachments.reduce((acc, att) => {
+    if (att.documentType) acc[att.documentType] = att;
+    return acc;
+  }, {});
+}
+
+async function ensureProjectWorkflowTasks(project, actorUserId) {
+  if (!isLogisticsWorkflow(project)) return false;
+  const tasks = await DB.getTasks({ projectId: project.id });
+  const existing = new Set(tasks.map(t => t.workflowStepKey).filter(Boolean));
+  let created = 0;
+  for (const step of LOGISTICS_WORKFLOW_STEPS) {
+    if (existing.has(step.key)) continue;
+    await DB.createTask({
+      projectId: project.id,
+      assigneeId: project.ownerId,
+      actorUserId,
+      workflowStepKey: step.key,
+      title: step.title,
+      priority: step.priority,
+      status: 'todo'
+    });
+    created++;
+  }
+  return created > 0;
+}
+
+function validateLogisticsTaskTransition(task, nextStatus, project, tasks, attachments) {
+  if (!isLogisticsWorkflow(project) || !task?.workflowStepKey || nextStatus === 'todo') return '';
+  const byKey = logisticsStepTaskMap(tasks);
+  const docs = logisticsAttachmentMap(attachments);
+  if (task.workflowStepKey === 'shipping-list' && nextStatus === 'done' && !docs['shipping-list']) {
+    return 'Upload the approved shipping list before completing this step.';
+  }
+  if (task.workflowStepKey === 'packaging' && byKey['shipping-list']?.status !== 'done') {
+    return 'Complete the shipping list approval step first.';
+  }
+  if (task.workflowStepKey === 'courier-pickup' && byKey['packaging']?.status !== 'done') {
+    return 'Complete packaging before marking courier pickup.';
+  }
+  if (task.workflowStepKey === 'waybill-tracking' && byKey['courier-pickup']?.status !== 'done') {
+    return 'Confirm courier pickup before moving to the waybill step.';
+  }
+  if (task.workflowStepKey === 'waybill-tracking' && nextStatus === 'done' && !docs.waybill) {
+    return 'Upload the waybill and tracking document before completing this step.';
+  }
+  if (task.workflowStepKey === 'delivery-confirmation' && byKey['waybill-tracking']?.status !== 'done') {
+    return 'Complete the waybill and tracking step before confirming delivery.';
+  }
+  return '';
+}
+
+async function syncWorkflowProjectStatus(project, actorUserId) {
+  if (!isLogisticsWorkflow(project)) return '';
+  const tasks = await DB.getTasks({ projectId: project.id });
+  const workflowTasks = LOGISTICS_WORKFLOW_STEPS
+    .map(step => tasks.find(task => task.workflowStepKey === step.key))
+    .filter(Boolean);
+  if (!workflowTasks.length) return '';
+  const allDone = workflowTasks.every(task => task.status === 'done');
+  if (allDone && project.status !== 'completed') {
+    await DB.updateProject(project.id, { status: 'completed' }, actorUserId);
+    return 'completed';
+  } else if (!allDone && project.status === 'completed') {
+    await DB.updateProject(project.id, { status: 'active' }, actorUserId);
+    return 'active';
+  }
+  return '';
+}
+
+function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
+  const taskByKey = logisticsStepTaskMap(tasks);
+  const docs = logisticsAttachmentMap(attachments);
+  const rows = LOGISTICS_WORKFLOW_STEPS.map(step => {
+    const task = taskByKey[step.key];
+    const status = task?.status || 'todo';
+    const statusText = TSTATUS[status]?.l || 'To Do';
+    const doc = step.documentType ? docs[step.documentType] : null;
+    const docMeta = step.documentType
+      ? `<span class="workflow-doc ${doc ? 'is-ready' : ''}">${doc ? `${documentTypeLabel(step.documentType)} uploaded` : `${documentTypeLabel(step.documentType)} missing`}</span>`
+      : '';
+    const uploadBtn = editable && step.documentType
+      ? `<button type="button" class="btn btn-sm btn-ghost" data-action="workflow-upload-doc" data-project-id="${project.id}" data-document-type="${step.documentType}">${doc ? 'Replace file' : 'Upload file'}</button>`
+      : '';
+    return `<div class="workflow-step">
+      <div class="workflow-step-main">
+        <div class="workflow-step-title-row">
+          <span class="status-dot status-dot-${status}"></span>
+          <strong>${esc(step.title)}</strong>
+          ${taskBadge(status)}
+        </div>
+        <p class="text-muted text-sm">${esc(step.helper)}</p>
+        <div class="workflow-step-meta">${docMeta}${uploadBtn}</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<section class="workflow-card">
+    <div class="workflow-card-header">
+      <div>
+        <h3>Logistics shipment workflow</h3>
+        <p class="text-muted text-sm">Track the required shipping documents and step-by-step handoff for this shipment.</p>
+      </div>
+      <div class="workflow-card-badges">${departmentBadge(projectDepartmentValue(project))}${badge(workflowTemplateLabel(project.workflowTemplate), 'accent')}</div>
+    </div>
+    <div class="workflow-step-list">${rows}</div>
+  </section>`;
+}
+
 /* ──── State ──── */
 
 const state = {
   projectFilter: 'all',
+  projectSearch: '',
+  projectOwnerFilter: 'all',
+  projectDepartmentFilter: 'all',
   taskFilter: 'all',
   projectTab: 'tasks',
   currentProjectId: null,
@@ -454,6 +691,7 @@ const state = {
   userMenuOpen: false,
   notifOpen: false,
   chatChannel: null,
+  reportMonth: formatMonthInput(),
   _libraryBlobUrls: [],
   _previewUrl: null
 };
@@ -662,8 +900,10 @@ function updateSidebarUser() {
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
   const adminNav = document.getElementById('nav-admin');
   const dashNav = document.getElementById('nav-dashboard');
+  const reportNav = document.getElementById('nav-reports');
   if (adminNav) adminNav.style.display = s.role === 'admin' ? '' : 'none';
   if (dashNav) dashNav.style.display = s.role === 'admin' ? '' : 'none';
+  if (reportNav) reportNav.style.display = s.role === 'admin' ? '' : 'none';
   renderUserMenu();
 }
 
@@ -702,7 +942,7 @@ function humanizeActivityDetails(raw) {
   if (!raw) return '';
   const labels = {
     display_name: 'display name', displayName: 'display name', email: 'email',
-    discord_id: 'Discord ID', username: 'username', role: 'role'
+    discord_id: 'Discord ID', username: 'username', role: 'role', department: 'department'
   };
   return raw.split(',').map(s => labels[s.trim()] || s.trim().replace(/_/g, ' ')).join(', ');
 }
@@ -734,21 +974,39 @@ async function renderProjects() {
   const s = getSession();
   const { projects: allRaw, tasks: allTasks, users } = await getWorkspaceData();
   const all = filterProjectsByWorkspace(allRaw);
-  const f = state.projectFilter;
-  const list = f === 'all' ? all : all.filter(p => p.status === f);
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const query = normalizeSearchText(state.projectSearch);
+  const ownerFilter = state.projectOwnerFilter;
+  const deptFilter = state.projectDepartmentFilter;
+  let baseList = [...all];
+  if (ownerFilter === 'me') baseList = baseList.filter(p => p.ownerId === s.userId);
+  else if (/^\d+$/.test(ownerFilter || '')) baseList = baseList.filter(p => p.ownerId === Number(ownerFilter));
+  if (deptFilter && deptFilter !== 'all') baseList = baseList.filter(p => projectDepartmentValue(p, uMap) === deptFilter);
+  if (query) baseList = baseList.filter(p => projectMatchesSearch(p, uMap[p.ownerId], query));
+  const f = state.projectFilter;
+  const list = f === 'all' ? baseList : baseList.filter(p => p.status === f);
 
   const pData = list.map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
 
-  const cnt = { all: all.length, active: all.filter(p => p.status === 'active').length, completed: all.filter(p => p.status === 'completed').length, 'on-hold': all.filter(p => p.status === 'on-hold').length, archived: all.filter(p => p.status === 'archived').length };
+  const cnt = {
+    all: baseList.length,
+    active: baseList.filter(p => p.status === 'active').length,
+    completed: baseList.filter(p => p.status === 'completed').length,
+    'on-hold': baseList.filter(p => p.status === 'on-hold').length,
+    archived: baseList.filter(p => p.status === 'archived').length
+  };
   const fLabels = { all: 'All', active: 'Active', completed: 'Completed', 'on-hold': 'On Hold', archived: 'Archived' };
+  const ownerOptions = users
+    .filter(u => all.some(p => p.ownerId === u.id))
+    .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
+  const deptOptions = [...new Set(all.map(p => projectDepartmentValue(p, uMap)).filter(Boolean))].sort();
 
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
     ? `<p class="text-muted text-sm workspace-hint">Use <strong>Everyone</strong> to browse teammates&apos; projects (read-only).</p>` : '';
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Projects</h1><p class="view-subtitle">${all.length} in this workspace &middot; ${allRaw.length} total</p></div>
+      <div><h1>Projects</h1><p class="view-subtitle">${list.length} matching &middot; ${all.length} visible &middot; ${allRaw.length} total</p></div>
       <div class="view-actions">
         <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} New Task</button>
         <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
@@ -756,6 +1014,29 @@ async function renderProjects() {
     </div>
     ${teamHint}
     ${workspaceScopeBarHtml()}
+    <div class="project-toolbar">
+      <div class="project-toolbar-search">
+        <label class="text-muted text-sm" for="project-search">Search projects</label>
+        <input id="project-search" type="search" placeholder="Name, owner, notes, workflow..." value="${esc(state.projectSearch)}" data-project-filter-input="search">
+      </div>
+      <div class="project-toolbar-filters">
+        <label class="project-filter-field">
+          <span class="text-muted text-sm">Owner</span>
+          <select data-project-filter-input="owner">
+            <option value="all" ${ownerFilter === 'all' ? 'selected' : ''}>All owners</option>
+            <option value="me" ${ownerFilter === 'me' ? 'selected' : ''}>My projects</option>
+            ${ownerOptions.map(u => `<option value="${u.id}" ${ownerFilter === String(u.id) ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="project-filter-field">
+          <span class="text-muted text-sm">Department</span>
+          <select data-project-filter-input="department">
+            <option value="all" ${deptFilter === 'all' ? 'selected' : ''}>All departments</option>
+            ${deptOptions.map(dept => `<option value="${dept}" ${deptFilter === dept ? 'selected' : ''}>${esc(departmentLabel(dept))}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+    </div>
     <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
       <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
     </div>
@@ -770,9 +1051,9 @@ async function renderProjects() {
       title: `No ${fLabels[f].toLowerCase()} projects`,
       description: 'Try another filter or create a new project.'
     }) :
-    `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; return `
+    `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; const dept = projectDepartmentValue(p, uMap); return `
       <a href="#/projects/${p.id}" class="project-card">
-        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${projectModeBadge(p)} ${!mine ? badge('View Only', 'muted') : ''}</div>
+        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
         <h3 class="project-card-title" title="${esc(p.name)}"><span class="title-text">${esc(p.name)}</span></h3>
         <p class="project-card-notes">${esc(p.notes || 'No description')}</p>
         <div class="project-card-progress">${progressBar(p.progress)}<span class="text-muted text-sm">${p.progress}% &middot; ${p.doneCount}/${p.taskCount} tasks</span></div>
@@ -819,6 +1100,7 @@ async function renderProjectDetail(projectId) {
   const progress = editable ? projectProgressFromTaskList(allProjectTasks) : null;
   const tasks = visibleTasks;
   const owner = users.find(u => u.id === project.ownerId);
+  const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
   let tab = state.projectTab;
   if (!canSeeTasks && tab === 'tasks') tab = 'milestones';
   state.projectTab = tab;
@@ -846,12 +1128,13 @@ async function renderProjectDetail(projectId) {
       </div>
     </div>
     <div class="project-hero">
-      <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${prioBadge(project.priority)} ${projectModeBadge(project)}</div>
+      <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
       <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
       ${progressLine}
     </div>
+    ${isLogisticsWorkflow(project) ? renderLogisticsWorkflowCard(project, allProjectTasks, attList, editable) : ''}
     <div class="tab-bar">
       ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
       <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
@@ -892,7 +1175,7 @@ async function renderDocumentPanel(projectId, editable) {
         <span class="doc-panel-icon">${icon}</span>
         <span class="doc-panel-info">
           <span class="doc-panel-name">${esc(item.fileName)}</span>
-          <span class="doc-panel-meta">${who ? esc(who.displayName) : 'Unknown'} · ${timeAgo(item.createdAt)}</span>
+          <span class="doc-panel-meta">${who ? esc(who.displayName) : 'Unknown'} · ${timeAgo(item.createdAt)}${item.documentType ? ` · ${esc(documentTypeLabel(item.documentType))}` : ''}</span>
         </span>
       </button>`;
     }).join('');
@@ -1041,6 +1324,7 @@ async function renderTab(tab, projectId, editable) {
         ${preview}
         <div class="library-card-meta">
           <span class="text-muted text-sm">${whoLabel} &middot; ${timeAgo(item.createdAt)}</span>
+          ${item.documentType ? `<span class="badge badge-accent">${esc(documentTypeLabel(item.documentType))}</span>` : ''}
           ${del}
         </div>
       </div>`;
@@ -1188,6 +1472,7 @@ async function renderAdmin() {
             <div class="user-avatar-sm">${(u.displayName || u.username).charAt(0).toUpperCase()}</div>
             <div><strong>${esc(u.displayName || u.username)}</strong><br><span class="text-muted text-sm">@${esc(u.username)}${u.email ? ` &middot; ${esc(u.email)}` : ''}</span></div>
             ${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')}
+            ${departmentBadge(u.department || '')}
           </div>
           <div class="user-row-actions">
             <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
@@ -1207,7 +1492,7 @@ async function renderAdmin() {
         <div class="integrations-grid">
           <div class="integration-card">
             <h3>${ICONS.chat} #general channel</h3>
-            <p class="text-secondary text-sm">The default channel for events that don't belong to a specific project.</p>
+            <p class="text-secondary text-sm">The default channel for events that don't belong to a specific project. It also mirrors the main backlog activity feed, so it works well as a locked audit channel.</p>
             <form data-form="webhook-general">
               <div class="webhook-input">
                 <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(generalHook?.url || '')}">
@@ -1432,6 +1717,7 @@ async function renderAdminDashboard() {
         <div class="admin-user-row admin-user-head">
           <span>Member</span>
           <span>Role</span>
+          <span>Department</span>
           <span>Discord ID</span>
           <span>Last seen</span>
           <span>Last IP</span>
@@ -1447,6 +1733,7 @@ async function renderAdminDashboard() {
               <strong>${esc(u.displayName || u.username)}</strong>
             </span>
             <span>${u.role === 'admin' ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : 'Member'}</span>
+            <span>${departmentBadge(u.department || '')}</span>
             <span>${u.discordId ? `<code>${esc(u.discordId)}</code>` : '<span class="text-muted">—</span>'}</span>
             <span class="text-muted">${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Never signed in'}</span>
             <span class="text-muted">${u.lastSeenIp ? `<code>${esc(u.lastSeenIp)}</code>` : '<span class="text-muted">—</span>'}</span>
@@ -1490,6 +1777,172 @@ async function renderAdminDashboard() {
 }
 
 /* ──── Notifications dropdown ──── */
+
+function buildMonthlyReportRows(projects, tasks, users, monthInput) {
+  const { safe, start, end, label } = monthRange(monthInput);
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const rows = projects.map(project => {
+    const owner = uMap[project.ownerId];
+    const stats = projectStatsFromTasks(tasks, project.id);
+    const completedAt = completedAtForReport(project);
+    const department = projectDepartmentValue(project, uMap);
+    return {
+      project,
+      owner,
+      department,
+      progress: stats.progress,
+      startedThisMonth: dateInRange(project.createdAt, start, end),
+      completedThisMonth: dateInRange(completedAt, start, end),
+      ongoing: project.status !== 'completed' && project.status !== 'archived',
+      completedAt
+    };
+  });
+  return { rows, label, safe };
+}
+
+function renderMonthlyReportTable(rows, { showOwner = false, showDepartment = false } = {}) {
+  if (!rows.length) {
+    return `<p class="text-muted text-sm" style="padding:4px 0 0">No matching projects for this section.</p>`;
+  }
+  return `<div class="report-table-wrap"><table class="report-table">
+    <thead>
+      <tr>
+        <th>Project</th>
+        ${showOwner ? '<th>Owner</th>' : ''}
+        ${showDepartment ? '<th>Department</th>' : ''}
+        <th>Started</th>
+        <th>Completed</th>
+        <th>Status</th>
+        <th>Progress</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(row => `<tr>
+        <td><a href="#/projects/${row.project.id}" class="report-project-link">${esc(row.project.name)}</a></td>
+        ${showOwner ? `<td>${esc(row.owner?.displayName || row.owner?.username || 'Unknown')}</td>` : ''}
+        ${showDepartment ? `<td>${departmentBadge(row.department || '')}</td>` : ''}
+        <td>${row.project.createdAt ? formatDateShort(row.project.createdAt.split('T')[0]) : '—'}</td>
+        <td>${row.completedAt ? formatDateShort(row.completedAt.split('T')[0]) : '—'}</td>
+        <td>${statusBadge(row.project.status)}</td>
+        <td><span class="report-progress-cell">${progressBar(row.progress)}<span>${row.progress}%</span></span></td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>`;
+}
+
+async function renderReportsPage() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  const { users, projects, tasks } = await getWorkspaceData();
+  const { rows, label, safe } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
+  state.reportMonth = safe;
+  const relevantRows = rows.filter(row => row.startedThisMonth || row.completedThisMonth || row.ongoing);
+  const peopleSections = users
+    .map(user => {
+      const owned = relevantRows.filter(row => row.project.ownerId === user.id);
+      if (!owned.length) return '';
+      const started = owned.filter(row => row.startedThisMonth);
+      const completed = owned.filter(row => row.completedThisMonth);
+      const ongoing = owned.filter(row => row.ongoing);
+      return `<section class="section-card report-section">
+        <div class="section-header">
+          <h2>${esc(user.displayName || user.username)}</h2>
+          <div class="report-section-badges">${departmentBadge(user.department || '')}${user.role === 'admin' ? badge('Admin', 'purple') : badge('Member', 'blue')}</div>
+        </div>
+        <div class="section-body">
+          <div class="report-meta-grid">
+            <div class="report-kpi"><strong>${ongoing.length}</strong><span>Ongoing</span></div>
+            <div class="report-kpi"><strong>${started.length}</strong><span>Started in ${esc(label)}</span></div>
+            <div class="report-kpi"><strong>${completed.length}</strong><span>Completed in ${esc(label)}</span></div>
+          </div>
+          ${renderMonthlyReportTable(owned, { showDepartment: true })}
+        </div>
+      </section>`;
+    })
+    .filter(Boolean)
+    .join('');
+  const deptKeys = [...new Set(['', ...users.map(u => u.department || ''), ...projects.map(p => p.department || '')])];
+  const departmentSections = deptKeys
+    .map(dept => {
+      const deptRows = relevantRows.filter(row => row.department === dept);
+      if (!deptRows.length) return '';
+      const started = deptRows.filter(row => row.startedThisMonth);
+      const completed = deptRows.filter(row => row.completedThisMonth);
+      const ongoing = deptRows.filter(row => row.ongoing);
+      return `<section class="section-card report-section">
+        <div class="section-header">
+          <h2>${departmentLabel(dept)}</h2>
+          <div class="report-section-badges">${departmentBadge(dept)}</div>
+        </div>
+        <div class="section-body">
+          <div class="report-meta-grid">
+            <div class="report-kpi"><strong>${ongoing.length}</strong><span>Ongoing</span></div>
+            <div class="report-kpi"><strong>${started.length}</strong><span>Started in ${esc(label)}</span></div>
+            <div class="report-kpi"><strong>${completed.length}</strong><span>Completed in ${esc(label)}</span></div>
+          </div>
+          ${renderMonthlyReportTable(deptRows, { showOwner: true })}
+        </div>
+      </section>`;
+    })
+    .filter(Boolean)
+    .join('');
+
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>Monthly Reports</h1><p class="view-subtitle">Start, completion, and live status snapshots for ${esc(label)}</p></div>
+      <div class="view-actions">
+        <label class="report-month-picker">
+          <span class="text-muted text-sm">Month</span>
+          <input type="month" value="${esc(state.reportMonth)}" data-report-input="month">
+        </label>
+        <button type="button" class="btn btn-primary" data-action="export-report-csv">${ICONS.download} Export CSV</button>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><span class="stat-value">${relevantRows.filter(row => row.ongoing).length}</span><span class="stat-label">Ongoing projects</span></div>
+      <div class="stat-card"><span class="stat-value">${relevantRows.filter(row => row.startedThisMonth).length}</span><span class="stat-label">Started in ${esc(label)}</span></div>
+      <div class="stat-card"><span class="stat-value">${relevantRows.filter(row => row.completedThisMonth).length}</span><span class="stat-label">Completed in ${esc(label)}</span></div>
+      <div class="stat-card"><span class="stat-value">${users.length}</span><span class="stat-label">People covered</span></div>
+    </div>
+    <section class="section-card report-group">
+      <div class="section-header"><h2>Individuals</h2></div>
+      <div class="section-body report-stack">${peopleSections || `<p class="text-muted text-sm">No reportable projects for ${esc(label)} yet.</p>`}</div>
+    </section>
+    <section class="section-card report-group">
+      <div class="section-header"><h2>Departments</h2></div>
+      <div class="section-body report-stack">${departmentSections || `<p class="text-muted text-sm">No departmental report data for ${esc(label)} yet.</p>`}</div>
+    </section>`;
+}
+
+async function exportMonthlyReportCsv() {
+  const { users, projects, tasks } = await getWorkspaceData();
+  const { rows, safe } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
+  const relevantRows = rows.filter(row => row.startedThisMonth || row.completedThisMonth || row.ongoing);
+  const header = ['Project', 'Owner', 'Department', 'Started At', 'Completed At', 'Current Status', 'Progress %', 'Started This Month', 'Completed This Month', 'Ongoing'];
+  const lines = [
+    header.join(','),
+    ...relevantRows.map(row => [
+      row.project.name,
+      row.owner?.displayName || row.owner?.username || '',
+      departmentLabel(row.department || ''),
+      row.project.createdAt || '',
+      row.completedAt || '',
+      row.project.status,
+      String(row.progress),
+      row.startedThisMonth ? 'yes' : 'no',
+      row.completedThisMonth ? 'yes' : 'no',
+      row.ongoing ? 'yes' : 'no'
+    ].map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `worktracker-report-${safe}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Monthly report exported', 'success');
+}
 
 async function refreshNotificationBadge() {
   const uid = actorId();
@@ -1581,6 +2034,8 @@ function hideModal() { const ov = document.getElementById('modal-overlay'); ov.c
 
 async function showProjectModal(editId = null) {
   const p = editId ? await DB.getProject(editId) : null;
+  const currentUser = actorId() ? await DB.getUser(actorId()) : null;
+  const defaultDepartment = p?.department || currentUser?.department || '';
   const isE = !!p;
   showModal(isE ? 'Edit Project' : 'New Project', `
     <form data-form="project" data-edit-id="${editId || ''}">
@@ -1589,6 +2044,15 @@ async function showProjectModal(editId = null) {
       <div class="form-row">
         <div class="form-group"><label>Type</label><select name="type">${Object.entries(TYPE_CFG).map(([v, c]) => `<option value="${v}" ${(p?.type || 'project') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
         <div class="form-group"><label>Priority</label><select name="priority">${Object.entries(PRIO_CFG).map(([v, c]) => `<option value="${v}" ${(p?.priority || 'medium') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Department</label><select name="department">
+          <option value="" ${defaultDepartment === '' ? 'selected' : ''}>Unassigned</option>
+          ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${defaultDepartment === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+        </select></div>
+        <div class="form-group"><label>Workflow</label><select name="workflowTemplate">
+          ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([key, cfg]) => `<option value="${key}" ${(p?.workflowTemplate || '') === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+        </select></div>
       </div>
       <div class="form-row">
         <label class="check-card">
@@ -1623,7 +2087,7 @@ async function showTaskModal(preId = null) {
   const defaultAssigneeId = lockedProject?.ownerId || editable[0]?.ownerId || meId;
   const sorted = [...users].sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0));
   const assigneeOptions = sorted
-    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
+    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
     .join('');
   showModal('New Task', `
     <form data-form="task" data-auto-project-owner="1">
@@ -1659,7 +2123,7 @@ async function showAssignTaskModal(taskId) {
       <div class="form-group"><label>Assignee</label>
         <select name="assigneeId">
           <option value="">Unassigned</option>
-          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.role === 'admin' ? ' · Admin' : ''}</option>`).join('')}
+          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`).join('')}
         </select>
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save assignment</button></div>
@@ -1698,6 +2162,10 @@ function showAddUserModal() {
       <div class="form-group"><label>Username</label><input name="username" type="text" placeholder="e.g. john" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" placeholder="john@example.com"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" placeholder="e.g. John Smith"></div>
+      <div class="form-group"><label>Department</label><select name="department">
+        <option value="">Unassigned</option>
+        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}">${cfg.l}</option>`).join('')}
+      </select></div>
       <div class="form-group"><label>Color</label><input name="color" type="color" value="#4f46e5"></div>
       <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
@@ -1717,6 +2185,10 @@ async function showEditUserModal(uid) {
       <div class="form-group"><label>Username</label><input name="username" type="text" value="${esc(u.username)}" required autocomplete="off"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(u.displayName || '')}" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
+      <div class="form-group"><label>Department</label><select name="department">
+        <option value="" ${!u.department ? 'selected' : ''}>Unassigned</option>
+        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${u.department === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+      </select></div>
       <div class="form-group"><label>Color</label><input name="color" type="color" value="${esc(u.color || userColor(u))}"><p class="text-muted text-sm" style="margin-top:4px">Used for avatars, task chips, and chat bubbles.</p></div>
       <div class="form-group">
         <label>Discord User ID</label>
@@ -1753,6 +2225,10 @@ async function showProfileModal() {
       <p class="text-muted text-sm" style="margin-bottom:12px">This is how your name appears across WorkTracker. Your username (<strong>@${esc(user.username)}</strong>) stays the same.</p>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
+      <div class="form-group"><label>Department</label><select name="department">
+        <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
+        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${user.department === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+      </select></div>
       ${isAdm ? `<p class="text-muted text-sm" style="margin:6px 0 12px"><span class="admin-tag">${ICONS.crown} Admin</span> badge is shown automatically.</p>` : ''}
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
     </form>`);
@@ -1824,19 +2300,30 @@ async function handleFormSubmit(e) {
         notes: fd.get('notes')?.trim(),
         type: fd.get('type'),
         priority: fd.get('priority'),
+        department: fd.get('department') || '',
+        workflowTemplate: fd.get('workflowTemplate') || '',
         isOngoing: fd.get('isOngoing') === '1',
         cadence: fd.get('cadence') || ''
       };
+      if (data.workflowTemplate === 'logistics-shipment') data.department = 'logistics';
       if (!data.name) return;
       const editId = form.dataset.editId;
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
+        const existing = await DB.getProject(Number(editId));
         await DB.updateProject(Number(editId), data, uid);
+        const updated = await DB.getProject(Number(editId));
+        await ensureProjectWorkflowTasks(updated, uid);
+        await syncWorkflowProjectStatus(updated, uid);
+        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} updated project "${updated?.name || existing?.name || 'Project'}" (${departmentLabel(projectDepartmentValue(updated || existing))}).`);
         showToast('Project updated', 'success');
       } else {
         data.ownerId = getSession().userId;
         data.actorUserId = uid;
         const nid = await DB.createProject(data);
+        const created = await DB.getProject(nid);
+        await ensureProjectWorkflowTasks(created, uid);
+        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))}).`);
         showToast('Project created', 'success'); hideModal();
         window.location.hash = `#/projects/${nid}`; return;
       }
@@ -1846,10 +2333,11 @@ async function handleFormSubmit(e) {
       const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
       if (!data.title || !data.projectId) return;
       const newId = await DB.createTask(data);
+      const project = await DB.getProject(data.projectId);
+      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`);
       showToast('Task added', 'success');
       // Notify the assignee (skip if assigning to self)
       if (assigneeId && assigneeId !== uid) {
-        const project = await DB.getProject(data.projectId);
         const actor = await DB.getUser(uid);
         const assignee = await DB.getUser(assigneeId);
         const msg = `${actor?.displayName || 'Someone'} assigned you the task "${data.title}" in ${project?.name || 'a project'}.`;
@@ -1864,10 +2352,12 @@ async function handleFormSubmit(e) {
       const newAssigneeRaw = fd.get('assigneeId');
       const newAssigneeId = newAssigneeRaw ? Number(newAssigneeRaw) : null;
       await DB.updateTask(taskId, { assigneeId: newAssigneeId }, uid);
+      const newAssignee = newAssigneeId ? await DB.getUser(newAssigneeId) : null;
+      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} reassigned task "${task.title}" in "${project.name}"${newAssignee ? ` to ${newAssignee.displayName || newAssignee.username}` : ' to nobody'}.`);
       showToast('Task reassigned', 'success');
       if (newAssigneeId && newAssigneeId !== uid && newAssigneeId !== task.assigneeId) {
         const actor = await DB.getUser(uid);
-        const assignee = await DB.getUser(newAssigneeId);
+        const assignee = newAssignee;
         const msg = `${actor?.displayName || 'Someone'} assigned you the task "${task.title}" in ${project.name}.`;
         const discordMsg = `**${actor?.displayName || 'Someone'}** reassigned **${task.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project.name}*.`;
         await notifyUser({ userId: newAssigneeId, type: 'assignment', message: msg, projectId: project.id, entityType: 'task', entityId: taskId, actorUserId: uid, discordContent: discordMsg });
@@ -1930,22 +2420,27 @@ async function handleFormSubmit(e) {
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
       if (!data.title) return;
+      const project = await DB.getProject(data.projectId);
       await DB.createMilestone(data); showToast('Milestone added', 'success');
+      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added milestone "${data.title}" to "${project?.name || 'a project'}".`);
     } else if (type === 'update') {
       const data = { projectId: Number(form.dataset.projectId), content: fd.get('content')?.trim(), actorUserId: uid };
       if (!data.content) return;
+      const project = await DB.getProject(data.projectId);
       await DB.createUpdate(data); showToast('Note added', 'success');
+      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '…' : ''}`);
     } else if (type === 'add-user') {
       const username = fd.get('username')?.trim();
       const email = fd.get('email')?.trim() || '';
       const displayName = fd.get('displayName')?.trim() || username;
       const password = fd.get('password');
       const role = fd.get('role');
+      const department = fd.get('department') || '';
       const color = fd.get('color') || '';
       if (!username || !password || password.length < 4) { showToast('Fill all fields (pw min 4 chars)', 'warning'); return; }
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
-      await DB.createUser({ username, displayName, email, password, role, color });
+      await DB.createUser({ username, displayName, email, password, role, department, color });
       bustWorkspaceCache();
       showToast('User created', 'success');
     } else if (type === 'reset-pw') {
@@ -1960,6 +2455,7 @@ async function handleFormSubmit(e) {
       const username = fd.get('username')?.trim().toLowerCase();
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
+      const department = fd.get('department') || '';
       const discordId = (fd.get('discordId') || '').toString().trim();
       const color = (fd.get('color') || '').toString().trim();
       const role = fd.get('role');
@@ -1969,7 +2465,7 @@ async function handleFormSubmit(e) {
       if (discordId && !/^\d{6,30}$/.test(discordId)) { showToast('Discord ID must be a numeric snowflake (e.g. 123456789012345678)', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
-      const changes = { username, displayName, email, discordId, color };
+      const changes = { username, displayName, email, department, discordId, color };
       if (!isSelf && role) changes.role = role;
       try {
         await DB.updateUser(targetId, changes, s.userId);
@@ -1987,8 +2483,9 @@ async function handleFormSubmit(e) {
       const s = getSession(); if (!s) return;
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
+      const department = fd.get('department') || '';
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      await DB.updateUser(s.userId, { displayName, email }, s.userId);
+      await DB.updateUser(s.userId, { displayName, email, department }, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
       updateSidebarUser();
@@ -2025,7 +2522,9 @@ const actions = {
     const p = await DB.getProject(Number(b.dataset.id));
     if (!p) { showToast('Project not found', 'error'); return; }
     if (!confirm('Delete this project and all its data?')) return;
-    await DB.deleteProject(p.id, actorId()); showToast('Project deleted', 'success');
+    await DB.deleteProject(p.id, actorId());
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted project "${p.name}".`);
+    showToast('Project deleted', 'success');
     bustWorkspaceCache();
     window.location.hash = '#/projects';
   },
@@ -2035,7 +2534,16 @@ const actions = {
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     const nextStatus = { todo: 'doing', doing: 'done', done: 'todo' }[t.status];
     const uid = actorId();
+    const projectTasks = await DB.getTasks({ projectId: t.projectId });
+    const projectAttachments = await DB.getAttachments(t.projectId);
+    const blockedReason = validateLogisticsTaskTransition(t, nextStatus, p, projectTasks, projectAttachments);
+    if (blockedReason) { showToast(blockedReason, 'warning'); return; }
     await DB.updateTask(t.id, { status: nextStatus }, uid);
+    const workflowProjectStatus = await syncWorkflowProjectStatus(p, uid);
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} changed task "${t.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`);
+    if (workflowProjectStatus) {
+      await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} after the logistics workflow changed.`);
+    }
     // Notify project owner when an assignee completes a task they didn't own.
     if (nextStatus === 'done' && p.ownerId && p.ownerId !== uid) {
       const actor = await DB.getUser(uid);
@@ -2051,7 +2559,9 @@ const actions = {
     const t = await DB.getTask(Number(b.dataset.id)); if (!t) return;
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteTask(t.id, actorId()); showToast('Task deleted', 'success'); bustWorkspaceCache(); await router();
+    await DB.deleteTask(t.id, actorId());
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted task "${t.title}" from "${p.name}".`);
+    showToast('Task deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-milestone': async (b) => {
     const id = Number(b.dataset.id);
@@ -2059,20 +2569,26 @@ const actions = {
     if (!m) return;
     const p = await DB.getProject(m.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteMilestone(id, actorId()); showToast('Milestone deleted', 'success'); bustWorkspaceCache(); await router();
+    await DB.deleteMilestone(id, actorId());
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted milestone "${m.title}" from "${p.name}".`);
+    showToast('Milestone deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'complete-milestone': async (b) => {
     const id = Number(b.dataset.id);
     const ms = await DB.getMilestone(id);
     const p = ms ? await DB.getProject(ms.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.updateMilestone(id, { status: 'completed' }, actorId()); showToast('Milestone completed', 'success'); bustWorkspaceCache(); await router();
+    await DB.updateMilestone(id, { status: 'completed' }, actorId());
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} completed milestone "${ms.title}" in "${p.name}".`);
+    showToast('Milestone completed', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-update': async (b) => {
     const row = await DB.getUpdate(Number(b.dataset.id));
     const p = row ? await DB.getProject(row.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    await DB.deleteUpdate(Number(b.dataset.id), actorId()); showToast('Note deleted', 'success'); bustWorkspaceCache(); await router();
+    await DB.deleteUpdate(Number(b.dataset.id), actorId());
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted a project note from "${p.name}".`);
+    showToast('Note deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'toggle-doc-panel': async () => {
     state.docPanelOpen = !state.docPanelOpen;
@@ -2110,6 +2626,13 @@ const actions = {
   'library-pick-upload': (b) => {
     const inp = document.getElementById('library-file-input');
     inp.dataset.projectId = String(b.dataset.projectId);
+    inp.dataset.documentType = '';
+    inp.click();
+  },
+  'workflow-upload-doc': (b) => {
+    const inp = document.getElementById('library-file-input');
+    inp.dataset.projectId = String(b.dataset.projectId);
+    inp.dataset.documentType = String(b.dataset.documentType || '');
     inp.click();
   },
   'delete-attachment': async (b) => {
@@ -2119,6 +2642,21 @@ const actions = {
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     if (!confirm('Remove this file from the project?')) return;
     await DB.deleteAttachment(row.id, actorId());
+    if (isLogisticsWorkflow(p) && row.documentType) {
+      const tasks = await DB.getTasks({ projectId: p.id });
+      const workflowTask = tasks.find(task =>
+        (row.documentType === 'shipping-list' && task.workflowStepKey === 'shipping-list') ||
+        (row.documentType === 'waybill' && task.workflowStepKey === 'waybill-tracking')
+      );
+      if (workflowTask?.status === 'done') {
+        await DB.updateTask(workflowTask.id, { status: 'doing' }, actorId());
+        const workflowProjectStatus = await syncWorkflowProjectStatus(p, actorId());
+        if (workflowProjectStatus) {
+          await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} because a required logistics document was removed.`);
+        }
+      }
+    }
+    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`);
     showToast('File removed', 'success');
     bustWorkspaceCache();
     await router();
@@ -2161,6 +2699,7 @@ const actions = {
     state.chatChannel = b.dataset.channelId;
     await renderChat();
   },
+  'export-report-csv': async () => { await exportMonthlyReportCsv(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
   'test-webhook': async (b) => {
     const scope = b.dataset.scope;
@@ -2227,6 +2766,10 @@ async function router() {
   if (hash === '/' || hash === '/projects') await renderProjects();
   else if (hash === '/dashboard') {
     if (isAdmin()) await renderAdminDashboard();
+    else await renderProjects();
+  }
+  else if (hash === '/reports') {
+    if (isAdmin()) await renderReportsPage();
     else await renderProjects();
   }
   else if (hash.startsWith('/projects/')) {
@@ -2380,6 +2923,32 @@ async function init() {
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
+    document.getElementById('content').addEventListener('input', async (e) => {
+      const target = e.target;
+      if (target?.dataset?.projectFilterInput === 'search') {
+        const caret = target.selectionStart ?? String(target.value || '').length;
+        state.projectSearch = target.value || '';
+        await renderProjects();
+        const next = document.getElementById('project-search');
+        if (next) {
+          next.focus();
+          try { next.setSelectionRange(caret, caret); } catch (_) {}
+        }
+      }
+    });
+    document.getElementById('content').addEventListener('change', async (e) => {
+      const target = e.target;
+      if (target?.dataset?.projectFilterInput === 'owner') {
+        state.projectOwnerFilter = target.value || 'all';
+        await renderProjects();
+      } else if (target?.dataset?.projectFilterInput === 'department') {
+        state.projectDepartmentFilter = target.value || 'all';
+        await renderProjects();
+      } else if (target?.dataset?.reportInput === 'month') {
+        state.reportMonth = target.value || formatMonthInput();
+        await renderReportsPage();
+      }
+    });
     document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') hideModal(); });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -2394,7 +2963,9 @@ async function init() {
     document.getElementById('library-file-input').addEventListener('change', async (e) => {
       const inp = e.target;
       const pid = Number(inp.dataset.projectId);
+      const documentType = inp.dataset.documentType || '';
       inp.removeAttribute('data-project-id');
+      inp.removeAttribute('data-document-type');
       const fileList = inp.files?.length ? Array.from(inp.files) : [];
       inp.value = '';
       if (!pid || !fileList.length) return;
@@ -2410,8 +2981,10 @@ async function init() {
           uploadedBy: s.userId,
           fileName: file.name,
           mimeType: file.type || 'application/octet-stream',
+          documentType,
           blob: file
         });
+        await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
         uploaded++;
       }
       if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
