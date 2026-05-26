@@ -138,17 +138,24 @@ const SupabaseDB = {
   },
 
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
-    if (!userId || !action) return;
-    this._sb().from('wt_activity_log').insert({
+    if (!userId || !action) return null;
+    const { data, error } = await this._sb().from('wt_activity_log').insert({
       user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
       entity_id: entityId, details: details || ''
-    }).then(({ error }) => { if (error) console.warn('activity log:', error.message); });
+    }).select().single();
+    if (error) {
+      console.warn('activity log:', error.message);
+      return null;
+    }
+    return this._mapActivity(data);
   },
 
   async getActivityLog(filters = {}) {
     let q = this._sb().from('wt_activity_log').select('*').order('created_at', { ascending: false });
     if (filters.projectId != null) q = q.eq('project_id', filters.projectId);
     if (filters.userId != null) q = q.eq('user_id', filters.userId);
+    if (filters.action) q = q.eq('action', filters.action);
+    if (filters.entityType) q = q.eq('entity_type', filters.entityType);
     if (filters.limit != null) q = q.limit(filters.limit);
     const { data, error } = await q;
     if (error) throw error;
@@ -157,6 +164,71 @@ const SupabaseDB = {
       rows = rows.filter(r => r.userId === filters.viewerUserId);
     }
     return rows;
+  },
+
+  async getChatActivityLog(channelId, { limit = 100 } = {}) {
+    const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+    let q = this._sb().from('wt_activity_log').select('*')
+      .eq('action', 'sent_message')
+      .eq('entity_type', 'chat')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (channelId === 'general') q = q.is('project_id', null);
+    else if (Number.isFinite(projectId)) q = q.eq('project_id', projectId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map(r => this._mapActivity(r)).reverse();
+  },
+
+  _defaultDepartments() {
+    return [
+      { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+      { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+      { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+      { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+      { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+    ];
+  },
+
+  async ensureDefaultDepartments() {
+    try {
+      const { count, error } = await this._sb().from('wt_departments').select('*', { count: 'exact', head: true });
+      if (error) throw error;
+      if ((count || 0) > 0) return;
+      const rows = this._defaultDepartments().map(d => ({
+        key: d.key, label: d.label, color: d.color, sort_order: d.sortOrder
+      }));
+      const { error: insErr } = await this._sb().from('wt_departments').insert(rows);
+      if (insErr) throw insErr;
+    } catch (_) { /* table optional until schema is updated */ }
+  },
+
+  async getDepartments() {
+    try {
+      await this.ensureDefaultDepartments();
+      const { data, error } = await this._sb().from('wt_departments').select('*').order('sort_order');
+      if (error) throw error;
+      return (data || []).map(r => ({
+        key: r.key, label: r.label, color: r.color || 'blue', sortOrder: r.sort_order ?? 0
+      }));
+    } catch (_) {
+      return this._defaultDepartments();
+    }
+  },
+
+  async upsertDepartment({ key, label, color, sortOrder = 0 }) {
+    const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) throw new Error('Department key is required');
+    if (!label?.trim()) throw new Error('Department name is required');
+    const row = { key: slug, label: label.trim(), color: color || 'blue', sort_order: sortOrder };
+    const { error } = await this._sb().from('wt_departments').upsert(row);
+    if (error) throw error;
+    return slug;
+  },
+
+  async deleteDepartment(key) {
+    const { error } = await this._sb().from('wt_departments').delete().eq('key', key);
+    if (error) throw error;
   },
 
   async createUser(data) {

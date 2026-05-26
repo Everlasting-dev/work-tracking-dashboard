@@ -1319,6 +1319,23 @@ span.status-dot:hover { transform: none; }
   color: rgba(255,255,255,0.5);
 }
 
+/* ── Admin department settings ── */
+.dept-settings-list { display: flex; flex-direction: column; gap: 10px; }
+.dept-settings-row,
+.dept-settings-add .dept-settings-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.dept-settings-row input[type="text"],
+.dept-settings-row input[type="number"] {
+  flex: 1; min-width: 120px;
+}
+.dept-settings-key {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-width: 72px;
+}
+
 /* ── Chat (Discord bridge) ── */
 .chat-layout {
   display: grid;

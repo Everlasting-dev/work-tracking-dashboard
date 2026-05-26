@@ -97,7 +97,8 @@ db.version(8).stores({
   activityLog: '++id, userId, projectId, action, entityType, createdAt',
   notifications: '++id, userId, readAt, type, createdAt',
   webhooks: '++id, scope, projectId, createdAt',
-  sessions: '++id, userId, &[userId+deviceId], lastSeenAt'
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key'
 }).upgrade(async tx => {
   await tx.table('users').toCollection().modify(user => {
     if (user.department == null) user.department = '';
@@ -113,6 +114,40 @@ db.version(8).stores({
   await tx.table('attachments').toCollection().modify(att => {
     if (att.documentType == null) att.documentType = '';
   });
+  const defaults = [
+    { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+    { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+    { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+    { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+    { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+  ];
+  const count = await tx.table('departments').count();
+  if (count === 0) await tx.table('departments').bulkAdd(defaults);
+});
+
+db.version(9).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder'
+}).upgrade(async tx => {
+  const defaults = [
+    { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+    { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+    { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+    { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+    { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+  ];
+  const count = await tx.table('departments').count();
+  if (count === 0) await tx.table('departments').bulkAdd(defaults);
 });
 
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
@@ -136,16 +171,18 @@ function generateSalt() {
 const LocalDB = {
   /* Activity audit log */
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
-    if (!userId || !action) return;
-    return db.activityLog.add({
+    if (!userId || !action) return null;
+    const createdAt = new Date().toISOString();
+    const id = await db.activityLog.add({
       userId,
       projectId: projectId ?? null,
       action,
       entityType: entityType || 'system',
       entityId: entityId ?? null,
       details: details || '',
-      createdAt: new Date().toISOString()
+      createdAt
     });
+    return { id, userId, projectId: projectId ?? null, action, entityType: entityType || 'system', entityId: entityId ?? null, details: details || '', createdAt };
   },
 
   async getActivityLog(filters = {}) {
@@ -264,6 +301,45 @@ const LocalDB = {
       ? await db.sessions.where('userId').equals(Number(userId)).toArray()
       : await db.sessions.toArray();
     return rows.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
+  },
+
+  async getChatActivityLog(channelId, { limit = 100 } = {}) {
+    const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+    let rows = await db.activityLog
+      .where('[action+entityType]')
+      .equals(['sent_message', 'chat'])
+      .toArray()
+      .catch(() => db.activityLog.toArray());
+    if (!rows?.length) {
+      rows = (await db.activityLog.toArray()).filter(e => e.action === 'sent_message' && e.entityType === 'chat');
+    }
+    if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
+    else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
+    rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return rows.slice(-limit);
+  },
+
+  async getDepartments() {
+    const rows = await db.departments.orderBy('sortOrder').toArray();
+    return rows.length ? rows : [
+      { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+      { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+      { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+      { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+      { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+    ];
+  },
+
+  async upsertDepartment({ key, label, color, sortOrder = 0 }) {
+    const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) throw new Error('Department key is required');
+    if (!label?.trim()) throw new Error('Department name is required');
+    await db.departments.put({ key: slug, label: label.trim(), color: color || 'blue', sortOrder });
+    return slug;
+  },
+
+  async deleteDepartment(key) {
+    return db.departments.delete(key);
   },
 
   /* Users */

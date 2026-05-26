@@ -59,7 +59,7 @@ const TYPE_CFG  = { 'project': { l: 'Project', c: 'blue' }, 'research': { l: 'Re
 const STAT_CFG  = { 'active': { l: 'Active', c: 'green' }, 'completed': { l: 'Completed', c: 'blue' }, 'on-hold': { l: 'On Hold', c: 'amber' }, 'archived': { l: 'Archived', c: 'muted' } };
 const TSTATUS   = { 'todo': { l: 'To Do', c: 'amber' }, 'doing': { l: 'In Progress', c: 'blue' }, 'done': { l: 'Done', c: 'green' } };
 const PRIO_CFG  = { 'low': { l: 'Low', c: 'muted' }, 'medium': { l: 'Medium', c: 'blue' }, 'high': { l: 'High', c: 'amber' }, 'urgent': { l: 'Urgent', c: 'red' } };
-const DEPARTMENT_CFG = {
+const DEPARTMENT_CFG_FALLBACK = {
   '': { l: 'Unassigned', c: 'muted' },
   it: { l: 'IT', c: 'blue' },
   logistics: { l: 'Logistics', c: 'amber' },
@@ -67,6 +67,40 @@ const DEPARTMENT_CFG = {
   purchase: { l: 'Purchase', c: 'purple' },
   rnd: { l: 'R&D', c: 'red' }
 };
+const DEPT_COLOR_OPTIONS = ['blue', 'amber', 'green', 'purple', 'red', 'muted'];
+let _departmentCfg = { ...DEPARTMENT_CFG_FALLBACK };
+let _departmentCfgLoaded = false;
+
+async function refreshDepartmentCfg() {
+  try {
+    const rows = await DB.getDepartments();
+    const cfg = { '': { l: 'Unassigned', c: 'muted' } };
+    for (const d of rows) cfg[d.key] = { l: d.label, c: d.color || 'blue' };
+    _departmentCfg = cfg;
+  } catch (_) {
+    _departmentCfg = { ...DEPARTMENT_CFG_FALLBACK };
+  }
+  _departmentCfgLoaded = true;
+  return _departmentCfg;
+}
+
+async function ensureDepartmentCfg() {
+  if (!_departmentCfgLoaded) await refreshDepartmentCfg();
+  return _departmentCfg;
+}
+
+function getDepartmentCfg() { return _departmentCfg; }
+
+function departmentOptionsHtml(selected = '') {
+  return Object.entries(getDepartmentCfg())
+    .filter(([key]) => key)
+    .map(([key, cfg]) => `<option value="${key}" ${selected === key ? 'selected' : ''}>${esc(cfg.l)}</option>`)
+    .join('');
+}
+
+function departmentColorOptionsHtml(selected = 'blue') {
+  return DEPT_COLOR_OPTIONS.map(c => `<option value="${c}" ${selected === c ? 'selected' : ''}>${c}</option>`).join('');
+}
 const WORKFLOW_TEMPLATE_CFG = {
   '': { l: 'Standard workflow' },
   'logistics-shipment': { l: 'Logistics shipment flow', department: 'logistics' }
@@ -115,11 +149,11 @@ function statusBadge(s)  { const c = STAT_CFG[s] || STAT_CFG.active; return badg
 function taskBadge(s)    { const c = TSTATUS[s] || TSTATUS.todo; return badge(c.l, c.c); }
 function prioBadge(p)    { const c = PRIO_CFG[p] || PRIO_CFG.medium; return badge(c.l, c.c); }
 function departmentBadge(dept) {
-  const cfg = DEPARTMENT_CFG[dept || ''] || { l: String(dept || 'Unassigned'), c: 'muted' };
+  const cfg = getDepartmentCfg()[dept || ''] || { l: String(dept || 'Unassigned'), c: 'muted' };
   return badge(cfg.l, cfg.c);
 }
 function departmentLabel(dept) {
-  return (DEPARTMENT_CFG[dept || ''] || { l: dept || 'Unassigned' }).l;
+  return (getDepartmentCfg()[dept || ''] || { l: dept || 'Unassigned' }).l;
 }
 function workflowTemplateLabel(template) {
   return (WORKFLOW_TEMPLATE_CFG[template || ''] || WORKFLOW_TEMPLATE_CFG['']).l;
@@ -1438,10 +1472,12 @@ async function renderAdmin() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   const s = getSession();
-  const [{ users, projects }, hasMk, projectHooksAll] = await Promise.all([
+  await ensureDepartmentCfg();
+  const [{ users, projects }, hasMk, projectHooksAll, departments] = await Promise.all([
     getWorkspaceData(),
     DB.hasMasterKey(),
-    getWebhooksCached()
+    getWebhooksCached(),
+    DB.getDepartments()
   ]);
   const generalHook = projectHooksAll.find(h => h.scope === 'general');
   const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
@@ -1480,6 +1516,32 @@ async function renderAdmin() {
             ${u.id !== s.userId ? `<button class="btn-icon" data-action="delete-user" data-id="${u.id}" title="Delete user">${ICONS.trash}</button>` : ''}
           </div>
         </div>`).join('')}
+      </div>
+    </section>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>Departments</h2></div>
+      <div class="section-body" style="padding:20px">
+        <p class="text-secondary text-sm" style="margin-bottom:14px">Create or rename department labels used on users, projects, filters, and reports. The internal key stays stable when you rename the display name.</p>
+        <div class="dept-settings-list">
+          ${departments.map(d => `
+            <form class="dept-settings-row" data-form="edit-department" data-dept-key="${esc(d.key)}" data-sort-order="${d.sortOrder ?? 0}">
+              <span class="dept-settings-key" title="Internal key">${esc(d.key)}</span>
+              <input type="text" name="label" value="${esc(d.label)}" required placeholder="Department name">
+              <select name="color">${departmentColorOptionsHtml(d.color || 'blue')}</select>
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              <button type="button" class="btn btn-sm btn-ghost btn-danger-text" data-action="delete-department" data-key="${esc(d.key)}">Delete</button>
+            </form>`).join('')}
+        </div>
+        <form class="dept-settings-add" data-form="add-department" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+          <h3 class="text-sm" style="margin-bottom:10px">Add department</h3>
+          <div class="dept-settings-row">
+            <input type="text" name="label" placeholder="Display name (e.g. Quality)" required>
+            <input type="text" name="key" placeholder="Optional key (auto-generated)">
+            <select name="color">${departmentColorOptionsHtml('blue')}</select>
+            <input type="number" name="sortOrder" placeholder="Order" value="${(departments.length + 1) * 10}" min="0" style="width:72px">
+            <button type="submit" class="btn btn-sm btn-primary">${ICONS.plus} Add</button>
+          </div>
+        </form>
       </div>
     </section>
     <section class="section-card" style="margin-bottom:24px">
@@ -1553,12 +1615,44 @@ async function renderAdmin() {
 /* ──── Chat (Discord bridge) ──── */
 
 async function getChatMessagesForChannel(channelId) {
+  if (DB.getChatActivityLog) return DB.getChatActivityLog(channelId, { limit: 100 });
   const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
   const log = await DB.getActivityLog({ limit: 200 });
   let rows = log.filter(e => e.action === 'sent_message' && e.entityType === 'chat');
   if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
   else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
   return rows.reverse();
+}
+
+function appendChatMessageToPane(message, uMap) {
+  const pane = document.getElementById('chat-messages-pane');
+  if (!pane) return;
+  const empty = pane.querySelector('.chat-empty');
+  if (empty) pane.innerHTML = renderChatMessagesHtml([message], uMap);
+  else {
+    let container = pane.querySelector('.chat-messages');
+    if (!container) {
+      pane.innerHTML = renderChatMessagesHtml([message], uMap);
+      container = pane.querySelector('.chat-messages');
+    }
+    if (container) {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = renderChatMessagesHtml([message], uMap);
+      const row = wrap.querySelector('.chat-bubble-row');
+      if (row) container.appendChild(row);
+    }
+  }
+  pane.scrollTop = pane.scrollHeight;
+}
+
+async function refreshChatPane() {
+  const pane = document.getElementById('chat-messages-pane');
+  if (!pane || window.location.hash !== '#/chat') return;
+  const channelId = state.chatChannel || 'general';
+  const uMap = state.chatUsersMap || {};
+  const messages = await getChatMessagesForChannel(channelId);
+  pane.innerHTML = renderChatMessagesHtml(messages, uMap);
+  pane.scrollTop = pane.scrollHeight;
 }
 
 function renderChatMessagesHtml(messages, uMap) {
@@ -1593,6 +1687,7 @@ async function renderChat() {
   const generalHook = allHooks.find(h => h.scope === 'general');
   const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  state.chatUsersMap = uMap;
 
   const channels = [
     { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null }
@@ -2048,7 +2143,7 @@ async function showProjectModal(editId = null) {
       <div class="form-row">
         <div class="form-group"><label>Department</label><select name="department">
           <option value="" ${defaultDepartment === '' ? 'selected' : ''}>Unassigned</option>
-          ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${defaultDepartment === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+          ${departmentOptionsHtml(defaultDepartment)}
         </select></div>
         <div class="form-group"><label>Workflow</label><select name="workflowTemplate">
           ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([key, cfg]) => `<option value="${key}" ${(p?.workflowTemplate || '') === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
@@ -2164,7 +2259,7 @@ function showAddUserModal() {
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" placeholder="e.g. John Smith"></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="">Unassigned</option>
-        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}">${cfg.l}</option>`).join('')}
+        ${departmentOptionsHtml()}
       </select></div>
       <div class="form-group"><label>Color</label><input name="color" type="color" value="#4f46e5"></div>
       <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
@@ -2187,7 +2282,7 @@ async function showEditUserModal(uid) {
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!u.department ? 'selected' : ''}>Unassigned</option>
-        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${u.department === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+        ${departmentOptionsHtml(u.department || '')}
       </select></div>
       <div class="form-group"><label>Color</label><input name="color" type="color" value="${esc(u.color || userColor(u))}"><p class="text-muted text-sm" style="margin-top:4px">Used for avatars, task chips, and chat bubbles.</p></div>
       <div class="form-group">
@@ -2227,7 +2322,7 @@ async function showProfileModal() {
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
-        ${Object.entries(DEPARTMENT_CFG).filter(([key]) => key).map(([key, cfg]) => `<option value="${key}" ${user.department === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
+        ${departmentOptionsHtml(user.department || '')}
       </select></div>
       ${isAdm ? `<p class="text-muted text-sm" style="margin:6px 0 12px"><span class="admin-tag">${ICONS.crown} Admin</span> badge is shown automatically.</p>` : ''}
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
@@ -2412,10 +2507,29 @@ async function handleFormSubmit(e) {
         showToast(discordFailToast(result), 'error');
         return;
       }
-      await DB.logActivity({ userId: uid, projectId: hook.projectId || null, action: 'sent_message', entityType: 'chat', details: content.slice(0, 2000) });
       form.reset();
-      showToast('Message sent', 'success');
-      await renderChat();
+      const projectId = hook.projectId ?? null;
+      const uMap = state.chatUsersMap || {};
+      const optimistic = {
+        userId: uid,
+        projectId,
+        action: 'sent_message',
+        entityType: 'chat',
+        details: content.slice(0, 2000),
+        createdAt: new Date().toISOString()
+      };
+      appendChatMessageToPane(optimistic, uMap);
+      try {
+        const saved = await DB.logActivity({ userId: uid, projectId, action: 'sent_message', entityType: 'chat', details: optimistic.details });
+        if (!saved) {
+          showToast('Posted to Discord but could not save in app', 'warning');
+          await refreshChatPane();
+        }
+      } catch (err) {
+        console.warn(err);
+        showToast('Posted to Discord but could not save in app', 'warning');
+        await refreshChatPane();
+      }
       return;
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
@@ -2490,6 +2604,32 @@ async function handleFormSubmit(e) {
       if (updated) setSession(updated);
       updateSidebarUser();
       showToast('Profile updated', 'success');
+    } else if (type === 'add-department') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const label = fd.get('label')?.trim();
+      const key = fd.get('key')?.trim() || label;
+      const color = fd.get('color') || 'blue';
+      const sortOrder = Number(fd.get('sortOrder')) || 0;
+      if (!label) return;
+      await DB.upsertDepartment({ key, label, color, sortOrder });
+      _departmentCfgLoaded = false;
+      await refreshDepartmentCfg();
+      showToast('Department added', 'success');
+      await renderAdmin();
+      return;
+    } else if (type === 'edit-department') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const key = form.dataset.deptKey;
+      const label = fd.get('label')?.trim();
+      const color = fd.get('color') || 'blue';
+      const sortOrder = Number(form.dataset.sortOrder) || 0;
+      if (!key || !label) return;
+      await DB.upsertDepartment({ key, label, color, sortOrder });
+      _departmentCfgLoaded = false;
+      await refreshDepartmentCfg();
+      showToast('Department updated', 'success');
+      await renderAdmin();
+      return;
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
       const mk = fd.get('masterKey')?.trim();
@@ -2670,6 +2810,17 @@ const actions = {
     if (!confirm('Delete this user? Their projects will be transferred to you.')) return;
     await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
   },
+  'delete-department': async (b) => {
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+    const key = b.dataset.key;
+    if (!key) return;
+    if (!confirm(`Remove department "${departmentLabel(key)}"? Users and projects keep the key until you change them.`)) return;
+    await DB.deleteDepartment(key);
+    _departmentCfgLoaded = false;
+    await refreshDepartmentCfg();
+    showToast('Department removed', 'success');
+    await renderAdmin();
+  },
   'reset-sample-data': async () => {
     if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
     await DB.importAll({ projects: [], tasks: [], milestones: [], updates: [] });
@@ -2751,6 +2902,7 @@ function revokeLibraryPreviewUrls() {
 /* ──── Router ──── */
 
 async function router() {
+  await ensureDepartmentCfg();
   const hash = window.location.hash.slice(1) || '/projects';
   if (hash === '/recovery') return;
   if (!hash.startsWith('/projects/')) {
