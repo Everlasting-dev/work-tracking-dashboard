@@ -297,6 +297,60 @@ const SupabaseDB = {
     };
   },
 
+  _syncJobSummary(job) {
+    if (!job) return '';
+    if (job.type === 'updateProject') return `Project #${job.payload?.id}`;
+    if (job.type === 'updateTask') return `Task #${job.payload?.id}`;
+    if (job.type === 'upsertDepartment') return `Department “${job.payload?.label || job.payload?.key || ''}”`;
+    if (job.type === 'deleteDepartment') return `Delete department “${job.payload?.key || ''}”`;
+    return job.type || 'Unknown job';
+  },
+
+  getSyncQueueDetails() {
+    return (this._syncQueue || []).map(job => {
+      const nextRetryAt = job.nextRetryAt || 0;
+      let nextRetryLabel = '';
+      if (nextRetryAt > Date.now()) {
+        const sec = Math.max(1, Math.ceil((nextRetryAt - Date.now()) / 1000));
+        nextRetryLabel = sec >= 60 ? `in ${Math.ceil(sec / 60)} min` : `in ${sec}s`;
+      } else if (job.status === 'failed') {
+        nextRetryLabel = 'ready to retry';
+      }
+      let payloadJson = '';
+      try { payloadJson = JSON.stringify(job.payload || {}, null, 2); } catch (_) { payloadJson = ''; }
+      return {
+        id: job.id,
+        type: job.type,
+        status: job.status || 'pending',
+        attempts: job.attempts || 0,
+        lastError: job.lastError || '',
+        summary: this._syncJobSummary(job),
+        nextRetryLabel,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        payloadJson
+      };
+    });
+  },
+
+  retrySyncNow() {
+    for (const job of this._syncQueue || []) {
+      if (job.status === 'failed') {
+        job.status = 'pending';
+        job.nextRetryAt = 0;
+      }
+    }
+    this._persistSyncQueue();
+    return this.flushPendingSync();
+  },
+
+  clearFailedSyncJobs() {
+    const before = (this._syncQueue || []).length;
+    this._syncQueue = (this._syncQueue || []).filter(job => job.status !== 'failed');
+    if (this._syncQueue.length !== before) this._persistSyncQueue();
+    return before - this._syncQueue.length;
+  },
+
   _scheduleSyncFlush(delay = 150) {
     if (typeof setTimeout !== 'function') return;
     if (this._syncFlushTimer) clearTimeout(this._syncFlushTimer);
@@ -343,10 +397,18 @@ const SupabaseDB = {
           job.lastError = err?.message || err?.details || String(err);
           job.nextRetryAt = Date.now() + this._queueBackoffMs(attempts);
           this._persistSyncQueue();
+          if (attempts === 1) {
+            try {
+              window.dispatchEvent(new CustomEvent('wt-sync-error', {
+                detail: { summary: this._syncJobSummary(job), error: job.lastError }
+              }));
+            } catch (_) {}
+          }
         }
       }
     })().finally(() => {
       this._syncFlushPromise = null;
+      this._publishSyncStatus();
       const nextRetry = (this._syncQueue || [])
         .map(job => job.nextRetryAt || 0)
         .filter(Boolean)

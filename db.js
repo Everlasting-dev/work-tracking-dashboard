@@ -189,6 +189,10 @@ const LocalDB = {
     return { enabled: false, pending: 0, failed: 0, syncing: false, lastError: '' };
   },
 
+  getSyncQueueDetails() { return []; },
+  retrySyncNow() { return Promise.resolve(); },
+  clearFailedSyncJobs() { return 0; },
+
   async flushPendingSync() { return; },
 
   async getActivityLog(filters = {}) {

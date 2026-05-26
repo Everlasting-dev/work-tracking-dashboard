@@ -247,9 +247,65 @@ ul,ol { list-style: none; }
 .user-details { min-width: 0; }
 .user-name { display: block; color: var(--sidebar-text-active); font-weight: 500; font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-role { display: block; font-size: 0.78rem; color: var(--sidebar-text); }
-.sync-status-label { font-weight: 600; }
+.sync-status-label {
+  font-weight: 600;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  display: inline;
+}
+.sync-status-label.is-clickable { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.sync-status-label.is-clickable:hover { filter: brightness(1.15); }
 .sync-status-label.is-pending { color: #fcd34d; }
 .sync-status-label.is-failed { color: #fca5a5; }
+.user-menu-item-warn { color: #fca5a5; }
+.sync-diag-intro { margin-bottom: 14px; }
+.sync-diag-offline { color: #fca5a5; }
+.sync-diag-summary {
+  display: flex; flex-wrap: wrap; gap: 12px 20px;
+  padding: 10px 12px; margin-bottom: 14px;
+  background: var(--bg-subtle, rgba(0,0,0,0.04));
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+}
+.sync-diag-failed-count { color: #f87171; }
+.sync-diag-list {
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.sync-diag-row {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.sync-diag-row--failed { border-color: rgba(248,113,113,0.45); }
+.sync-diag-row-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+}
+.sync-diag-error,
+.sync-diag-payload {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0,0,0,0.35);
+  border-radius: var(--radius-sm);
+  color: #fecaca;
+  max-height: 160px;
+  overflow: auto;
+}
+.sync-diag-payload { color: var(--text-secondary); font-size: 0.72rem; }
+.sync-diag-details { margin-top: 8px; }
+.sync-diag-details summary { cursor: pointer; color: var(--text-muted); }
+.sync-diag-actions { margin-top: 16px; flex-wrap: wrap; gap: 8px; }
 
 .sidebar-btn {
   display: flex; align-items: center; gap: 12px; padding: 9px 12px;

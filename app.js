@@ -927,31 +927,95 @@ async function showApp() {
   setTimeout(() => showOnboardingModal(false), 350);
 }
 
+function formatSyncJobType(type) {
+  return ({
+    updateProject: 'Update project',
+    updateTask: 'Update task',
+    upsertDepartment: 'Save department',
+    deleteDepartment: 'Delete department'
+  })[type] || type || 'Sync job';
+}
+
+async function showSyncDiagnosticsModal() {
+  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+  const jobs = DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : [];
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+
+  console.group('[WorkTracker] Cloud sync diagnostics');
+  console.log('Network:', online ? 'online' : 'offline');
+  console.log('Status:', status);
+  if (jobs.length) console.table(jobs.map(j => ({ type: j.type, status: j.status, attempts: j.attempts, error: j.lastError, summary: j.summary })));
+  else console.log('Queue empty');
+  console.groupEnd();
+
+  const rowsHtml = jobs.length ? jobs.map((j, i) => `
+    <article class="sync-diag-row sync-diag-row--${esc(j.status)}">
+      <div class="sync-diag-row-head">
+        <strong>${i + 1}. ${esc(formatSyncJobType(j.type))}</strong>
+        <span class="badge badge-${j.status === 'failed' ? 'red' : j.status === 'syncing' ? 'blue' : 'amber'}">${esc(j.status)}</span>
+      </div>
+      <p class="text-sm text-secondary">${esc(j.summary)}</p>
+      ${j.attempts ? `<p class="text-sm text-muted">Attempts: ${j.attempts}</p>` : ''}
+      ${j.nextRetryLabel ? `<p class="text-sm text-muted">Next retry: ${esc(j.nextRetryLabel)}</p>` : ''}
+      ${j.lastError
+        ? `<pre class="sync-diag-error" tabindex="0">${esc(j.lastError)}</pre>`
+        : '<p class="text-sm text-muted">No error message yet (still queued or retrying).</p>'}
+      ${j.payloadJson ? `<details class="sync-diag-details"><summary class="text-sm">Technical payload</summary><pre class="sync-diag-payload">${esc(j.payloadJson)}</pre></details>` : ''}
+    </article>`).join('')
+    : '<p class="text-secondary text-sm">Nothing is waiting to sync right now.</p>';
+
+  showModal('Cloud sync diagnostics', `
+    <p class="text-secondary text-sm sync-diag-intro">
+      Edits are saved on this device first, then uploaded to Supabase in the background.
+      ${!online ? '<strong class="sync-diag-offline">You appear to be offline.</strong> ' : ''}
+      Click a failed row below to read the error. Details are also printed to the browser console (F12 → Console).
+    </p>
+    <div class="sync-diag-summary">
+      <span>Queued <strong>${status.pending || 0}</strong></span>
+      <span>Failed <strong class="${status.failed ? 'sync-diag-failed-count' : ''}">${status.failed || 0}</strong></span>
+      <span>${online ? 'Online' : 'Offline'}</span>
+    </div>
+    <div class="sync-diag-list">${rowsHtml}</div>
+    <div class="form-actions sync-diag-actions">
+      <button type="button" class="btn btn-primary" data-action="sync-retry-now">Retry now</button>
+      <button type="button" class="btn btn-ghost" data-action="sync-copy-errors"${jobs.some(j => j.lastError) ? '' : ' disabled'}>Copy errors</button>
+      ${status.failed ? '<button type="button" class="btn btn-ghost btn-danger-text" data-action="sync-clear-failed">Clear failed</button>' : ''}
+    </div>`);
+}
+
 function renderSyncStatusIndicator() {
   const el = document.getElementById('sync-status-indicator');
   if (!el) return;
   const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
-  if (window.WT_STORAGE_MODE !== 'supabase' || !status?.enabled || (!status.pending && !status.failed && !status.syncing)) {
+  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (status.pending || status.failed || status.syncing);
+  if (!visible) {
     el.textContent = '';
     el.className = 'sync-status-label hidden';
     el.removeAttribute('title');
+    el.removeAttribute('aria-label');
     return;
   }
+  el.classList.remove('hidden');
   if (status.failed) {
-    el.textContent = ` · Sync issue${status.pending > 1 ? ` (${status.pending})` : ''}`;
-    el.className = 'sync-status-label is-failed';
-    el.title = status.lastError || 'Some local changes are still waiting to sync to the cloud.';
+    const n = status.failed;
+    el.textContent = n > 1 ? ` · Sync issue (${n})` : ' · Sync issue';
+    el.className = 'sync-status-label is-failed is-clickable';
+    const errorHint = status.lastError ? `\n${status.lastError.slice(0, 160)}` : '';
+    el.title = `Cloud sync failed — click for details.${errorHint}`;
+    el.setAttribute('aria-label', `${n} failed cloud sync job${n > 1 ? 's' : ''}. Click for details.`);
     return;
   }
   if (status.syncing) {
-    el.textContent = status.pending > 1 ? ` · Syncing ${status.pending}` : ' · Syncing';
-    el.className = 'sync-status-label is-pending';
-    el.title = 'Recent changes are already saved locally and are syncing to the cloud in the background.';
+    el.textContent = status.pending > 1 ? ` · Syncing (${status.pending})` : ' · Syncing';
+    el.className = 'sync-status-label is-pending is-clickable';
+    el.title = 'Click for sync queue details';
+    el.setAttribute('aria-label', 'Cloud sync in progress. Click for details.');
     return;
   }
   el.textContent = status.pending === 1 ? ' · 1 pending sync' : ` · ${status.pending} pending sync`;
-  el.className = 'sync-status-label is-pending';
-  el.title = 'Recent changes are already saved locally and are waiting to sync to the cloud.';
+  el.className = 'sync-status-label is-pending is-clickable';
+  el.title = 'Click for sync queue details';
+  el.setAttribute('aria-label', `${status.pending} change(s) waiting to sync. Click for details.`);
 }
 
 function updateSidebarUser() {
@@ -971,7 +1035,7 @@ function updateSidebarUser() {
   if (window.WT_STORAGE_MODE === 'supabase') {
     const roleEl = el.querySelector('.user-role');
     if (roleEl && !roleEl.querySelector('#sync-status-indicator')) {
-      roleEl.insertAdjacentHTML('beforeend', '<span id="sync-status-indicator" class="sync-status-label hidden"></span>');
+      roleEl.insertAdjacentHTML('beforeend', '<button type="button" id="sync-status-indicator" class="sync-status-label hidden" aria-live="polite"></button>');
     }
   }
   const adminNav = document.getElementById('nav-admin');
@@ -994,10 +1058,15 @@ function renderUserMenu() {
     return;
   }
   menu.classList.remove('hidden');
+  const syncStatus = DB.getSyncStatus ? DB.getSyncStatus() : null;
+  const syncMenuItem = window.WT_STORAGE_MODE === 'supabase' && syncStatus?.enabled && (syncStatus.pending || syncStatus.failed)
+    ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="open-sync-diagnostics">${ICONS.alertTriangle} Cloud sync${syncStatus.failed ? ` (${syncStatus.failed} failed)` : ''}</button>`
+    : '';
   const adminItems = isAdmin() ? `
     <button type="button" class="user-menu-item" data-action="user-export">${ICONS.download} Export Data</button>
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
   menu.innerHTML = `
+    ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
     <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
     ${adminItems}
@@ -2790,6 +2859,38 @@ const actions = {
   'user-edit-profile': async () => { closeUserMenu(); await showProfileModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'close-howto': () => hideModal(),
+  'open-sync-diagnostics': async () => {
+    closeUserMenu();
+    await showSyncDiagnosticsModal();
+  },
+  'sync-retry-now': async () => {
+    if (DB.retrySyncNow) await DB.retrySyncNow();
+    else if (DB.flushPendingSync) await DB.flushPendingSync();
+    renderSyncStatusIndicator();
+    await showSyncDiagnosticsModal();
+    showToast('Retrying cloud sync…', 'info');
+  },
+  'sync-copy-errors': async () => {
+    const jobs = DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : [];
+    const lines = jobs.filter(j => j.lastError).map(j => `[${j.type}] ${j.summary}\n${j.lastError}`);
+    if (!lines.length) { showToast('No errors to copy', 'info'); return; }
+    const text = lines.join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Errors copied to clipboard', 'success');
+    } catch (_) {
+      showToast('Could not copy — see browser console (F12)', 'warning');
+      console.log(text);
+    }
+  },
+  'sync-clear-failed': async () => {
+    if (!confirm('Remove failed sync jobs from the queue? Your screen may still show local edits that never reached the cloud.')) return;
+    const removed = DB.clearFailedSyncJobs ? DB.clearFailedSyncJobs() : 0;
+    renderSyncStatusIndicator();
+    updateSidebarUser();
+    hideModal();
+    showToast(removed ? `Cleared ${removed} failed job${removed > 1 ? 's' : ''}` : 'No failed jobs to clear', 'info');
+  },
   'user-logout': async () => {
     closeUserMenu();
     const s = getSession();
@@ -3098,11 +3199,27 @@ async function init() {
       showToast('Cloud database unavailable — using browser-only storage. Run supabase/schema.sql in your Supabase SQL Editor.', 'warning');
     }
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
-    window.addEventListener('wt-sync-status', () => renderSyncStatusIndicator());
+    window.addEventListener('wt-sync-status', () => {
+      renderSyncStatusIndicator();
+      if (state.userMenuOpen) renderUserMenu();
+    });
+    window.addEventListener('wt-sync-error', (e) => {
+      const { summary, error } = e.detail || {};
+      const label = summary ? `"${summary}"` : 'A change';
+      const hint = error ? ` — ${error.slice(0, 120)}` : '';
+      showToast(`Cloud sync failed: ${label} couldn't be saved${hint}`, 'error');
+    });
     document.addEventListener('click', async (e) => {
+      const syncBtn = e.target.closest('#sync-status-indicator');
+      if (syncBtn && !syncBtn.classList.contains('hidden')) {
+        e.preventDefault();
+        e.stopPropagation();
+        await showSyncDiagnosticsModal();
+        return;
+      }
       const userBtn = e.target.closest('#sidebar-user');
       const menu = document.getElementById('user-menu');
-      if (userBtn) { e.stopPropagation(); toggleUserMenu(); return; }
+      if (userBtn && !e.target.closest('#sync-status-indicator')) { e.stopPropagation(); toggleUserMenu(); return; }
       if (menu && !menu.contains(e.target)) closeUserMenu();
       const notifPanel = document.getElementById('notif-panel');
       const notifTrigger = e.target.closest('#nav-notif');
