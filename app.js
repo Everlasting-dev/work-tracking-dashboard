@@ -189,6 +189,14 @@ function completedAtForReport(project) {
 function projectDepartmentValue(project, uMap = {}) {
   return project?.department || uMap?.[project?.ownerId]?.department || '';
 }
+function projectSaveMismatchFields(expected, actual) {
+  const mismatches = [];
+  if ((expected.department || '') !== (actual?.department || '')) mismatches.push('department');
+  if ((expected.workflowTemplate || '') !== (actual?.workflowTemplate || '')) mismatches.push('workflow');
+  if (Boolean(expected.isOngoing) !== Boolean(actual?.isOngoing)) mismatches.push('ongoing setting');
+  if ((expected.cadence || '') !== (actual?.cadence || '')) mismatches.push('cadence');
+  return mismatches;
+}
 function isLogisticsWorkflow(project) {
   return project?.workflowTemplate === 'logistics-shipment';
 }
@@ -2411,7 +2419,10 @@ async function handleFormSubmit(e) {
         await ensureProjectWorkflowTasks(updated, uid);
         await syncWorkflowProjectStatus(updated, uid);
         await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} updated project "${updated?.name || existing?.name || 'Project'}" (${departmentLabel(projectDepartmentValue(updated || existing))}).`);
-        showToast('Project updated', 'success');
+        bustWorkspaceCache();
+        const unsaved = projectSaveMismatchFields(data, updated);
+        if (unsaved.length) showToast(`Project updated, but ${unsaved.join(', ')} could not be saved. Run the latest Supabase schema.`, 'warning');
+        else showToast('Project updated', 'success');
       } else {
         data.ownerId = getSession().userId;
         data.actorUserId = uid;
@@ -2419,7 +2430,11 @@ async function handleFormSubmit(e) {
         const created = await DB.getProject(nid);
         await ensureProjectWorkflowTasks(created, uid);
         await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))}).`);
-        showToast('Project created', 'success'); hideModal();
+        bustWorkspaceCache();
+        const unsaved = projectSaveMismatchFields(data, created);
+        if (unsaved.length) showToast(`Project created, but ${unsaved.join(', ')} could not be saved. Run the latest Supabase schema.`, 'warning');
+        else showToast('Project created', 'success');
+        hideModal();
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
