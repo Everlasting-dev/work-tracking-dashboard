@@ -542,6 +542,31 @@ const SupabaseDB = {
     return rows;
   },
 
+  async getDiscordMessages(channelId, { limit = 100 } = {}) {
+    try {
+      const { data, error } = await this._sb()
+        .from('wt_discord_messages')
+        .select('*')
+        .eq('channel_id', channelId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).map(r => ({
+        id: `discord-${r.id}`,
+        userId: null,
+        discordAuthorId: r.author_id,
+        discordAuthorName: r.author_username,
+        discordDisplayName: r.author_display_name || r.author_username,
+        discordAvatar: r.author_avatar || '',
+        details: r.content,
+        source: 'discord',
+        createdAt: r.created_at
+      })).reverse();
+    } catch (_) {
+      return [];
+    }
+  },
+
   async getChatActivityLog(channelId, { limit = 100 } = {}) {
     const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
     let q = this._sb().from('wt_activity_log').select('*')

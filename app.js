@@ -28,6 +28,7 @@ const ICONS = {
   externalLink: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>',
   gauge: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>',
   send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+  discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
 };
 
 /* ──── Utilities ──── */
@@ -920,11 +921,37 @@ async function showApp() {
   await DB.migrateFromLocalStorage(s.userId);
   if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
+  startSidebarClock();
   DB.flushPendingSync?.().catch(() => {});
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+}
+
+function startSidebarClock() {
+  const timeEl = document.getElementById('sc-time');
+  const msEl   = document.getElementById('sc-ms');
+  const dateEl = document.getElementById('sc-date');
+  if (!timeEl) return;
+  const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let lastSec = -1;
+  function tick() {
+    const now = new Date();
+    const ms2 = String(Math.floor(now.getMilliseconds() / 10)).padStart(2, '0');
+    msEl.textContent = `.${ms2}`;
+    const s = now.getSeconds();
+    if (s !== lastSec) {
+      lastSec = s;
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      timeEl.textContent = `${h}:${m}:${String(s).padStart(2, '0')}`;
+      dateEl.textContent = `${DAYS[now.getDay()]} ${String(now.getDate()).padStart(2, '0')} ${MONTHS[now.getMonth()]}`;
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 }
 
 function formatSyncJobType(type) {
@@ -1631,29 +1658,45 @@ async function renderAdmin() {
       </div>
     </section>
     <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Departments</h2></div>
+      <div class="section-header"><h2>Departments</h2><p class="view-subtitle" style="margin:0;font-size:0.82rem">Labels used on users, projects, filters, and reports. Keys are stable — safe to rename.</p></div>
       <div class="section-body" style="padding:20px">
-        <p class="text-secondary text-sm" style="margin-bottom:14px">Create or rename department labels used on users, projects, filters, and reports. The internal key stays stable when you rename the display name.</p>
-        <div class="dept-settings-list">
+        <div class="dept-grid">
           ${departments.map(d => `
-            <form class="dept-settings-row" data-form="edit-department" data-dept-key="${esc(d.key)}" data-sort-order="${d.sortOrder ?? 0}">
-              <span class="dept-settings-key" title="Internal key">${esc(d.key)}</span>
-              <input type="text" name="label" value="${esc(d.label)}" required placeholder="Department name">
-              <select name="color">${departmentColorOptionsHtml(d.color || 'blue')}</select>
-              <button type="submit" class="btn btn-sm btn-primary">Save</button>
-              <button type="button" class="btn btn-sm btn-ghost btn-danger-text" data-action="delete-department" data-key="${esc(d.key)}">Delete</button>
-            </form>`).join('')}
-        </div>
-        <form class="dept-settings-add" data-form="add-department" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-          <h3 class="text-sm" style="margin-bottom:10px">Add department</h3>
-          <div class="dept-settings-row">
-            <input type="text" name="label" placeholder="Display name (e.g. Quality)" required>
-            <input type="text" name="key" placeholder="Optional key (auto-generated)">
-            <select name="color">${departmentColorOptionsHtml('blue')}</select>
-            <input type="number" name="sortOrder" placeholder="Order" value="${(departments.length + 1) * 10}" min="0" style="width:72px">
-            <button type="submit" class="btn btn-sm btn-primary">${ICONS.plus} Add</button>
+            <div class="dept-card dept-card--${esc(d.color || 'blue')}">
+              <div class="dept-card-swatch"></div>
+              <div class="dept-card-body">
+                <form data-form="edit-department" data-dept-key="${esc(d.key)}" data-sort-order="${d.sortOrder ?? 0}">
+                  <div class="dept-card-top">
+                    <input class="dept-card-name" type="text" name="label" value="${esc(d.label)}" required placeholder="Name" title="Department display name">
+                    <code class="dept-card-key" title="Internal key">${esc(d.key)}</code>
+                  </div>
+                  <div class="dept-card-row">
+                    <select name="color" class="dept-card-color-select" title="Color">${departmentColorOptionsHtml(d.color || 'blue')}</select>
+                    <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                    <button type="button" class="btn-icon btn-icon-danger" data-action="delete-department" data-key="${esc(d.key)}" title="Delete department">${ICONS.trash}</button>
+                  </div>
+                </form>
+              </div>
+            </div>`).join('')}
+          <div class="dept-card dept-card-add">
+            <div class="dept-card-swatch dept-card-swatch--add"></div>
+            <div class="dept-card-body">
+              <form data-form="add-department">
+                <div class="dept-card-add-header">
+                  <span class="dept-card-add-icon">${ICONS.plus}</span>
+                  <span class="dept-card-add-label">New Department</span>
+                </div>
+                <input type="text" name="label" placeholder="Display name (e.g. Quality)" required style="margin-bottom:6px">
+                <input type="text" name="key" placeholder="Key (auto-generated)" style="margin-bottom:6px">
+                <div class="dept-card-row">
+                  <select name="color" class="dept-card-color-select">${departmentColorOptionsHtml('blue')}</select>
+                  <input type="number" name="sortOrder" placeholder="Order" value="${(departments.length + 1) * 10}" min="0" class="dept-card-order-input">
+                  <button type="submit" class="btn btn-sm btn-primary">Add</button>
+                </div>
+              </form>
+            </div>
           </div>
-        </form>
+        </div>
       </div>
     </section>
     <section class="section-card" style="margin-bottom:24px">
@@ -1727,13 +1770,20 @@ async function renderAdmin() {
 /* ──── Chat (Discord bridge) ──── */
 
 async function getChatMessagesForChannel(channelId) {
-  if (DB.getChatActivityLog) return DB.getChatActivityLog(channelId, { limit: 100 });
-  const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
-  const log = await DB.getActivityLog({ limit: 200 });
-  let rows = log.filter(e => e.action === 'sent_message' && e.entityType === 'chat');
-  if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
-  else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
-  return rows.reverse();
+  const [appMsgs, discordMsgs] = await Promise.all([
+    DB.getChatActivityLog ? DB.getChatActivityLog(channelId, { limit: 100 }) : (async () => {
+      const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+      const log = await DB.getActivityLog({ limit: 200 });
+      let rows = log.filter(e => e.action === 'sent_message' && e.entityType === 'chat');
+      if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
+      else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
+      return rows.reverse();
+    })(),
+    DB.getDiscordMessages ? DB.getDiscordMessages(channelId, { limit: 100 }) : Promise.resolve([])
+  ]);
+  const merged = [...appMsgs, ...discordMsgs];
+  merged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  return merged.slice(-150);
 }
 
 function appendChatMessageToPane(message, uMap) {
@@ -1777,15 +1827,25 @@ function renderChatMessagesHtml(messages, uMap) {
     </div>`;
   }
   return `<div class="chat-messages">${messages.map(m => {
-    const who = uMap[m.userId];
-    const name = who ? (who.displayName || who.username) : 'Someone';
+    const isDiscord = m.source === 'discord';
+    const who = isDiscord ? null : uMap[m.userId];
+    const name = isDiscord
+      ? (m.discordDisplayName || m.discordAuthorName || 'Discord')
+      : (who ? (who.displayName || who.username) : 'Someone');
     const init = name.charAt(0).toUpperCase();
-    const mine = m.userId === meId;
-    return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''}">
-      <div class="chat-bubble-avatar" ${userColorStyle(who)} title="${esc(name)}">${init}</div>
+    const mine = !isDiscord && m.userId === meId;
+    const avatarStyle = isDiscord ? 'style="background:#5865f2"' : userColorStyle(who);
+    const avatarContent = isDiscord && m.discordAvatar
+      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+      : init;
+    const sourceBadge = isDiscord
+      ? `<span class="chat-source-discord" title="From Discord">${ICONS.discordMark} Discord</span>`
+      : '';
+    return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''} ${isDiscord ? 'chat-bubble-row-discord' : ''}">
+      <div class="chat-bubble-avatar" ${avatarStyle} title="${esc(name)}">${avatarContent}</div>
       <div class="chat-bubble-wrap">
-        <div class="chat-bubble-meta"><strong>${esc(name)}</strong><span>${timeAgo(m.createdAt)}</span></div>
-        <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+        <div class="chat-bubble-meta"><strong>${esc(name)}</strong>${sourceBadge}<span>${timeAgo(m.createdAt)}</span></div>
+        <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''} ${isDiscord ? 'chat-bubble-discord' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
       </div>
     </div>`;
   }).join('')}</div>`;
@@ -1856,7 +1916,7 @@ async function renderChat() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Chat</h1><p class="view-subtitle">Team messages sent from WorkTracker (also posted to Discord)</p></div>
+      <div><h1>Chat</h1><p class="view-subtitle">Messages from WorkTracker and Discord, merged in real time</p></div>
     </div>
     <div class="chat-layout">
       ${channelList}
@@ -2102,7 +2162,8 @@ async function renderReportsPage() {
           <span class="text-muted text-sm">Month</span>
           <input type="month" value="${esc(state.reportMonth)}" data-report-input="month">
         </label>
-        <button type="button" class="btn btn-primary" data-action="export-report-csv">${ICONS.download} Export CSV</button>
+        <button type="button" class="btn btn-primary" data-action="generate-ai-report">${ICONS.sparkles} AI Report</button>
+        <button type="button" class="btn btn-ghost" data-action="export-report-csv">${ICONS.download} Export CSV</button>
       </div>
     </div>
     <div class="stats-grid">
@@ -2149,6 +2210,96 @@ async function exportMonthlyReportCsv() {
   a.click();
   URL.revokeObjectURL(url);
   showToast('Monthly report exported', 'success');
+}
+
+async function generateAIReport() {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const { users, projects, tasks } = await getWorkspaceData();
+  const { rows, label } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
+  const relevantRows = rows.filter(r => r.startedThisMonth || r.completedThisMonth || r.ongoing);
+
+  const payload = {
+    month: label,
+    summary: {
+      ongoing: relevantRows.filter(r => r.ongoing).length,
+      startedThisMonth: relevantRows.filter(r => r.startedThisMonth).length,
+      completedThisMonth: relevantRows.filter(r => r.completedThisMonth).length,
+      totalUsers: users.length
+    },
+    projects: relevantRows.map(r => ({
+      name: r.project.name,
+      owner: r.owner?.displayName || r.owner?.username || 'Unknown',
+      department: departmentLabel(r.department || ''),
+      status: r.project.status,
+      progress: r.progress,
+      totalTasks: r.totalTasks,
+      doneTasks: r.doneTasks,
+      overdueTasks: r.overdueTasks,
+      startedThisMonth: r.startedThisMonth,
+      completedThisMonth: r.completedThisMonth,
+      ongoing: r.ongoing,
+      notes: (r.project.notes || '').slice(0, 200)
+    })),
+    departmentBreakdown: Object.entries(getDepartmentCfg())
+      .filter(([k]) => k)
+      .map(([, cfg]) => ({
+        name: cfg.l,
+        count: relevantRows.filter(r => departmentLabel(r.department || '') === cfg.l).length
+      }))
+      .filter(d => d.count > 0),
+    userBreakdown: users.map(u => ({
+      name: u.displayName || u.username,
+      department: departmentLabel(u.department || ''),
+      ownedProjects: relevantRows.filter(r => r.project.ownerId === u.id).length,
+      assignedTasks: tasks.filter(t => t.assigneeId === u.id).length,
+      doneTasks: tasks.filter(t => t.assigneeId === u.id && t.status === 'done').length
+    })).filter(u => u.ownedProjects + u.assignedTasks > 0)
+  };
+
+  const supabaseUrl = window.WT_CONFIG?.supabaseUrl;
+  const anonKey = window.WT_CONFIG?.supabaseAnonKey;
+  if (!supabaseUrl) { showToast('Supabase not configured — AI reports require cloud mode', 'error'); return; }
+
+  showToast('Generating AI report… this may take 10–20 seconds', 'info');
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/generate-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${anonKey}`
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    const { html } = await resp.json();
+    showAIReportModal(html, label);
+  } catch (err) {
+    showToast(`AI report failed: ${err.message}`, 'error');
+    console.error('[AI Report]', err);
+  }
+}
+
+function showAIReportModal(html, label) {
+  const ov = document.getElementById('modal-overlay');
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  ov.innerHTML = `
+    <div class="modal modal-fullscreen">
+      <div class="modal-header">
+        <h2>${ICONS.sparkles} AI Report &mdash; ${esc(label)}</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <a href="${esc(blobUrl)}" download="ai-report-${esc(label)}.html" class="btn btn-sm btn-ghost">${ICONS.download} Download</a>
+          <button class="btn-icon" data-action="close-modal">${ICONS.x}</button>
+        </div>
+      </div>
+      <div class="modal-body ai-report-body">
+        <iframe class="ai-report-frame" src="${esc(blobUrl)}" title="AI Report for ${esc(label)}" sandbox="allow-scripts allow-same-origin"></iframe>
+      </div>
+    </div>`;
+  ov.classList.remove('hidden');
 }
 
 async function refreshNotificationBadge() {
@@ -3002,6 +3153,7 @@ const actions = {
     await renderChat();
   },
   'export-report-csv': async () => { await exportMonthlyReportCsv(); },
+  'generate-ai-report': async () => { await generateAIReport(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
   'test-webhook': async (b) => {
     const scope = b.dataset.scope;

@@ -192,6 +192,7 @@ const LocalDB = {
   getSyncQueueDetails() { return []; },
   retrySyncNow() { return Promise.resolve(); },
   clearFailedSyncJobs() { return 0; },
+  async getDiscordMessages() { return []; },
 
   async flushPendingSync() { return; },
 
