@@ -185,6 +185,12 @@ const LocalDB = {
     return { id, userId, projectId: projectId ?? null, action, entityType: entityType || 'system', entityId: entityId ?? null, details: details || '', createdAt };
   },
 
+  getSyncStatus() {
+    return { enabled: false, pending: 0, failed: 0, syncing: false, lastError: '' };
+  },
+
+  async flushPendingSync() { return; },
+
   async getActivityLog(filters = {}) {
     let rows = await db.activityLog.toArray();
     if (filters.projectId != null) rows = rows.filter(r => r.projectId === filters.projectId);

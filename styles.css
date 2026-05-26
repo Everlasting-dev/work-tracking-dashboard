@@ -247,6 +247,9 @@ ul,ol { list-style: none; }
 .user-details { min-width: 0; }
 .user-name { display: block; color: var(--sidebar-text-active); font-weight: 500; font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-role { display: block; font-size: 0.78rem; color: var(--sidebar-text); }
+.sync-status-label { font-weight: 600; }
+.sync-status-label.is-pending { color: #fcd34d; }
+.sync-status-label.is-failed { color: #fca5a5; }
 
 .sidebar-btn {
   display: flex; align-items: center; gap: 12px; padding: 9px 12px;

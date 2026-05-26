@@ -3,6 +3,14 @@
 const SupabaseDB = {
   _client: null,
   BUCKET: 'project-files',
+  _syncQueueKey: 'wt-supabase-sync-queue-v1',
+  _shadowKey: 'wt-supabase-shadow-v1',
+  _shadowTtlMs: 45000,
+  _syncQueue: [],
+  _shadowState: null,
+  _syncFlushPromise: null,
+  _syncFlushTimer: null,
+  _syncHooksBound: false,
 
   async init(url, anonKey) {
     if (!window.supabase?.createClient) throw new Error('Supabase SDK not loaded');
@@ -28,6 +36,7 @@ const SupabaseDB = {
         throw error;
       }
     }
+    this._initLocalSync();
   },
 
   _sb() { return this._client; },
@@ -48,6 +57,311 @@ const SupabaseDB = {
   _isMissingColumn(error) {
     const msg = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
     return msg.includes('pgrst204') || msg.includes('schema cache') || msg.includes('column') || msg.includes('could not find');
+  },
+
+  _clone(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  },
+
+  _emptyShadowState() {
+    return {
+      collections: { projects: {}, tasks: {}, departments: {} },
+      at: { projects: 0, tasks: 0, departments: 0 },
+      complete: { projects: false, tasks: false, departments: false }
+    };
+  },
+
+  _loadShadowState() {
+    this._shadowState = this._emptyShadowState();
+    try {
+      const raw = localStorage.getItem(this._shadowKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      this._shadowState.collections = {
+        projects: parsed?.collections?.projects || {},
+        tasks: parsed?.collections?.tasks || {},
+        departments: parsed?.collections?.departments || {}
+      };
+      this._shadowState.at = {
+        projects: parsed?.at?.projects || 0,
+        tasks: parsed?.at?.tasks || 0,
+        departments: parsed?.at?.departments || 0
+      };
+      this._shadowState.complete = {
+        projects: !!parsed?.complete?.projects,
+        tasks: !!parsed?.complete?.tasks,
+        departments: !!parsed?.complete?.departments
+      };
+    } catch (_) {
+      this._shadowState = this._emptyShadowState();
+    }
+  },
+
+  _persistShadowState() {
+    if (!this._shadowState) return;
+    try { localStorage.setItem(this._shadowKey, JSON.stringify(this._shadowState)); } catch (_) {}
+  },
+
+  _loadSyncQueue() {
+    this._syncQueue = [];
+    try {
+      const raw = localStorage.getItem(this._syncQueueKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) this._syncQueue = parsed;
+    } catch (_) {
+      this._syncQueue = [];
+    }
+  },
+
+  _persistSyncQueue() {
+    try { localStorage.setItem(this._syncQueueKey, JSON.stringify(this._syncQueue || [])); } catch (_) {}
+    this._publishSyncStatus();
+  },
+
+  _initLocalSync() {
+    if (!this._shadowState) this._loadShadowState();
+    if (!Array.isArray(this._syncQueue)) this._loadSyncQueue();
+    if (!this._syncHooksBound && typeof window !== 'undefined') {
+      window.addEventListener('online', () => this._scheduleSyncFlush(150));
+      window.addEventListener('focus', () => this._scheduleSyncFlush(150));
+      this._syncHooksBound = true;
+    }
+    this._publishSyncStatus();
+    if (this._syncQueue.length) this._scheduleSyncFlush(200);
+  },
+
+  _shadowRows(name) {
+    return Object.values(this._shadowState?.collections?.[name] || {}).map(row => this._clone(row));
+  },
+
+  _shadowGet(name, key) {
+    const row = this._shadowState?.collections?.[name]?.[String(key)];
+    return row ? this._clone(row) : null;
+  },
+
+  _shadowFresh(name) {
+    const at = this._shadowState?.at?.[name] || 0;
+    return Date.now() - at < this._shadowTtlMs;
+  },
+
+  _shadowComplete(name) {
+    return !!this._shadowState?.complete?.[name];
+  },
+
+  _shadowSetCollection(name, rows, keyField = 'id') {
+    const next = {};
+    for (const row of rows || []) {
+      if (row?.[keyField] == null) continue;
+      next[String(row[keyField])] = this._clone(row);
+    }
+    this._shadowState.collections[name] = next;
+    this._shadowState.at[name] = Date.now();
+    this._shadowState.complete[name] = true;
+    this._reapplyPendingToShadow(name);
+    this._persistShadowState();
+  },
+
+  _shadowUpsert(name, row, keyField = 'id') {
+    if (!row || row[keyField] == null) return null;
+    this._shadowState.collections[name][String(row[keyField])] = this._clone(row);
+    this._shadowState.at[name] = Date.now();
+    this._persistShadowState();
+    return this._clone(row);
+  },
+
+  _shadowDelete(name, key) {
+    delete this._shadowState.collections[name][String(key)];
+    this._shadowState.at[name] = Date.now();
+    this._persistShadowState();
+  },
+
+  _touchShadowProject(projectId, updatedAt = null) {
+    const row = this._shadowGet('projects', projectId);
+    if (!row) return;
+    row.updatedAt = updatedAt || new Date().toISOString();
+    this._shadowUpsert('projects', row);
+  },
+
+  _dropShadowTasksForProject(projectId) {
+    const tasks = this._shadowState?.collections?.tasks || {};
+    let changed = false;
+    for (const [key, row] of Object.entries(tasks)) {
+      if (row?.projectId === projectId) {
+        delete tasks[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this._shadowState.at.tasks = Date.now();
+      this._persistShadowState();
+    }
+  },
+
+  _hasPendingCollection(name) {
+    return (this._syncQueue || []).some(job => (job.collections || []).includes(name));
+  },
+
+  _reapplyPendingToShadow(name) {
+    for (const job of this._syncQueue || []) {
+      if ((job.collections || []).includes(name)) this._applyPendingJobToShadow(job);
+    }
+  },
+
+  _applyProjectChanges(existing, changes = {}) {
+    const next = { ...(existing || {}) };
+    if (next.id == null && changes.id != null) next.id = changes.id;
+    if (changes.name != null) next.name = changes.name;
+    if (changes.notes != null) next.notes = changes.notes;
+    if (changes.type != null) next.type = changes.type;
+    if (changes.status != null) next.status = changes.status;
+    if (changes.priority != null) next.priority = changes.priority;
+    if (changes.department != null) next.department = changes.department || '';
+    if (changes.workflowTemplate != null) next.workflowTemplate = changes.workflowTemplate || '';
+    if (changes.isOngoing != null) next.isOngoing = !!changes.isOngoing;
+    if (changes.cadence != null) next.cadence = changes.cadence || '';
+    if (changes.status != null) {
+      if (changes.status === 'completed') next.completedAt = next.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') next.completedAt = null;
+    }
+    next.updatedAt = new Date().toISOString();
+    return next;
+  },
+
+  _applyTaskChanges(existing, changes = {}) {
+    const next = { ...(existing || {}) };
+    if (next.id == null && changes.id != null) next.id = changes.id;
+    if (changes.title != null) next.title = changes.title;
+    if (changes.status != null) next.status = changes.status;
+    if (changes.priority != null) next.priority = changes.priority;
+    if (changes.dueDate != null) next.dueDate = changes.dueDate;
+    if (changes.milestoneId !== undefined) next.milestoneId = changes.milestoneId;
+    if (changes.assigneeId !== undefined) next.assigneeId = changes.assigneeId == null ? null : Number(changes.assigneeId);
+    if (changes.workflowStepKey !== undefined) next.workflowStepKey = changes.workflowStepKey || '';
+    next.updatedAt = new Date().toISOString();
+    return next;
+  },
+
+  _applyPendingJobToShadow(job) {
+    if (!job) return;
+    if (job.type === 'updateProject') {
+      const current = this._shadowGet('projects', job.payload.id) || { id: job.payload.id };
+      const next = this._applyProjectChanges(current, job.payload.changes || {});
+      this._shadowState.collections.projects[String(job.payload.id)] = this._clone(next);
+      this._shadowState.at.projects = Date.now();
+      return;
+    }
+    if (job.type === 'updateTask') {
+      const current = this._shadowGet('tasks', job.payload.id) || { id: job.payload.id };
+      const next = this._applyTaskChanges(current, job.payload.changes || {});
+      this._shadowState.collections.tasks[String(job.payload.id)] = this._clone(next);
+      this._shadowState.at.tasks = Date.now();
+      if (next.projectId != null) this._touchShadowProject(next.projectId, next.updatedAt);
+      return;
+    }
+    if (job.type === 'upsertDepartment') {
+      const row = {
+        key: job.payload.key,
+        label: job.payload.label,
+        color: job.payload.color || 'blue',
+        sortOrder: job.payload.sortOrder ?? 0
+      };
+      this._shadowState.collections.departments[String(row.key)] = this._clone(row);
+      this._shadowState.at.departments = Date.now();
+      return;
+    }
+    if (job.type === 'deleteDepartment') {
+      delete this._shadowState.collections.departments[String(job.payload.key)];
+      this._shadowState.at.departments = Date.now();
+    }
+  },
+
+  _queueBackoffMs(attempts = 1) {
+    return Math.min(300000, 1000 * Math.pow(2, Math.max(0, attempts - 1)));
+  },
+
+  _publishSyncStatus() {
+    if (typeof window === 'undefined') return;
+    try {
+      window.dispatchEvent(new CustomEvent('wt-sync-status', { detail: this.getSyncStatus() }));
+    } catch (_) {}
+  },
+
+  getSyncStatus() {
+    const queue = this._syncQueue || [];
+    return {
+      enabled: true,
+      pending: queue.length,
+      failed: queue.filter(job => job.status === 'failed').length,
+      syncing: queue.some(job => job.status === 'syncing'),
+      lastError: queue.find(job => job.lastError)?.lastError || ''
+    };
+  },
+
+  _scheduleSyncFlush(delay = 150) {
+    if (typeof setTimeout !== 'function') return;
+    if (this._syncFlushTimer) clearTimeout(this._syncFlushTimer);
+    this._syncFlushTimer = setTimeout(() => {
+      this._syncFlushTimer = null;
+      this.flushPendingSync().catch(err => console.warn('sync flush failed', err));
+    }, delay);
+  },
+
+  _mergeOrQueueJob(nextJob, mergeFn = null) {
+    const idx = (this._syncQueue || []).findIndex(job => job.mergeKey === nextJob.mergeKey && job.status !== 'syncing');
+    if (idx >= 0 && typeof mergeFn === 'function') {
+      this._syncQueue[idx] = mergeFn(this._syncQueue[idx], nextJob);
+    } else if (idx >= 0) {
+      this._syncQueue[idx] = nextJob;
+    } else {
+      this._syncQueue.push(nextJob);
+    }
+    this._persistSyncQueue();
+    this._scheduleSyncFlush(150);
+  },
+
+  async flushPendingSync() {
+    if (this._syncFlushPromise) return this._syncFlushPromise;
+    this._syncFlushPromise = (async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      for (let i = 0; i < this._syncQueue.length; i += 1) {
+        const job = this._syncQueue[i];
+        if (!job) continue;
+        if (job.nextRetryAt && job.nextRetryAt > Date.now()) continue;
+        job.status = 'syncing';
+        job.updatedAt = new Date().toISOString();
+        this._persistSyncQueue();
+        try {
+          await this._runSyncJob(job);
+          this._syncQueue.splice(i, 1);
+          i -= 1;
+          this._persistSyncQueue();
+        } catch (err) {
+          const attempts = (job.attempts || 0) + 1;
+          job.status = 'failed';
+          job.attempts = attempts;
+          job.updatedAt = new Date().toISOString();
+          job.lastError = err?.message || err?.details || String(err);
+          job.nextRetryAt = Date.now() + this._queueBackoffMs(attempts);
+          this._persistSyncQueue();
+        }
+      }
+    })().finally(() => {
+      this._syncFlushPromise = null;
+      const nextRetry = (this._syncQueue || [])
+        .map(job => job.nextRetryAt || 0)
+        .filter(Boolean)
+        .sort((a, b) => a - b)[0];
+      if (nextRetry && nextRetry > Date.now()) this._scheduleSyncFlush(Math.max(500, nextRetry - Date.now()));
+    });
+    return this._syncFlushPromise;
+  },
+
+  async _runSyncJob(job) {
+    if (job.type === 'updateProject') return this.updateProject(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
+    if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
+    if (job.type === 'upsertDepartment') return this.upsertDepartment(job.payload, true);
+    if (job.type === 'deleteDepartment') return this.deleteDepartment(job.payload.key, true);
+    throw new Error(`Unsupported sync job: ${job.type}`);
   },
 
   _mapUser(r) {
@@ -203,7 +517,7 @@ const SupabaseDB = {
     } catch (_) { /* table optional until schema is updated */ }
   },
 
-  async getDepartments() {
+  async _fetchRemoteDepartments() {
     try {
       await this.ensureDefaultDepartments();
       const { data, error } = await this._sb().from('wt_departments').select('*').order('sort_order');
@@ -216,17 +530,62 @@ const SupabaseDB = {
     }
   },
 
-  async upsertDepartment({ key, label, color, sortOrder = 0 }) {
+  async getDepartments() {
+    const cached = this._shadowRows('departments');
+    if (cached.length && this._shadowComplete('departments') && (this._shadowFresh('departments') || this._hasPendingCollection('departments'))) {
+      return cached.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    }
+    const rows = await this._fetchRemoteDepartments();
+    this._shadowSetCollection('departments', rows, 'key');
+    return this._shadowRows('departments').sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  },
+
+  async upsertDepartment({ key, label, color, sortOrder = 0 }, remoteOnly = false) {
     const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (!slug) throw new Error('Department key is required');
     if (!label?.trim()) throw new Error('Department name is required');
+    if (!remoteOnly) {
+      const row = { key: slug, label: label.trim(), color: color || 'blue', sortOrder };
+      this._shadowUpsert('departments', row, 'key');
+      this._mergeOrQueueJob({
+        id: `dept-upsert:${slug}`,
+        type: 'upsertDepartment',
+        mergeKey: `department:${slug}`,
+        collections: ['departments'],
+        payload: row,
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (_, nextJob) => nextJob);
+      return slug;
+    }
     const row = { key: slug, label: label.trim(), color: color || 'blue', sort_order: sortOrder };
     const { error } = await this._sb().from('wt_departments').upsert(row);
     if (error) throw error;
     return slug;
   },
 
-  async deleteDepartment(key) {
+  async deleteDepartment(key, remoteOnly = false) {
+    if (!remoteOnly) {
+      this._shadowDelete('departments', key);
+      this._mergeOrQueueJob({
+        id: `dept-delete:${key}`,
+        type: 'deleteDepartment',
+        mergeKey: `department:${key}`,
+        collections: ['departments'],
+        payload: { key },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (_, nextJob) => nextJob);
+      return;
+    }
     const { error } = await this._sb().from('wt_departments').delete().eq('key', key);
     if (error) throw error;
   },
@@ -375,24 +734,74 @@ const SupabaseDB = {
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
     if (error) throw error;
+    this._shadowUpsert('projects', this._mapProject(row));
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name });
     return row.id;
   },
 
-  async getProjects() {
+  async _fetchRemoteProjects() {
     const { data, error } = await this._sb().from('wt_projects').select('*').order('updated_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => this._mapProject(r));
   },
 
-  async getProject(id) {
+  async getProjects() {
+    const cached = this._shadowRows('projects');
+    if (cached.length && this._shadowComplete('projects') && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) {
+      return cached.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    }
+    const rows = await this._fetchRemoteProjects();
+    this._shadowSetCollection('projects', rows);
+    return this._shadowRows('projects').sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  },
+
+  async _fetchRemoteProject(id) {
     const { data, error } = await this._sb().from('wt_projects').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     return this._mapProject(data);
   },
 
-  async updateProject(id, changes, actorUserId = null) {
-    const existing = await this.getProject(id);
+  async getProject(id) {
+    const cached = this._shadowGet('projects', id);
+    if (cached && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) return cached;
+    const row = await this._fetchRemoteProject(id);
+    if (row) this._shadowUpsert('projects', row);
+    return row;
+  },
+
+  async updateProject(id, changes, actorUserId = null, remoteOnly = false) {
+    if (!remoteOnly) {
+      const existing = await this.getProject(id);
+      if (!existing) throw new Error('Project not found');
+      const optimistic = this._applyProjectChanges(existing, changes);
+      this._shadowUpsert('projects', optimistic);
+      this._mergeOrQueueJob({
+        id: `project-update:${id}`,
+        type: 'updateProject',
+        mergeKey: `updateProject:${id}`,
+        collections: ['projects'],
+        payload: { id, changes: this._clone(changes), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (current, nextJob) => ({
+        ...current,
+        payload: {
+          ...current.payload,
+          changes: { ...(current.payload?.changes || {}), ...(nextJob.payload?.changes || {}) },
+          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId
+        },
+        status: 'pending',
+        updatedAt: nextJob.updatedAt,
+        nextRetryAt: 0,
+        lastError: ''
+      }));
+      return id;
+    }
+    const existing = await this._fetchRemoteProject(id);
     const patch = { updated_at: new Date().toISOString() };
     if (changes.name != null) patch.name = changes.name;
     if (changes.notes != null) patch.notes = changes.notes;
@@ -408,6 +817,9 @@ const SupabaseDB = {
       else if (existing?.status === 'completed') patch.completed_at = null;
     }
     let { error } = await this._sb().from('wt_projects').update(patch).eq('id', id);
+    if (error && this._isMissingColumn(error) && remoteOnly) {
+      throw new Error('Supabase schema is missing one or more project sync fields. Run supabase/schema.sql and the queued change will retry automatically.');
+    }
     if (error && this._isMissingColumn(error)) {
       delete patch.department;
       delete patch.workflow_template;
@@ -417,17 +829,20 @@ const SupabaseDB = {
       ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
     }
     if (error) throw error;
+    this._touchShadowProject(id, patch.updated_at);
     if (actorUserId) {
-      const p = await this.getProject(id);
+      const p = await this._fetchRemoteProject(id);
       await this.logActivity({ userId: actorUserId, projectId: id, action: 'updated', entityType: 'project', entityId: id, details: p?.name || '' });
     }
     return id;
   },
 
   async deleteProject(id, actorUserId = null) {
-    const p = await this.getProject(id);
+    const p = await this._fetchRemoteProject(id);
     const { error } = await this._sb().from('wt_projects').delete().eq('id', id);
     if (error) throw error;
+    this._shadowDelete('projects', id);
+    this._dropShadowTasksForProject(id);
     if (actorUserId) await this.logActivity({ userId: actorUserId, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
 
@@ -500,12 +915,15 @@ const SupabaseDB = {
       priority: data.priority || 'medium'
     }).select().single();
     if (error) throw error;
-    await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
+    const updatedAt = new Date().toISOString();
+    await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', data.projectId);
+    this._shadowUpsert('tasks', this._mapTask(row));
+    this._touchShadowProject(data.projectId, updatedAt);
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title });
     return row.id;
   },
 
-  async getTasks(filter = {}) {
+  async _fetchRemoteTasks(filter = {}) {
     let q = this._sb().from('wt_tasks').select('*');
     if (filter.projectId) q = q.eq('project_id', filter.projectId);
     if (filter.status) q = q.eq('status', filter.status);
@@ -514,14 +932,74 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapTask(r));
   },
 
-  async getTask(id) {
+  async getTasks(filter = {}) {
+    const cached = this._shadowRows('tasks');
+    const cachedProjectRows = filter.projectId ? cached.filter(r => r.projectId === filter.projectId) : [];
+    if (cached.length && this._shadowComplete('tasks') && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) {
+      let rows = cached;
+      if (filter.projectId) rows = rows.filter(r => r.projectId === filter.projectId);
+      if (filter.status) rows = rows.filter(r => r.status === filter.status);
+      return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
+    if (cachedProjectRows.length && filter.projectId && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) {
+      let rows = cachedProjectRows;
+      if (filter.status) rows = rows.filter(r => r.status === filter.status);
+      return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
+    const rows = await this._fetchRemoteTasks(filter);
+    if (!filter.projectId && !filter.status) this._shadowSetCollection('tasks', rows);
+    else rows.forEach(row => this._shadowUpsert('tasks', row));
+    return rows;
+  },
+
+  async _fetchRemoteTask(id) {
     const { data, error } = await this._sb().from('wt_tasks').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     return this._mapTask(data);
   },
 
-  async updateTask(id, changes, actorUserId = null) {
-    const task = await this.getTask(id);
+  async getTask(id) {
+    const cached = this._shadowGet('tasks', id);
+    if (cached && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) return cached;
+    const row = await this._fetchRemoteTask(id);
+    if (row) this._shadowUpsert('tasks', row);
+    return row;
+  },
+
+  async updateTask(id, changes, actorUserId = null, remoteOnly = false) {
+    if (!remoteOnly) {
+      const task = await this.getTask(id);
+      if (!task) throw new Error('Task not found');
+      const optimistic = this._applyTaskChanges(task, changes);
+      this._shadowUpsert('tasks', optimistic);
+      if (optimistic.projectId != null) this._touchShadowProject(optimistic.projectId, optimistic.updatedAt);
+      this._mergeOrQueueJob({
+        id: `task-update:${id}`,
+        type: 'updateTask',
+        mergeKey: `updateTask:${id}`,
+        collections: ['tasks', 'projects'],
+        payload: { id, changes: this._clone(changes), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (current, nextJob) => ({
+        ...current,
+        payload: {
+          ...current.payload,
+          changes: { ...(current.payload?.changes || {}), ...(nextJob.payload?.changes || {}) },
+          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId
+        },
+        status: 'pending',
+        updatedAt: nextJob.updatedAt,
+        nextRetryAt: 0,
+        lastError: ''
+      }));
+      return optimistic;
+    }
+    const task = await this._fetchRemoteTask(id);
     const patch = { updated_at: new Date().toISOString() };
     if (changes.title != null) patch.title = changes.title;
     if (changes.status != null) patch.status = changes.status;
@@ -534,20 +1012,23 @@ const SupabaseDB = {
     if (error) throw error;
     if (task) {
       await this._sb().from('wt_projects').update({ updated_at: patch.updated_at }).eq('id', task.projectId);
+      this._touchShadowProject(task.projectId, patch.updated_at);
       if (actorUserId) {
         const detail = changes.status ? `status → ${changes.status}` : (task.title || '');
         await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
-    return task;
+    return this._applyTaskChanges(task, changes);
   },
 
   async deleteTask(id, actorUserId = null) {
-    const task = await this.getTask(id);
+    const task = await this._fetchRemoteTask(id);
     const { error } = await this._sb().from('wt_tasks').delete().eq('id', id);
     if (error) throw error;
+    this._shadowDelete('tasks', id);
     if (task) {
       await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', task.projectId);
+      this._touchShadowProject(task.projectId);
       if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title });
     }
   },

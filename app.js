@@ -920,10 +920,38 @@ async function showApp() {
   await DB.migrateFromLocalStorage(s.userId);
   if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
+  DB.flushPendingSync?.().catch(() => {});
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+}
+
+function renderSyncStatusIndicator() {
+  const el = document.getElementById('sync-status-indicator');
+  if (!el) return;
+  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+  if (window.WT_STORAGE_MODE !== 'supabase' || !status?.enabled || (!status.pending && !status.failed && !status.syncing)) {
+    el.textContent = '';
+    el.className = 'sync-status-label hidden';
+    el.removeAttribute('title');
+    return;
+  }
+  if (status.failed) {
+    el.textContent = ` · Sync issue${status.pending > 1 ? ` (${status.pending})` : ''}`;
+    el.className = 'sync-status-label is-failed';
+    el.title = status.lastError || 'Some local changes are still waiting to sync to the cloud.';
+    return;
+  }
+  if (status.syncing) {
+    el.textContent = status.pending > 1 ? ` · Syncing ${status.pending}` : ' · Syncing';
+    el.className = 'sync-status-label is-pending';
+    el.title = 'Recent changes are already saved locally and are syncing to the cloud in the background.';
+    return;
+  }
+  el.textContent = status.pending === 1 ? ' · 1 pending sync' : ` · ${status.pending} pending sync`;
+  el.className = 'sync-status-label is-pending';
+  el.title = 'Recent changes are already saved locally and are waiting to sync to the cloud.';
 }
 
 function updateSidebarUser() {
@@ -940,12 +968,19 @@ function updateSidebarUser() {
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
+  if (window.WT_STORAGE_MODE === 'supabase') {
+    const roleEl = el.querySelector('.user-role');
+    if (roleEl && !roleEl.querySelector('#sync-status-indicator')) {
+      roleEl.insertAdjacentHTML('beforeend', '<span id="sync-status-indicator" class="sync-status-label hidden"></span>');
+    }
+  }
   const adminNav = document.getElementById('nav-admin');
   const dashNav = document.getElementById('nav-dashboard');
   const reportNav = document.getElementById('nav-reports');
   if (adminNav) adminNav.style.display = s.role === 'admin' ? '' : 'none';
   if (dashNav) dashNav.style.display = s.role === 'admin' ? '' : 'none';
   if (reportNav) reportNav.style.display = s.role === 'admin' ? '' : 'none';
+  renderSyncStatusIndicator();
   renderUserMenu();
 }
 
@@ -3063,6 +3098,7 @@ async function init() {
       showToast('Cloud database unavailable — using browser-only storage. Run supabase/schema.sql in your Supabase SQL Editor.', 'warning');
     }
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
+    window.addEventListener('wt-sync-status', () => renderSyncStatusIndicator());
     document.addEventListener('click', async (e) => {
       const userBtn = e.target.closest('#sidebar-user');
       const menu = document.getElementById('user-menu');
