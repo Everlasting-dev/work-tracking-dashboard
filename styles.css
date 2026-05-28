@@ -1413,56 +1413,47 @@ span.status-dot:hover { transform: none; }
   color: rgba(255,255,255,0.5);
 }
 
-/* ── Admin department card grid ── */
-.dept-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
+/* ── Admin department list ── */
+.dept-list { padding: 0; }
+.dept-row {
+  border-bottom: 1px solid var(--border-light);
+  transition: background var(--transition);
 }
-.dept-card {
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--card);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition), transform var(--transition);
-}
-.dept-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.dept-card-swatch { height: 4px; }
-.dept-card--blue .dept-card-swatch   { background: var(--blue); }
-.dept-card--amber .dept-card-swatch  { background: var(--amber); }
-.dept-card--green .dept-card-swatch  { background: var(--green); }
-.dept-card--purple .dept-card-swatch { background: var(--purple); }
-.dept-card--red .dept-card-swatch    { background: var(--red); }
-.dept-card--muted .dept-card-swatch  { background: var(--text-muted); }
-.dept-card-body { padding: 14px 16px; }
-.dept-card-top {
+.dept-row:hover { background: var(--bg); }
+.dept-row-form {
   display: flex; align-items: center; gap: 8px;
-  margin-bottom: 10px;
+  padding: 8px 20px;
 }
-.dept-card-name {
-  flex: 1;
-  font-size: 0.95rem; font-weight: 600;
-  border: none; border-bottom: 1.5px solid transparent;
-  background: none; padding: 2px 0; color: var(--text);
-  transition: border-color var(--transition);
+.dept-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
-.dept-card-name:focus { outline: none; border-bottom-color: var(--accent); }
-.dept-card-key {
+.dept-row--blue   .dept-dot { background: var(--blue); }
+.dept-row--amber  .dept-dot { background: var(--amber); }
+.dept-row--green  .dept-dot { background: var(--green); }
+.dept-row--purple .dept-dot { background: var(--purple); }
+.dept-row--red    .dept-dot { background: var(--red); }
+.dept-row--muted  .dept-dot { background: var(--text-muted); }
+.dept-name-input {
+  flex: 1; min-width: 80px;
+  font-size: 0.875rem; font-weight: 500;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: none; padding: 4px 7px; color: var(--text);
+  transition: border-color var(--transition), background var(--transition);
+}
+.dept-name-input:hover { border-color: var(--border); background: var(--bg); }
+.dept-name-input:focus { outline: none; border-color: var(--accent); background: var(--card); box-shadow: 0 0 0 3px var(--accent-light); }
+.dept-key-badge {
   font-family: 'SF Mono','Cascadia Code','Fira Code',monospace;
   font-size: 0.68rem; color: var(--text-muted);
   background: var(--bg); padding: 2px 6px;
   border-radius: var(--radius-sm); white-space: nowrap; flex-shrink: 0;
 }
-.dept-card-row {
-  display: flex; align-items: center; gap: 6px;
-}
-.dept-card-color-select {
+.dept-color-select {
   font-size: 0.78rem; padding: 4px 6px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--bg); flex-shrink: 0;
+  background: var(--bg); color: var(--text); flex-shrink: 0;
 }
-.dept-card-order-input { width: 64px; }
+.dept-save-btn { padding: 4px 10px !important; font-size: 0.78rem !important; }
 .btn-icon-danger {
   background: none; border: none; cursor: pointer; padding: 4px;
   color: var(--text-muted); border-radius: var(--radius-sm);
@@ -1470,25 +1461,20 @@ span.status-dot:hover { transform: none; }
   transition: color var(--transition), background var(--transition);
 }
 .btn-icon-danger:hover { color: var(--red); background: var(--red-light); }
-.dept-card-add {
-  border-style: dashed;
-  background: transparent;
+.dept-add-row {
+  background: var(--bg);
+  border-top: 1px solid var(--border-light);
 }
-.dept-card-swatch--add {
-  background: linear-gradient(90deg, var(--blue), var(--purple), var(--green));
-  opacity: 0.5;
+.dept-add-icon { color: var(--text-muted); display: flex; flex-shrink: 0; }
+.dept-key-input {
+  width: 90px; font-size: 0.8rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); padding: 4px 7px; color: var(--text);
 }
-.dept-card-add-header {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 10px;
-}
-.dept-card-add-icon {
-  width: 28px; height: 28px; border-radius: 50%;
-  background: var(--accent-light); color: var(--accent);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.dept-card-add-label {
-  font-size: 0.88rem; font-weight: 600; color: var(--text);
+.dept-order-input {
+  width: 52px; font-size: 0.8rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); padding: 4px 6px; color: var(--text);
 }
 
 /* ── Chat (Discord bridge) ── */
