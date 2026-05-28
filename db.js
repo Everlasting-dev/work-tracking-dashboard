@@ -86,6 +86,70 @@ db.version(7).stores({
   sessions: '++id, userId, &[userId+deviceId], lastSeenAt'
 });
 
+db.version(8).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key'
+}).upgrade(async tx => {
+  await tx.table('users').toCollection().modify(user => {
+    if (user.department == null) user.department = '';
+  });
+  await tx.table('projects').toCollection().modify(project => {
+    if (project.department == null) project.department = '';
+    if (project.workflowTemplate == null) project.workflowTemplate = '';
+    if (project.completedAt == null) project.completedAt = null;
+  });
+  await tx.table('tasks').toCollection().modify(task => {
+    if (task.workflowStepKey == null) task.workflowStepKey = '';
+  });
+  await tx.table('attachments').toCollection().modify(att => {
+    if (att.documentType == null) att.documentType = '';
+  });
+  const defaults = [
+    { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+    { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+    { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+    { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+    { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+  ];
+  const count = await tx.table('departments').count();
+  if (count === 0) await tx.table('departments').bulkAdd(defaults);
+});
+
+db.version(9).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder'
+}).upgrade(async tx => {
+  const defaults = [
+    { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+    { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+    { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+    { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+    { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+  ];
+  const count = await tx.table('departments').count();
+  if (count === 0) await tx.table('departments').bulkAdd(defaults);
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -107,17 +171,30 @@ function generateSalt() {
 const LocalDB = {
   /* Activity audit log */
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
-    if (!userId || !action) return;
-    return db.activityLog.add({
+    if (!userId || !action) return null;
+    const createdAt = new Date().toISOString();
+    const id = await db.activityLog.add({
       userId,
       projectId: projectId ?? null,
       action,
       entityType: entityType || 'system',
       entityId: entityId ?? null,
       details: details || '',
-      createdAt: new Date().toISOString()
+      createdAt
     });
+    return { id, userId, projectId: projectId ?? null, action, entityType: entityType || 'system', entityId: entityId ?? null, details: details || '', createdAt };
   },
+
+  getSyncStatus() {
+    return { enabled: false, pending: 0, failed: 0, syncing: false, lastError: '' };
+  },
+
+  getSyncQueueDetails() { return []; },
+  retrySyncNow() { return Promise.resolve(); },
+  clearFailedSyncJobs() { return 0; },
+  async getDiscordMessages() { return []; },
+
+  async flushPendingSync() { return; },
 
   async getActivityLog(filters = {}) {
     let rows = await db.activityLog.toArray();
@@ -237,6 +314,45 @@ const LocalDB = {
     return rows.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
   },
 
+  async getChatActivityLog(channelId, { limit = 100 } = {}) {
+    const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+    let rows = await db.activityLog
+      .where('[action+entityType]')
+      .equals(['sent_message', 'chat'])
+      .toArray()
+      .catch(() => db.activityLog.toArray());
+    if (!rows?.length) {
+      rows = (await db.activityLog.toArray()).filter(e => e.action === 'sent_message' && e.entityType === 'chat');
+    }
+    if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
+    else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
+    rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return rows.slice(-limit);
+  },
+
+  async getDepartments() {
+    const rows = await db.departments.orderBy('sortOrder').toArray();
+    return rows.length ? rows : [
+      { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+      { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+      { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+      { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+      { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+    ];
+  },
+
+  async upsertDepartment({ key, label, color, sortOrder = 0 }) {
+    const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) throw new Error('Department key is required');
+    if (!label?.trim()) throw new Error('Department name is required');
+    await db.departments.put({ key: slug, label: label.trim(), color: color || 'blue', sortOrder });
+    return slug;
+  },
+
+  async deleteDepartment(key) {
+    return db.departments.delete(key);
+  },
+
   /* Users */
   async createUser(data) {
     const salt = generateSalt();
@@ -249,6 +365,7 @@ const LocalDB = {
       passwordHash: pwHash,
       salt,
       role: data.role || 'user',
+      department: data.department || '',
       color: data.color || '',
       createdAt: now
     });
@@ -271,6 +388,7 @@ const LocalDB = {
       if (existing && existing.id !== id) throw new Error('Username already taken');
       patch.username = next;
     }
+    if (patch.department != null) patch.department = patch.department || '';
     await db.users.update(id, patch);
     if (actorUserId) {
       const details = Object.keys(patch).join(',');
@@ -328,6 +446,9 @@ const LocalDB = {
       status: data.status || 'active',
       priority: data.priority || 'medium',
       ownerId: data.ownerId || 1,
+      department: data.department || '',
+      workflowTemplate: data.workflowTemplate || '',
+      completedAt: data.status === 'completed' ? now : null,
       isOngoing: !!data.isOngoing,
       cadence: data.cadence || '',
       createdAt: now,
@@ -345,8 +466,15 @@ const LocalDB = {
   async getProject(id) { return db.projects.get(id); },
 
   async updateProject(id, changes, actorUserId = null) {
+    const existing = await db.projects.get(id);
     const patch = { ...changes };
     delete patch.actorUserId;
+    if (patch.department != null) patch.department = patch.department || '';
+    if (patch.workflowTemplate != null) patch.workflowTemplate = patch.workflowTemplate || '';
+    if (patch.status != null) {
+      if (patch.status === 'completed') patch.completedAt = existing?.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') patch.completedAt = null;
+    }
     patch.updatedAt = new Date().toISOString();
     await db.projects.update(id, patch);
     if (actorUserId) {
@@ -376,6 +504,7 @@ const LocalDB = {
       uploadedBy: data.uploadedBy,
       fileName,
       mimeType: data.mimeType || 'application/octet-stream',
+      documentType: data.documentType || '',
       blob: data.blob,
       createdAt: now
     });
@@ -432,6 +561,7 @@ const LocalDB = {
       projectId: data.projectId,
       milestoneId: data.milestoneId || null,
       assigneeId,
+      workflowStepKey: data.workflowStepKey || '',
       title,
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
@@ -457,6 +587,7 @@ const LocalDB = {
     const patch = { ...changes };
     delete patch.actorUserId;
     if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
+    if (patch.workflowStepKey != null) patch.workflowStepKey = patch.workflowStepKey || '';
     patch.updatedAt = new Date().toISOString();
     const task = await db.tasks.get(id);
     await db.tasks.update(id, patch);
@@ -604,7 +735,8 @@ const LocalDB = {
     ]);
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
+      role: u.role, department: u.department || '', createdAt: u.createdAt,
+      discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = await db.settings.toArray();
@@ -614,14 +746,15 @@ const LocalDB = {
       if (!a.blob) continue;
       const dataBase64 = await LocalDB.blobToBase64(a.blob);
       attachments.push({
-        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName, mimeType: a.mimeType, createdAt: a.createdAt, dataBase64
+        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+        mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt, dataBase64
       });
     }
     const activityLog = await db.activityLog.toArray();
     const notifications = await db.notifications.toArray();
     const webhooks = await db.webhooks.toArray();
     const sessions = await db.sessions.toArray();
-    return { version: 7, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
+    return { version: 8, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
   },
 
   async importAll(data) {
@@ -648,6 +781,7 @@ const LocalDB = {
             uploadedBy: a.uploadedBy,
             fileName: a.fileName || 'file',
             mimeType: a.mimeType || 'application/octet-stream',
+            documentType: a.documentType || '',
             blob,
             createdAt: a.createdAt || new Date().toISOString()
           });

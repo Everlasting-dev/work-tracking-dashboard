@@ -3,6 +3,14 @@
 const SupabaseDB = {
   _client: null,
   BUCKET: 'project-files',
+  _syncQueueKey: 'wt-supabase-sync-queue-v1',
+  _shadowKey: 'wt-supabase-shadow-v1',
+  _shadowTtlMs: 45000,
+  _syncQueue: [],
+  _shadowState: null,
+  _syncFlushPromise: null,
+  _syncFlushTimer: null,
+  _syncHooksBound: false,
 
   async init(url, anonKey) {
     if (!window.supabase?.createClient) throw new Error('Supabase SDK not loaded');
@@ -28,6 +36,7 @@ const SupabaseDB = {
         throw error;
       }
     }
+    this._initLocalSync();
   },
 
   _sb() { return this._client; },
@@ -50,12 +59,379 @@ const SupabaseDB = {
     return msg.includes('pgrst204') || msg.includes('schema cache') || msg.includes('column') || msg.includes('could not find');
   },
 
+  _clone(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  },
+
+  _emptyShadowState() {
+    return {
+      collections: { projects: {}, tasks: {}, departments: {} },
+      at: { projects: 0, tasks: 0, departments: 0 },
+      complete: { projects: false, tasks: false, departments: false }
+    };
+  },
+
+  _loadShadowState() {
+    this._shadowState = this._emptyShadowState();
+    try {
+      const raw = localStorage.getItem(this._shadowKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      this._shadowState.collections = {
+        projects: parsed?.collections?.projects || {},
+        tasks: parsed?.collections?.tasks || {},
+        departments: parsed?.collections?.departments || {}
+      };
+      this._shadowState.at = {
+        projects: parsed?.at?.projects || 0,
+        tasks: parsed?.at?.tasks || 0,
+        departments: parsed?.at?.departments || 0
+      };
+      this._shadowState.complete = {
+        projects: !!parsed?.complete?.projects,
+        tasks: !!parsed?.complete?.tasks,
+        departments: !!parsed?.complete?.departments
+      };
+    } catch (_) {
+      this._shadowState = this._emptyShadowState();
+    }
+  },
+
+  _persistShadowState() {
+    if (!this._shadowState) return;
+    try { localStorage.setItem(this._shadowKey, JSON.stringify(this._shadowState)); } catch (_) {}
+  },
+
+  _loadSyncQueue() {
+    this._syncQueue = [];
+    try {
+      const raw = localStorage.getItem(this._syncQueueKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) this._syncQueue = parsed;
+    } catch (_) {
+      this._syncQueue = [];
+    }
+  },
+
+  _persistSyncQueue() {
+    try { localStorage.setItem(this._syncQueueKey, JSON.stringify(this._syncQueue || [])); } catch (_) {}
+    this._publishSyncStatus();
+  },
+
+  _initLocalSync() {
+    if (!this._shadowState) this._loadShadowState();
+    if (!Array.isArray(this._syncQueue)) this._loadSyncQueue();
+    if (!this._syncHooksBound && typeof window !== 'undefined') {
+      window.addEventListener('online', () => this._scheduleSyncFlush(150));
+      window.addEventListener('focus', () => this._scheduleSyncFlush(150));
+      this._syncHooksBound = true;
+    }
+    this._publishSyncStatus();
+    if (this._syncQueue.length) this._scheduleSyncFlush(200);
+  },
+
+  _shadowRows(name) {
+    return Object.values(this._shadowState?.collections?.[name] || {}).map(row => this._clone(row));
+  },
+
+  _shadowGet(name, key) {
+    const row = this._shadowState?.collections?.[name]?.[String(key)];
+    return row ? this._clone(row) : null;
+  },
+
+  _shadowFresh(name) {
+    const at = this._shadowState?.at?.[name] || 0;
+    return Date.now() - at < this._shadowTtlMs;
+  },
+
+  _shadowComplete(name) {
+    return !!this._shadowState?.complete?.[name];
+  },
+
+  _shadowSetCollection(name, rows, keyField = 'id') {
+    const next = {};
+    for (const row of rows || []) {
+      if (row?.[keyField] == null) continue;
+      next[String(row[keyField])] = this._clone(row);
+    }
+    this._shadowState.collections[name] = next;
+    this._shadowState.at[name] = Date.now();
+    this._shadowState.complete[name] = true;
+    this._reapplyPendingToShadow(name);
+    this._persistShadowState();
+  },
+
+  _shadowUpsert(name, row, keyField = 'id') {
+    if (!row || row[keyField] == null) return null;
+    this._shadowState.collections[name][String(row[keyField])] = this._clone(row);
+    this._shadowState.at[name] = Date.now();
+    this._persistShadowState();
+    return this._clone(row);
+  },
+
+  _shadowDelete(name, key) {
+    delete this._shadowState.collections[name][String(key)];
+    this._shadowState.at[name] = Date.now();
+    this._persistShadowState();
+  },
+
+  _touchShadowProject(projectId, updatedAt = null) {
+    const row = this._shadowGet('projects', projectId);
+    if (!row) return;
+    row.updatedAt = updatedAt || new Date().toISOString();
+    this._shadowUpsert('projects', row);
+  },
+
+  _dropShadowTasksForProject(projectId) {
+    const tasks = this._shadowState?.collections?.tasks || {};
+    let changed = false;
+    for (const [key, row] of Object.entries(tasks)) {
+      if (row?.projectId === projectId) {
+        delete tasks[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this._shadowState.at.tasks = Date.now();
+      this._persistShadowState();
+    }
+  },
+
+  _hasPendingCollection(name) {
+    return (this._syncQueue || []).some(job => (job.collections || []).includes(name));
+  },
+
+  _reapplyPendingToShadow(name) {
+    for (const job of this._syncQueue || []) {
+      if ((job.collections || []).includes(name)) this._applyPendingJobToShadow(job);
+    }
+  },
+
+  _applyProjectChanges(existing, changes = {}) {
+    const next = { ...(existing || {}) };
+    if (next.id == null && changes.id != null) next.id = changes.id;
+    if (changes.name != null) next.name = changes.name;
+    if (changes.notes != null) next.notes = changes.notes;
+    if (changes.type != null) next.type = changes.type;
+    if (changes.status != null) next.status = changes.status;
+    if (changes.priority != null) next.priority = changes.priority;
+    if (changes.department != null) next.department = changes.department || '';
+    if (changes.workflowTemplate != null) next.workflowTemplate = changes.workflowTemplate || '';
+    if (changes.isOngoing != null) next.isOngoing = !!changes.isOngoing;
+    if (changes.cadence != null) next.cadence = changes.cadence || '';
+    if (changes.status != null) {
+      if (changes.status === 'completed') next.completedAt = next.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') next.completedAt = null;
+    }
+    next.updatedAt = new Date().toISOString();
+    return next;
+  },
+
+  _applyTaskChanges(existing, changes = {}) {
+    const next = { ...(existing || {}) };
+    if (next.id == null && changes.id != null) next.id = changes.id;
+    if (changes.title != null) next.title = changes.title;
+    if (changes.status != null) next.status = changes.status;
+    if (changes.priority != null) next.priority = changes.priority;
+    if (changes.dueDate != null) next.dueDate = changes.dueDate;
+    if (changes.milestoneId !== undefined) next.milestoneId = changes.milestoneId;
+    if (changes.assigneeId !== undefined) next.assigneeId = changes.assigneeId == null ? null : Number(changes.assigneeId);
+    if (changes.workflowStepKey !== undefined) next.workflowStepKey = changes.workflowStepKey || '';
+    next.updatedAt = new Date().toISOString();
+    return next;
+  },
+
+  _applyPendingJobToShadow(job) {
+    if (!job) return;
+    if (job.type === 'updateProject') {
+      const current = this._shadowGet('projects', job.payload.id) || { id: job.payload.id };
+      const next = this._applyProjectChanges(current, job.payload.changes || {});
+      this._shadowState.collections.projects[String(job.payload.id)] = this._clone(next);
+      this._shadowState.at.projects = Date.now();
+      return;
+    }
+    if (job.type === 'updateTask') {
+      const current = this._shadowGet('tasks', job.payload.id) || { id: job.payload.id };
+      const next = this._applyTaskChanges(current, job.payload.changes || {});
+      this._shadowState.collections.tasks[String(job.payload.id)] = this._clone(next);
+      this._shadowState.at.tasks = Date.now();
+      if (next.projectId != null) this._touchShadowProject(next.projectId, next.updatedAt);
+      return;
+    }
+    if (job.type === 'upsertDepartment') {
+      const row = {
+        key: job.payload.key,
+        label: job.payload.label,
+        color: job.payload.color || 'blue',
+        sortOrder: job.payload.sortOrder ?? 0
+      };
+      this._shadowState.collections.departments[String(row.key)] = this._clone(row);
+      this._shadowState.at.departments = Date.now();
+      return;
+    }
+    if (job.type === 'deleteDepartment') {
+      delete this._shadowState.collections.departments[String(job.payload.key)];
+      this._shadowState.at.departments = Date.now();
+    }
+  },
+
+  _queueBackoffMs(attempts = 1) {
+    return Math.min(300000, 1000 * Math.pow(2, Math.max(0, attempts - 1)));
+  },
+
+  _publishSyncStatus() {
+    if (typeof window === 'undefined') return;
+    try {
+      window.dispatchEvent(new CustomEvent('wt-sync-status', { detail: this.getSyncStatus() }));
+    } catch (_) {}
+  },
+
+  getSyncStatus() {
+    const queue = this._syncQueue || [];
+    return {
+      enabled: true,
+      pending: queue.length,
+      failed: queue.filter(job => job.status === 'failed').length,
+      syncing: queue.some(job => job.status === 'syncing'),
+      lastError: queue.find(job => job.lastError)?.lastError || ''
+    };
+  },
+
+  _syncJobSummary(job) {
+    if (!job) return '';
+    if (job.type === 'updateProject') return `Project #${job.payload?.id}`;
+    if (job.type === 'updateTask') return `Task #${job.payload?.id}`;
+    if (job.type === 'upsertDepartment') return `Department “${job.payload?.label || job.payload?.key || ''}”`;
+    if (job.type === 'deleteDepartment') return `Delete department “${job.payload?.key || ''}”`;
+    return job.type || 'Unknown job';
+  },
+
+  getSyncQueueDetails() {
+    return (this._syncQueue || []).map(job => {
+      const nextRetryAt = job.nextRetryAt || 0;
+      let nextRetryLabel = '';
+      if (nextRetryAt > Date.now()) {
+        const sec = Math.max(1, Math.ceil((nextRetryAt - Date.now()) / 1000));
+        nextRetryLabel = sec >= 60 ? `in ${Math.ceil(sec / 60)} min` : `in ${sec}s`;
+      } else if (job.status === 'failed') {
+        nextRetryLabel = 'ready to retry';
+      }
+      let payloadJson = '';
+      try { payloadJson = JSON.stringify(job.payload || {}, null, 2); } catch (_) { payloadJson = ''; }
+      return {
+        id: job.id,
+        type: job.type,
+        status: job.status || 'pending',
+        attempts: job.attempts || 0,
+        lastError: job.lastError || '',
+        summary: this._syncJobSummary(job),
+        nextRetryLabel,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        payloadJson
+      };
+    });
+  },
+
+  retrySyncNow() {
+    for (const job of this._syncQueue || []) {
+      if (job.status === 'failed') {
+        job.status = 'pending';
+        job.nextRetryAt = 0;
+      }
+    }
+    this._persistSyncQueue();
+    return this.flushPendingSync();
+  },
+
+  clearFailedSyncJobs() {
+    const before = (this._syncQueue || []).length;
+    this._syncQueue = (this._syncQueue || []).filter(job => job.status !== 'failed');
+    if (this._syncQueue.length !== before) this._persistSyncQueue();
+    return before - this._syncQueue.length;
+  },
+
+  _scheduleSyncFlush(delay = 150) {
+    if (typeof setTimeout !== 'function') return;
+    if (this._syncFlushTimer) clearTimeout(this._syncFlushTimer);
+    this._syncFlushTimer = setTimeout(() => {
+      this._syncFlushTimer = null;
+      this.flushPendingSync().catch(err => console.warn('sync flush failed', err));
+    }, delay);
+  },
+
+  _mergeOrQueueJob(nextJob, mergeFn = null) {
+    const idx = (this._syncQueue || []).findIndex(job => job.mergeKey === nextJob.mergeKey && job.status !== 'syncing');
+    if (idx >= 0 && typeof mergeFn === 'function') {
+      this._syncQueue[idx] = mergeFn(this._syncQueue[idx], nextJob);
+    } else if (idx >= 0) {
+      this._syncQueue[idx] = nextJob;
+    } else {
+      this._syncQueue.push(nextJob);
+    }
+    this._persistSyncQueue();
+    this._scheduleSyncFlush(150);
+  },
+
+  async flushPendingSync() {
+    if (this._syncFlushPromise) return this._syncFlushPromise;
+    this._syncFlushPromise = (async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      for (let i = 0; i < this._syncQueue.length; i += 1) {
+        const job = this._syncQueue[i];
+        if (!job) continue;
+        if (job.nextRetryAt && job.nextRetryAt > Date.now()) continue;
+        job.status = 'syncing';
+        job.updatedAt = new Date().toISOString();
+        this._persistSyncQueue();
+        try {
+          await this._runSyncJob(job);
+          this._syncQueue.splice(i, 1);
+          i -= 1;
+          this._persistSyncQueue();
+        } catch (err) {
+          const attempts = (job.attempts || 0) + 1;
+          job.status = 'failed';
+          job.attempts = attempts;
+          job.updatedAt = new Date().toISOString();
+          job.lastError = err?.message || err?.details || String(err);
+          job.nextRetryAt = Date.now() + this._queueBackoffMs(attempts);
+          this._persistSyncQueue();
+          if (attempts === 1) {
+            try {
+              window.dispatchEvent(new CustomEvent('wt-sync-error', {
+                detail: { summary: this._syncJobSummary(job), error: job.lastError }
+              }));
+            } catch (_) {}
+          }
+        }
+      }
+    })().finally(() => {
+      this._syncFlushPromise = null;
+      this._publishSyncStatus();
+      const nextRetry = (this._syncQueue || [])
+        .map(job => job.nextRetryAt || 0)
+        .filter(Boolean)
+        .sort((a, b) => a - b)[0];
+      if (nextRetry && nextRetry > Date.now()) this._scheduleSyncFlush(Math.max(500, nextRetry - Date.now()));
+    });
+    return this._syncFlushPromise;
+  },
+
+  async _runSyncJob(job) {
+    if (job.type === 'updateProject') return this.updateProject(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
+    if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
+    if (job.type === 'upsertDepartment') return this.upsertDepartment(job.payload, true);
+    if (job.type === 'deleteDepartment') return this.deleteDepartment(job.payload.key, true);
+    throw new Error(`Unsupported sync job: ${job.type}`);
+  },
+
   _mapUser(r) {
     if (!r) return null;
     return {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
-      discordId: r.discord_id || '', color: r.color || '',
+      department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
@@ -64,7 +440,8 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, name: r.name, notes: r.notes, type: r.type, status: r.status, priority: r.priority,
-      ownerId: r.owner_id, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
+      ownerId: r.owner_id, department: r.department || '', workflowTemplate: r.workflow_template || '',
+      completedAt: r.completed_at || null, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -82,6 +459,7 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, projectId: r.project_id, milestoneId: r.milestone_id, assigneeId: r.assignee_id,
+      workflowStepKey: r.workflow_step_key || '',
       title: r.title, dueDate: r.due_date || '', status: r.status, priority: r.priority,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
@@ -122,7 +500,8 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, projectId: r.project_id, uploadedBy: r.uploaded_by, fileName: r.file_name,
-      mimeType: r.mime_type, storagePath: r.storage_path, createdAt: r.created_at, blob
+      mimeType: r.mime_type, documentType: r.document_type || '', storagePath: r.storage_path,
+      createdAt: r.created_at, blob
     };
   },
 
@@ -135,17 +514,24 @@ const SupabaseDB = {
   },
 
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
-    if (!userId || !action) return;
-    this._sb().from('wt_activity_log').insert({
+    if (!userId || !action) return null;
+    const { data, error } = await this._sb().from('wt_activity_log').insert({
       user_id: userId, project_id: projectId, action, entity_type: entityType || 'system',
       entity_id: entityId, details: details || ''
-    }).then(({ error }) => { if (error) console.warn('activity log:', error.message); });
+    }).select().single();
+    if (error) {
+      console.warn('activity log:', error.message);
+      return null;
+    }
+    return this._mapActivity(data);
   },
 
   async getActivityLog(filters = {}) {
     let q = this._sb().from('wt_activity_log').select('*').order('created_at', { ascending: false });
     if (filters.projectId != null) q = q.eq('project_id', filters.projectId);
     if (filters.userId != null) q = q.eq('user_id', filters.userId);
+    if (filters.action) q = q.eq('action', filters.action);
+    if (filters.entityType) q = q.eq('entity_type', filters.entityType);
     if (filters.limit != null) q = q.limit(filters.limit);
     const { data, error } = await q;
     if (error) throw error;
@@ -154,6 +540,141 @@ const SupabaseDB = {
       rows = rows.filter(r => r.userId === filters.viewerUserId);
     }
     return rows;
+  },
+
+  async getDiscordMessages(channelId, { limit = 100 } = {}) {
+    try {
+      const { data, error } = await this._sb()
+        .from('wt_discord_messages')
+        .select('*')
+        .eq('channel_id', channelId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).map(r => ({
+        id: `discord-${r.id}`,
+        userId: null,
+        discordAuthorId: r.author_id,
+        discordAuthorName: r.author_username,
+        discordDisplayName: r.author_display_name || r.author_username,
+        discordAvatar: r.author_avatar || '',
+        details: r.content,
+        source: 'discord',
+        createdAt: r.created_at
+      })).reverse();
+    } catch (_) {
+      return [];
+    }
+  },
+
+  async getChatActivityLog(channelId, { limit = 100 } = {}) {
+    const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
+    let q = this._sb().from('wt_activity_log').select('*')
+      .eq('action', 'sent_message')
+      .eq('entity_type', 'chat')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (channelId === 'general') q = q.is('project_id', null);
+    else if (Number.isFinite(projectId)) q = q.eq('project_id', projectId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data || []).map(r => this._mapActivity(r)).reverse();
+  },
+
+  _defaultDepartments() {
+    return [
+      { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
+      { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
+      { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
+      { key: 'purchase', label: 'Purchase', color: 'purple', sortOrder: 40 },
+      { key: 'rnd', label: 'R&D', color: 'red', sortOrder: 50 }
+    ];
+  },
+
+  async ensureDefaultDepartments() {
+    try {
+      const { count, error } = await this._sb().from('wt_departments').select('*', { count: 'exact', head: true });
+      if (error) throw error;
+      if ((count || 0) > 0) return;
+      const rows = this._defaultDepartments().map(d => ({
+        key: d.key, label: d.label, color: d.color, sort_order: d.sortOrder
+      }));
+      const { error: insErr } = await this._sb().from('wt_departments').insert(rows);
+      if (insErr) throw insErr;
+    } catch (_) { /* table optional until schema is updated */ }
+  },
+
+  async _fetchRemoteDepartments() {
+    try {
+      await this.ensureDefaultDepartments();
+      const { data, error } = await this._sb().from('wt_departments').select('*').order('sort_order');
+      if (error) throw error;
+      return (data || []).map(r => ({
+        key: r.key, label: r.label, color: r.color || 'blue', sortOrder: r.sort_order ?? 0
+      }));
+    } catch (_) {
+      return this._defaultDepartments();
+    }
+  },
+
+  async getDepartments() {
+    const cached = this._shadowRows('departments');
+    if (cached.length && this._shadowComplete('departments') && (this._shadowFresh('departments') || this._hasPendingCollection('departments'))) {
+      return cached.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    }
+    const rows = await this._fetchRemoteDepartments();
+    this._shadowSetCollection('departments', rows, 'key');
+    return this._shadowRows('departments').sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  },
+
+  async upsertDepartment({ key, label, color, sortOrder = 0 }, remoteOnly = false) {
+    const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) throw new Error('Department key is required');
+    if (!label?.trim()) throw new Error('Department name is required');
+    if (!remoteOnly) {
+      const row = { key: slug, label: label.trim(), color: color || 'blue', sortOrder };
+      this._shadowUpsert('departments', row, 'key');
+      this._mergeOrQueueJob({
+        id: `dept-upsert:${slug}`,
+        type: 'upsertDepartment',
+        mergeKey: `department:${slug}`,
+        collections: ['departments'],
+        payload: row,
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (_, nextJob) => nextJob);
+      return slug;
+    }
+    const row = { key: slug, label: label.trim(), color: color || 'blue', sort_order: sortOrder };
+    const { error } = await this._sb().from('wt_departments').upsert(row);
+    if (error) throw error;
+    return slug;
+  },
+
+  async deleteDepartment(key, remoteOnly = false) {
+    if (!remoteOnly) {
+      this._shadowDelete('departments', key);
+      this._mergeOrQueueJob({
+        id: `dept-delete:${key}`,
+        type: 'deleteDepartment',
+        mergeKey: `department:${key}`,
+        collections: ['departments'],
+        payload: { key },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (_, nextJob) => nextJob);
+      return;
+    }
+    const { error } = await this._sb().from('wt_departments').delete().eq('key', key);
+    if (error) throw error;
   },
 
   async createUser(data) {
@@ -166,10 +687,12 @@ const SupabaseDB = {
       password_hash: pwHash,
       salt,
       role: data.role || 'user',
+      department: data.department || '',
       color: data.color || ''
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
+      delete payload.department;
       delete payload.color;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
@@ -200,6 +723,7 @@ const SupabaseDB = {
     if (changes.displayName != null) patch.display_name = changes.displayName;
     if (changes.email != null) patch.email = changes.email;
     if (changes.role != null) patch.role = changes.role;
+    if (changes.department != null) patch.department = changes.department || '';
     if (changes.discordId != null) patch.discord_id = changes.discordId;
     if (changes.color != null) patch.color = changes.color;
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
@@ -212,12 +736,13 @@ const SupabaseDB = {
       patch.username = next;
     }
     let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
-    if (error && patch.color != null && this._isMissingColumn(error)) {
+    if (error && this._isMissingColumn(error) && (patch.color != null || patch.department != null)) {
+      delete patch.department;
       delete patch.color;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;
-    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', discord_id: 'Discord ID', color: 'color', username: 'username' };
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username' };
     if (actorUserId) {
       await this.logActivity({
         userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
@@ -274,64 +799,137 @@ const SupabaseDB = {
 
   async createProject(data) {
     const actorUserId = data.actorUserId;
+    const now = new Date().toISOString();
     const id = await this._nextTableId('wt_projects');
     const payload = {
       id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
       owner_id: data.ownerId ?? actorUserId ?? 1,
+      department: data.department || '',
+      workflow_template: data.workflowTemplate || '',
+      completed_at: data.status === 'completed' ? now : null,
       is_ongoing: !!data.isOngoing,
       cadence: data.cadence || ''
     };
     let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
+      delete payload.department;
+      delete payload.workflow_template;
+      delete payload.completed_at;
       delete payload.is_ongoing;
       delete payload.cadence;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
     if (error) throw error;
+    this._shadowUpsert('projects', this._mapProject(row));
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name });
     return row.id;
   },
 
-  async getProjects() {
+  async _fetchRemoteProjects() {
     const { data, error } = await this._sb().from('wt_projects').select('*').order('updated_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => this._mapProject(r));
   },
 
-  async getProject(id) {
+  async getProjects() {
+    const cached = this._shadowRows('projects');
+    if (cached.length && this._shadowComplete('projects') && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) {
+      return cached.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    }
+    const rows = await this._fetchRemoteProjects();
+    this._shadowSetCollection('projects', rows);
+    return this._shadowRows('projects').sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  },
+
+  async _fetchRemoteProject(id) {
     const { data, error } = await this._sb().from('wt_projects').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     return this._mapProject(data);
   },
 
-  async updateProject(id, changes, actorUserId = null) {
+  async getProject(id) {
+    const cached = this._shadowGet('projects', id);
+    if (cached && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) return cached;
+    const row = await this._fetchRemoteProject(id);
+    if (row) this._shadowUpsert('projects', row);
+    return row;
+  },
+
+  async updateProject(id, changes, actorUserId = null, remoteOnly = false) {
+    if (!remoteOnly) {
+      const existing = await this.getProject(id);
+      if (!existing) throw new Error('Project not found');
+      const optimistic = this._applyProjectChanges(existing, changes);
+      this._shadowUpsert('projects', optimistic);
+      this._mergeOrQueueJob({
+        id: `project-update:${id}`,
+        type: 'updateProject',
+        mergeKey: `updateProject:${id}`,
+        collections: ['projects'],
+        payload: { id, changes: this._clone(changes), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (current, nextJob) => ({
+        ...current,
+        payload: {
+          ...current.payload,
+          changes: { ...(current.payload?.changes || {}), ...(nextJob.payload?.changes || {}) },
+          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId
+        },
+        status: 'pending',
+        updatedAt: nextJob.updatedAt,
+        nextRetryAt: 0,
+        lastError: ''
+      }));
+      return id;
+    }
+    const existing = await this._fetchRemoteProject(id);
     const patch = { updated_at: new Date().toISOString() };
     if (changes.name != null) patch.name = changes.name;
     if (changes.notes != null) patch.notes = changes.notes;
     if (changes.type != null) patch.type = changes.type;
     if (changes.status != null) patch.status = changes.status;
     if (changes.priority != null) patch.priority = changes.priority;
+    if (changes.department != null) patch.department = changes.department || '';
+    if (changes.workflowTemplate != null) patch.workflow_template = changes.workflowTemplate || '';
     if (changes.isOngoing != null) patch.is_ongoing = !!changes.isOngoing;
     if (changes.cadence != null) patch.cadence = changes.cadence || '';
+    if (changes.status != null) {
+      if (changes.status === 'completed') patch.completed_at = existing?.completedAt || new Date().toISOString();
+      else if (existing?.status === 'completed') patch.completed_at = null;
+    }
     let { error } = await this._sb().from('wt_projects').update(patch).eq('id', id);
-    if (error && this._isMissingColumn(error) && (patch.is_ongoing != null || patch.cadence != null)) {
+    if (error && this._isMissingColumn(error) && remoteOnly) {
+      throw new Error('Supabase schema is missing one or more project sync fields. Run supabase/schema.sql and the queued change will retry automatically.');
+    }
+    if (error && this._isMissingColumn(error)) {
+      delete patch.department;
+      delete patch.workflow_template;
+      delete patch.completed_at;
       delete patch.is_ongoing;
       delete patch.cadence;
       ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
     }
     if (error) throw error;
+    this._touchShadowProject(id, patch.updated_at);
     if (actorUserId) {
-      const p = await this.getProject(id);
+      const p = await this._fetchRemoteProject(id);
       await this.logActivity({ userId: actorUserId, projectId: id, action: 'updated', entityType: 'project', entityId: id, details: p?.name || '' });
     }
     return id;
   },
 
   async deleteProject(id, actorUserId = null) {
-    const p = await this.getProject(id);
+    const p = await this._fetchRemoteProject(id);
     const { error } = await this._sb().from('wt_projects').delete().eq('id', id);
     if (error) throw error;
+    this._shadowDelete('projects', id);
+    this._dropShadowTasksForProject(id);
     if (actorUserId) await this.logActivity({ userId: actorUserId, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
 
@@ -344,7 +942,7 @@ const SupabaseDB = {
     if (upErr) throw upErr;
     const { data: row, error } = await this._sb().from('wt_attachments').insert({
       project_id: data.projectId, uploaded_by: data.uploadedBy, file_name: fileName,
-      mime_type: data.mimeType || 'application/octet-stream', storage_path: path
+      mime_type: data.mimeType || 'application/octet-stream', document_type: data.documentType || '', storage_path: path
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
@@ -399,16 +997,20 @@ const SupabaseDB = {
     const id = await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
       id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
+      workflow_step_key: data.workflowStepKey || '',
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium'
     }).select().single();
     if (error) throw error;
-    await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
+    const updatedAt = new Date().toISOString();
+    await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', data.projectId);
+    this._shadowUpsert('tasks', this._mapTask(row));
+    this._touchShadowProject(data.projectId, updatedAt);
     if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title });
     return row.id;
   },
 
-  async getTasks(filter = {}) {
+  async _fetchRemoteTasks(filter = {}) {
     let q = this._sb().from('wt_tasks').select('*');
     if (filter.projectId) q = q.eq('project_id', filter.projectId);
     if (filter.status) q = q.eq('status', filter.status);
@@ -417,14 +1019,74 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapTask(r));
   },
 
-  async getTask(id) {
+  async getTasks(filter = {}) {
+    const cached = this._shadowRows('tasks');
+    const cachedProjectRows = filter.projectId ? cached.filter(r => r.projectId === filter.projectId) : [];
+    if (cached.length && this._shadowComplete('tasks') && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) {
+      let rows = cached;
+      if (filter.projectId) rows = rows.filter(r => r.projectId === filter.projectId);
+      if (filter.status) rows = rows.filter(r => r.status === filter.status);
+      return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
+    if (cachedProjectRows.length && filter.projectId && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) {
+      let rows = cachedProjectRows;
+      if (filter.status) rows = rows.filter(r => r.status === filter.status);
+      return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
+    const rows = await this._fetchRemoteTasks(filter);
+    if (!filter.projectId && !filter.status) this._shadowSetCollection('tasks', rows);
+    else rows.forEach(row => this._shadowUpsert('tasks', row));
+    return rows;
+  },
+
+  async _fetchRemoteTask(id) {
     const { data, error } = await this._sb().from('wt_tasks').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     return this._mapTask(data);
   },
 
-  async updateTask(id, changes, actorUserId = null) {
-    const task = await this.getTask(id);
+  async getTask(id) {
+    const cached = this._shadowGet('tasks', id);
+    if (cached && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) return cached;
+    const row = await this._fetchRemoteTask(id);
+    if (row) this._shadowUpsert('tasks', row);
+    return row;
+  },
+
+  async updateTask(id, changes, actorUserId = null, remoteOnly = false) {
+    if (!remoteOnly) {
+      const task = await this.getTask(id);
+      if (!task) throw new Error('Task not found');
+      const optimistic = this._applyTaskChanges(task, changes);
+      this._shadowUpsert('tasks', optimistic);
+      if (optimistic.projectId != null) this._touchShadowProject(optimistic.projectId, optimistic.updatedAt);
+      this._mergeOrQueueJob({
+        id: `task-update:${id}`,
+        type: 'updateTask',
+        mergeKey: `updateTask:${id}`,
+        collections: ['tasks', 'projects'],
+        payload: { id, changes: this._clone(changes), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, (current, nextJob) => ({
+        ...current,
+        payload: {
+          ...current.payload,
+          changes: { ...(current.payload?.changes || {}), ...(nextJob.payload?.changes || {}) },
+          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId
+        },
+        status: 'pending',
+        updatedAt: nextJob.updatedAt,
+        nextRetryAt: 0,
+        lastError: ''
+      }));
+      return optimistic;
+    }
+    const task = await this._fetchRemoteTask(id);
     const patch = { updated_at: new Date().toISOString() };
     if (changes.title != null) patch.title = changes.title;
     if (changes.status != null) patch.status = changes.status;
@@ -432,24 +1094,28 @@ const SupabaseDB = {
     if (changes.dueDate != null) patch.due_date = changes.dueDate;
     if (changes.milestoneId !== undefined) patch.milestone_id = changes.milestoneId;
     if (changes.assigneeId !== undefined) patch.assignee_id = changes.assigneeId == null ? null : Number(changes.assigneeId);
+    if (changes.workflowStepKey !== undefined) patch.workflow_step_key = changes.workflowStepKey || '';
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
     if (task) {
       await this._sb().from('wt_projects').update({ updated_at: patch.updated_at }).eq('id', task.projectId);
+      this._touchShadowProject(task.projectId, patch.updated_at);
       if (actorUserId) {
         const detail = changes.status ? `status → ${changes.status}` : (task.title || '');
         await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
-    return task;
+    return this._applyTaskChanges(task, changes);
   },
 
   async deleteTask(id, actorUserId = null) {
-    const task = await this.getTask(id);
+    const task = await this._fetchRemoteTask(id);
     const { error } = await this._sb().from('wt_tasks').delete().eq('id', id);
     if (error) throw error;
+    this._shadowDelete('tasks', id);
     if (task) {
       await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', task.projectId);
+      this._touchShadowProject(task.projectId);
       if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title });
     }
   },
@@ -729,7 +1395,8 @@ const SupabaseDB = {
     if (sErr) throw sErr;
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
-      role: u.role, createdAt: u.createdAt, discordId: u.discordId || '', color: u.color || '',
+      role: u.role, department: u.department || '', createdAt: u.createdAt,
+      discordId: u.discordId || '', color: u.color || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = (settingsRows || []).map(s => ({
@@ -742,12 +1409,12 @@ const SupabaseDB = {
       if (!full?.blob) continue;
       attOut.push({
         id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
-        mimeType: a.mimeType, createdAt: a.createdAt,
+        mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt,
         dataBase64: await this.blobToBase64(full.blob)
       });
     }
     return {
-      version: 7, exportedAt: new Date().toISOString(),
+      version: 8, exportedAt: new Date().toISOString(),
       projects, tasks, milestones, updates, users: safeUsers, settings, attachments: attOut,
       activityLog, notifications, webhooks, sessions
     };
@@ -783,6 +1450,7 @@ const SupabaseDB = {
         password_hash: passwordHash,
         salt,
         role: u.role || 'user',
+        department: u.department || '',
         discord_id: u.discordId || '',
         color: u.color || '',
         created_at: u.createdAt || new Date().toISOString()
@@ -824,6 +1492,9 @@ const SupabaseDB = {
         id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
         status: p.status || 'active', priority: p.priority || 'medium',
         owner_id: mapUid(p.ownerId) ?? p.ownerId,
+        department: p.department || '',
+        workflow_template: p.workflowTemplate || '',
+        completed_at: p.completedAt || null,
         is_ongoing: !!p.isOngoing,
         cadence: p.cadence || '',
         created_at: p.createdAt, updated_at: p.updatedAt
@@ -841,6 +1512,7 @@ const SupabaseDB = {
       const { error } = await sb.from('wt_tasks').insert(data.tasks.map(t => ({
         id: t.id, project_id: t.projectId, milestone_id: t.milestoneId ?? null,
         assignee_id: t.assigneeId != null ? mapUid(t.assigneeId) : null,
+        workflow_step_key: t.workflowStepKey || '',
         title: t.title || '', due_date: t.dueDate || '', status: t.status || 'todo',
         priority: t.priority || 'medium', created_at: t.createdAt, updated_at: t.updatedAt
       })));
@@ -934,7 +1606,7 @@ const SupabaseDB = {
         if (!validUserIds.has(uploadedBy)) continue;
         await this.addAttachment({
           projectId: a.projectId, uploadedBy, fileName: a.fileName,
-          mimeType: a.mimeType, blob
+          mimeType: a.mimeType, documentType: a.documentType || '', blob
         });
         attachmentsImported++;
       }
