@@ -3481,4 +3481,14 @@ async function init() {
   }
 }
 
-bootstrapDB().then(() => init());
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el) return;
+  el.classList.add('fade-out');
+  setTimeout(() => el.remove(), 500);
+}
+
+// Safety net: never leave the splash up longer than 6 s
+setTimeout(hideSplash, 6000);
+
+bootstrapDB().then(() => init()).finally(hideSplash);
