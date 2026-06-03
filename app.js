@@ -1658,44 +1658,33 @@ async function renderAdmin() {
       </div>
     </section>
     <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Departments</h2><p class="view-subtitle" style="margin:0;font-size:0.82rem">Labels used on users, projects, filters, and reports. Keys are stable — safe to rename.</p></div>
-      <div class="section-body" style="padding:20px">
-        <div class="dept-grid">
-          ${departments.map(d => `
-            <div class="dept-card dept-card--${esc(d.color || 'blue')}">
-              <div class="dept-card-swatch"></div>
-              <div class="dept-card-body">
-                <form data-form="edit-department" data-dept-key="${esc(d.key)}" data-sort-order="${d.sortOrder ?? 0}">
-                  <div class="dept-card-top">
-                    <input class="dept-card-name" type="text" name="label" value="${esc(d.label)}" required placeholder="Name" title="Department display name">
-                    <code class="dept-card-key" title="Internal key">${esc(d.key)}</code>
-                  </div>
-                  <div class="dept-card-row">
-                    <select name="color" class="dept-card-color-select" title="Color">${departmentColorOptionsHtml(d.color || 'blue')}</select>
-                    <button type="submit" class="btn btn-sm btn-primary">Save</button>
-                    <button type="button" class="btn-icon btn-icon-danger" data-action="delete-department" data-key="${esc(d.key)}" title="Delete department">${ICONS.trash}</button>
-                  </div>
-                </form>
-              </div>
-            </div>`).join('')}
-          <div class="dept-card dept-card-add">
-            <div class="dept-card-swatch dept-card-swatch--add"></div>
-            <div class="dept-card-body">
-              <form data-form="add-department">
-                <div class="dept-card-add-header">
-                  <span class="dept-card-add-icon">${ICONS.plus}</span>
-                  <span class="dept-card-add-label">New Department</span>
-                </div>
-                <input type="text" name="label" placeholder="Display name (e.g. Quality)" required style="margin-bottom:6px">
-                <input type="text" name="key" placeholder="Key (auto-generated)" style="margin-bottom:6px">
-                <div class="dept-card-row">
-                  <select name="color" class="dept-card-color-select">${departmentColorOptionsHtml('blue')}</select>
-                  <input type="number" name="sortOrder" placeholder="Order" value="${(departments.length + 1) * 10}" min="0" class="dept-card-order-input">
-                  <button type="submit" class="btn btn-sm btn-primary">Add</button>
-                </div>
-              </form>
-            </div>
-          </div>
+      <div class="section-header">
+        <div>
+          <h2>Departments</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Labels used on users, projects, filters, and reports.</p>
+        </div>
+      </div>
+      <div class="dept-list">
+        ${departments.map(d => `
+          <div class="dept-row dept-row--${esc(d.color || 'blue')}">
+            <form data-form="edit-department" data-dept-key="${esc(d.key)}" data-sort-order="${d.sortOrder ?? 0}" class="dept-row-form">
+              <span class="dept-dot"></span>
+              <input class="dept-name-input" type="text" name="label" value="${esc(d.label)}" required placeholder="Name">
+              <code class="dept-key-badge" title="Internal key">${esc(d.key)}</code>
+              <select name="color" class="dept-color-select" title="Color">${departmentColorOptionsHtml(d.color || 'blue')}</select>
+              <button type="submit" class="btn btn-sm btn-ghost dept-save-btn">Save</button>
+              <button type="button" class="btn-icon btn-icon-danger" data-action="delete-department" data-key="${esc(d.key)}" title="Delete department">${ICONS.trash}</button>
+            </form>
+          </div>`).join('')}
+        <div class="dept-add-row">
+          <form data-form="add-department" class="dept-row-form">
+            <span class="dept-add-icon">${ICONS.plus}</span>
+            <input type="text" name="label" placeholder="Department name" required class="dept-name-input">
+            <input type="text" name="key" placeholder="key (auto)" class="dept-key-input">
+            <select name="color" class="dept-color-select">${departmentColorOptionsHtml('blue')}</select>
+            <input type="number" name="sortOrder" value="${(departments.length + 1) * 10}" min="0" class="dept-order-input">
+            <button type="submit" class="btn btn-sm btn-primary">Add</button>
+          </form>
         </div>
       </div>
     </section>
@@ -3492,4 +3481,14 @@ async function init() {
   }
 }
 
-bootstrapDB().then(() => init());
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el) return;
+  el.classList.add('fade-out');
+  setTimeout(() => el.remove(), 500);
+}
+
+// Safety net: never leave the splash up longer than 6 s
+setTimeout(hideSplash, 6000);
+
+bootstrapDB().then(() => init()).finally(hideSplash);
