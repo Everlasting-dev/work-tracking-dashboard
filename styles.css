@@ -1940,21 +1940,87 @@ span.status-dot:hover::after { display: none; }
 }
 .bulk-add-btn { margin-top: 2px; color: var(--text-secondary); }
 
+/* ─── Sidebar New Project Button ─── */
+
+.sidebar-new-project-wrap { padding: 10px 12px 8px; }
+.sidebar-new-project-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 10px 14px;
+  background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
+  color: white; border: none; border-radius: var(--radius);
+  font-size: 0.875rem; font-weight: 700; cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: 0 2px 10px rgba(99,102,241,0.35);
+  letter-spacing: 0.01em;
+}
+.sidebar-new-project-btn:hover {
+  background: linear-gradient(135deg, var(--accent-hover) 0%, #6d28d9 100%);
+  box-shadow: 0 4px 16px rgba(99,102,241,0.45);
+  transform: translateY(-1px);
+}
+.sidebar-new-project-btn:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(99,102,241,0.25); }
+
+/* ─── Active Projects Strip ─── */
+
+.active-projects-strip { margin-bottom: 20px; }
+.active-strip-label {
+  display: block; margin-bottom: 10px;
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.active-strip-scroll {
+  display: flex; gap: 12px; overflow-x: auto;
+  padding-bottom: 6px; scrollbar-width: none;
+}
+.active-strip-scroll::-webkit-scrollbar { display: none; }
+.active-strip-card {
+  flex-shrink: 0; width: 176px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 14px 16px;
+  text-decoration: none; color: inherit;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  display: block;
+}
+.active-strip-card:hover {
+  border-color: rgba(99,102,241,0.3);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+.active-strip-name {
+  font-size: 0.86rem; font-weight: 700; letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block; margin-bottom: 8px; color: var(--text);
+}
+.active-strip-ongoing {
+  color: var(--accent); font-style: normal; font-size: 0.8rem;
+}
+.active-strip-bar { height: 5px !important; margin-bottom: 8px; }
+.active-strip-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.72rem; color: var(--text-muted); font-weight: 500;
+}
+.active-strip-meta span:not(:last-child)::after { content: '·'; margin-left: 6px; }
+.active-strip-owner {
+  margin-left: auto; color: var(--text-secondary);
+  font-weight: 600; white-space: nowrap;
+}
+
 /* ─── Mobile Bottom Navigation ─── */
 
 .mobile-bottom-nav { display: none; }
 
 @media (max-width: 768px) {
 
-  /* ── Bottom nav: height accounts for iPhone home-indicator safe area ── */
+  /* ── Bottom nav: container absorbs safe-area via padding, items stay 56px ── */
   .mobile-bottom-nav {
     display: flex;
-    align-items: stretch;
+    align-items: flex-start;
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: calc(56px + env(safe-area-inset-bottom));
     background: #0d1117;
     border-top: 1px solid rgba(255,255,255,0.07);
     z-index: 150;
+    padding-bottom: env(safe-area-inset-bottom);
     box-shadow: 0 -6px 28px rgba(0,0,0,0.22);
   }
 
@@ -1965,8 +2031,7 @@ span.status-dot:hover::after { display: none; }
     align-items: center !important;
     justify-content: center !important;
     gap: 3px !important;
-    padding: 0 4px !important;
-    padding-bottom: env(safe-area-inset-bottom) !important;
+    padding: 0 !important;
     height: 56px;
     border-radius: 0 !important;
     font-size: 0.6rem !important;
@@ -1994,11 +2059,10 @@ span.status-dot:hover::after { display: none; }
 
   /* ── Main content: clear the bottom nav ── */
   .main-content {
-    padding-bottom: calc(68px + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom)) !important;
   }
 
-  /* ── Chat: must use !important because desktop .chat-layout is declared
-     later in the file and would otherwise win the cascade ── */
+  /* ── Chat: !important needed — desktop .chat-layout comes later in file ── */
   .chat-layout {
     display: flex !important;
     flex-direction: column !important;
@@ -2058,16 +2122,19 @@ span.status-dot:hover::after { display: none; }
     box-shadow: 0 3px 10px rgba(0,0,0,0.06);
   }
 
-  /* ── Larger status dots for easy tapping ── */
+  /* ── Larger status dots ── */
   .status-dot { width: 28px !important; height: 28px !important; }
   .status-dot-doing::after { width: 10px !important; height: 10px !important; }
   .status-dot-done { background-size: 13px 13px !important; }
 
-  /* ── Task rows: bigger tap area ── */
+  /* ── Task rows ── */
   .task-item { padding: 14px 16px !important; }
   .task-table-row { padding: 14px 18px !important; }
 
-  /* ── Project cards: bolder progress bar ── */
+  /* ── Active strip: full-width horizontal scroll on mobile ── */
+  .active-strip-card { width: 155px; }
+
+  /* ── Project cards ── */
   .progress-bar { height: 8px !important; }
   .project-card-progress .text-muted { font-size: 0.82rem !important; font-weight: 600; }
 
@@ -2091,9 +2158,9 @@ span.status-dot:hover::after { display: none; }
   .view-header h1 { font-size: 1.3rem !important; -webkit-text-fill-color: var(--text) !important; background: none; }
 
   /* ── Toast + notification panel above bottom nav ── */
-  .toast-container { bottom: calc(68px + env(safe-area-inset-bottom)) !important; }
+  .toast-container { bottom: calc(64px + env(safe-area-inset-bottom)) !important; }
   .notif-panel {
-    bottom: calc(68px + env(safe-area-inset-bottom)) !important;
+    bottom: calc(64px + env(safe-area-inset-bottom)) !important;
     left: 8px !important; right: 8px !important;
   }
 }

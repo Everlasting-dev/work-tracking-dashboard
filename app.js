@@ -1177,15 +1177,42 @@ async function renderProjects() {
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
     ? `<p class="text-muted text-sm workspace-hint">Use <strong>Everyone</strong> to browse teammates&apos; projects (read-only).</p>` : '';
 
+  // Active projects strip — top 8 active projects sorted by most recently updated
+  const activeForStrip = [...all]
+    .filter(p => p.status === 'active')
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+    .slice(0, 8)
+    .map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
+
+  const activeStripHtml = activeForStrip.length > 1 ? `
+    <div class="active-projects-strip">
+      <span class="active-strip-label">Active now</span>
+      <div class="active-strip-scroll">
+        ${activeForStrip.map(p => {
+          const fillClass = p.progress >= 100 ? 'progress-done' : p.progress > 30 ? 'progress-mid' : 'progress-low';
+          const owner = uMap[p.ownerId];
+          return `<a href="#/projects/${p.id}" class="active-strip-card">
+            <div class="active-strip-name">${esc(p.name)}${p.isOngoing ? ' <span class="active-strip-ongoing" title="Ongoing">↻</span>' : ''}</div>
+            <div class="progress-bar active-strip-bar"><div class="progress-fill ${fillClass}" style="width:${p.progress}%"></div></div>
+            <div class="active-strip-meta">
+              <span>${p.progress}%</span>
+              <span>${p.doneCount}/${p.taskCount} tasks</span>
+              ${owner ? `<span class="active-strip-owner">${esc((owner.displayName || owner.username).split(' ')[0])}</span>` : ''}
+            </div>
+          </a>`;
+        }).join('')}
+      </div>
+    </div>` : '';
+
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Projects</h1><p class="view-subtitle">${list.length} matching &middot; ${all.length} visible &middot; ${allRaw.length} total</p></div>
       <div class="view-actions">
         <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} New Task</button>
-        <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
       </div>
     </div>
     ${teamHint}
+    ${activeStripHtml}
     ${workspaceScopeBarHtml()}
     <div class="project-toolbar">
       <div class="project-toolbar-search">
