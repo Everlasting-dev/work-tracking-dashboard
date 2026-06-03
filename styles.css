@@ -1027,7 +1027,7 @@ span.status-dot:hover::after { display: none; }
   box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
 }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; padding-bottom: 4px; position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--border-light); margin-top: 8px; z-index: 2; }
 
 /* ─── Modal ─── */
 
@@ -1046,10 +1046,12 @@ span.status-dot:hover::after { display: none; }
   box-shadow: 0 24px 80px rgba(9,11,21,0.25), 0 8px 24px rgba(9,11,21,0.1);
   animation: modalIn .22s cubic-bezier(0.34, 1.56, 0.64, 1);
   border: 1px solid rgba(255,255,255,0.8);
+  display: flex; flex-direction: column;
+  max-height: min(88vh, 760px);
 }
 .modal-fullscreen {
   max-width: min(1100px, calc(100vw - 40px));
-  height: min(88vh, 900px);
+  height: min(88vh, 900px); max-height: none;
   display: flex; flex-direction: column;
 }
 .modal-fullscreen .modal-body { flex: 1; padding: 0; overflow: hidden; }
@@ -1057,10 +1059,10 @@ span.status-dot:hover::after { display: none; }
 .ai-report-frame { width: 100%; height: 100%; border: none; border-radius: 0 0 var(--radius-xl) var(--radius-xl); display: block; }
 .modal-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 22px 26px; border-bottom: 1px solid var(--border-light);
+  padding: 22px 26px; border-bottom: 1px solid var(--border-light); flex-shrink: 0;
 }
 .modal-header h2 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
-.modal-body { padding: 22px 26px 28px; }
+.modal-body { padding: 22px 26px 0; overflow-y: auto; flex: 1; }
 
 /* ─── Toast ─── */
 
@@ -1937,3 +1939,133 @@ span.status-dot:hover::after { display: none; }
   background: white;
 }
 .bulk-add-btn { margin-top: 2px; color: var(--text-secondary); }
+
+/* ─── Mobile Bottom Navigation ─── */
+
+.mobile-bottom-nav { display: none; }
+
+@media (max-width: 768px) {
+
+  /* ── Bottom nav bar ── */
+  .mobile-bottom-nav {
+    display: flex;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 58px;
+    background: #0d1117;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    z-index: 150;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -6px 28px rgba(0,0,0,0.22);
+  }
+
+  .mobile-nav-item {
+    flex: 1;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 3px !important;
+    padding: 7px 4px !important;
+    border-radius: 0 !important;
+    font-size: 0.6rem !important;
+    font-weight: 600 !important;
+    color: rgba(255,255,255,0.38) !important;
+    letter-spacing: 0.02em;
+    -webkit-tap-highlight-color: transparent;
+    position: relative;
+  }
+  .mobile-nav-item svg { opacity: 1 !important; width: 22px; height: 22px; }
+  .mobile-nav-item span:not(.nav-item-badge) { display: block; }
+
+  .mobile-nav-item.active {
+    color: #818cf8 !important;
+    background: transparent !important;
+  }
+  .mobile-nav-item.active svg {
+    stroke: #818cf8;
+    filter: drop-shadow(0 0 5px rgba(129,140,248,0.45));
+  }
+  /* Replace the left-border indicator with a top accent line */
+  .mobile-nav-item.active::before {
+    left: 50% !important; transform: translateX(-50%) !important;
+    top: 0 !important; bottom: auto !important;
+    width: 28px !important; height: 2px !important;
+    border-radius: 0 0 2px 2px !important;
+  }
+  .mobile-nav-item .nav-item-badge {
+    position: absolute;
+    top: 5px; right: calc(50% - 20px);
+    min-width: 16px; height: 16px;
+    font-size: 0.6rem;
+    padding: 0 4px;
+  }
+
+  /* ── Layout adjustments for bottom nav ── */
+  .main-content {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* ── Sticky filter & tab bars so they stay visible while scrolling ── */
+  .filter-bar {
+    position: sticky;
+    top: calc(48px + env(safe-area-inset-top));
+    z-index: 20;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.07);
+  }
+  .tab-bar {
+    position: sticky;
+    top: calc(48px + env(safe-area-inset-top));
+    z-index: 20;
+    background: var(--bg);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+  }
+
+  /* ── Larger status dots for easy tapping ── */
+  .status-dot { width: 28px !important; height: 28px !important; }
+  .status-dot-doing::after { width: 10px !important; height: 10px !important; }
+  .status-dot-done { background-size: 13px 13px !important; }
+
+  /* ── Task items: bigger tap area, clearer layout ── */
+  .task-item { padding: 14px 16px !important; }
+  .task-table-row { padding: 14px 18px !important; }
+
+  /* ── Project cards: progress bar more prominent ── */
+  .progress-bar { height: 8px !important; }
+  .project-card-progress .text-muted { font-size: 0.82rem !important; font-weight: 600; }
+
+  /* ── Modal: keep it as a bottom sheet, full scrollable ── */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    max-width: 100% !important;
+    max-height: 94vh !important;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
+  /* Drag handle indicator at top of mobile modal */
+  .modal-header::before {
+    content: '';
+    display: block;
+    position: absolute;
+    top: 10px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px;
+    background: rgba(15,23,42,0.12);
+    border-radius: 2px;
+  }
+  .modal-header { position: relative; padding-top: 26px; }
+
+  /* ── View header compact on mobile ── */
+  .view-header { margin-bottom: 14px; }
+  .view-header h1 { font-size: 1.3rem !important; -webkit-text-fill-color: var(--text) !important; background: none; }
+
+  /* ── Toast above bottom nav ── */
+  .toast-container {
+    bottom: calc(70px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* ── Notification panel above bottom nav ── */
+  .notif-panel {
+    bottom: calc(70px + env(safe-area-inset-bottom)) !important;
+    left: 8px !important; right: 8px !important;
+  }
+}
+
