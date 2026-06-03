@@ -2164,3 +2164,19 @@ span.status-dot:hover::after { display: none; }
     left: 8px !important; right: 8px !important;
   }
 }
+
+/* ── Upload progress bar ── */
+.upload-progress-bar {
+  position: fixed; bottom: 28px; left: 28px; z-index: 2000;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.14);
+  min-width: 200px; max-width: 280px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.upload-progress-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.upload-progress-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.upload-progress-fill { height: 100%; background: var(--primary, #4f6ef7); border-radius: 3px; transition: width .2s ease; width: 0%; }
+@media (max-width: 600px) {
+  .upload-progress-bar { left: 12px; right: 12px; max-width: none; bottom: calc(72px + env(safe-area-inset-bottom)); }
+}
