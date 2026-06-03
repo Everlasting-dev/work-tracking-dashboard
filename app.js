@@ -2467,7 +2467,11 @@ async function showProjectModal(editId = null) {
       row.className = 'bulk-task-row';
       row.innerHTML = `<span class="bulk-task-num">${n}</span><input type="text" name="bulk_task[]" class="bulk-task-input" placeholder="Task title…" autocomplete="off"><button type="button" class="btn-icon bulk-task-remove" title="Remove"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
       list.appendChild(row);
-      if (focus) row.querySelector('input').focus();
+      if (focus) {
+        const inp = row.querySelector('input');
+        inp.focus();
+        setTimeout(() => inp.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+      }
     }
 
     function renumber() {
@@ -2732,6 +2736,9 @@ async function handleFormSubmit(e) {
       if (data.workflowTemplate === 'logistics-shipment') data.department = 'logistics';
       if (!data.name) return;
       const editId = form.dataset.editId;
+      const _submitBtn = form.querySelector('[type=submit]');
+      if (_submitBtn?.disabled) return;
+      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving…' : 'Creating…'; }
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
         const existing = await DB.getProject(Number(editId));
@@ -2984,6 +2991,8 @@ async function handleFormSubmit(e) {
     bustWorkspaceCache();
     hideModal(); await router();
   } catch (err) {
+    const ds = document.querySelector('[data-form] [type=submit]:disabled');
+    if (ds) { ds.disabled = false; ds.textContent = ds.closest('[data-form]')?.dataset.editId ? 'Save' : 'Create Project'; }
     console.error(err);
     const msg = err?.message || err?.details || 'Something went wrong';
     showToast(msg.includes('duplicate key') ? 'Could not save — try refreshing the page' : msg, 'error');
@@ -3529,9 +3538,15 @@ async function init() {
       if (!project || !canEdit(project)) { showToast('Permission denied', 'error'); return; }
       const s = getSession();
       const max = 10 * 1024 * 1024;
+      const validFiles = fileList.filter(f => f.size <= max);
+      fileList.filter(f => f.size > max).forEach(f => showToast(`${f.name} is over 10 MB`, 'warning'));
+      if (!validFiles.length) return;
+      const _upBar = document.getElementById('upload-progress-bar');
+      const _upFill = document.getElementById('upload-progress-fill');
+      const _upLabel = _upBar?.querySelector('.upload-progress-label');
+      if (_upBar) { _upBar.classList.remove('hidden'); if (_upFill) _upFill.style.width = '0%'; if (_upLabel) _upLabel.textContent = `Uploading 0 / ${validFiles.length}…`; }
       let uploaded = 0;
-      for (const file of fileList) {
-        if (file.size > max) { showToast(`${file.name} is over 10 MB`, 'warning'); continue; }
+      for (const file of validFiles) {
         await DB.addAttachment({
           projectId: pid,
           uploadedBy: s.userId,
@@ -3542,7 +3557,10 @@ async function init() {
         });
         await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
         uploaded++;
+        if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
+        if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;
       }
+      if (_upBar) { if (_upFill) _upFill.style.width = '100%'; if (_upLabel) _upLabel.textContent = `Uploaded ${uploaded} file${uploaded !== 1 ? 's' : ''}`; setTimeout(() => _upBar.classList.add('hidden'), 1200); }
       if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
       await router();
     });
