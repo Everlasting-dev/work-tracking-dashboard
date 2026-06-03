@@ -2415,8 +2415,55 @@ async function showProjectModal(editId = null) {
         </select></div>
       </div>
       ${isE ? `<div class="form-group"><label>Status</label><select name="status">${Object.entries(STAT_CFG).map(([v, c]) => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>` : ''}
+      ${!isE ? `
+      <div class="form-group bulk-tasks-wrap">
+        <label>Tasks <span class="bulk-tasks-hint">add in order — press <kbd>↵</kbd> for next row</span></label>
+        <div id="bulk-task-list" class="bulk-task-list"></div>
+        <button type="button" id="bulk-add-task-btn" class="btn btn-ghost btn-sm bulk-add-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add task
+        </button>
+      </div>` : ''}
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${isE ? 'Save' : 'Create Project'}</button></div>
     </form>`);
+
+  if (!isE) {
+    const list = document.getElementById('bulk-task-list');
+    const addBtn = document.getElementById('bulk-add-task-btn');
+
+    function addBulkRow(focus = true) {
+      const n = list.children.length + 1;
+      const row = document.createElement('div');
+      row.className = 'bulk-task-row';
+      row.innerHTML = `<span class="bulk-task-num">${n}</span><input type="text" name="bulk_task[]" class="bulk-task-input" placeholder="Task title…" autocomplete="off"><button type="button" class="btn-icon bulk-task-remove" title="Remove"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
+      list.appendChild(row);
+      if (focus) row.querySelector('input').focus();
+    }
+
+    function renumber() {
+      [...list.children].forEach((r, i) => r.querySelector('.bulk-task-num').textContent = i + 1);
+    }
+
+    addBtn.addEventListener('click', () => addBulkRow(true));
+
+    list.addEventListener('click', e => {
+      if (e.target.closest('.bulk-task-remove')) {
+        e.target.closest('.bulk-task-row').remove();
+        renumber();
+      }
+    });
+
+    list.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || !e.target.classList.contains('bulk-task-input')) return;
+      e.preventDefault();
+      const inputs = [...list.querySelectorAll('.bulk-task-input')];
+      const idx = inputs.indexOf(e.target);
+      if (idx === inputs.length - 1) addBulkRow(true);
+      else inputs[idx + 1].focus();
+    });
+
+    addBulkRow(false);
+  }
 }
 
 async function showTaskModal(preId = null) {
@@ -2673,7 +2720,12 @@ async function handleFormSubmit(e) {
         const nid = await DB.createProject(data);
         const created = await DB.getProject(nid);
         await ensureProjectWorkflowTasks(created, uid);
-        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))}).`);
+        const bulkTitles = [...document.querySelectorAll('input[name="bulk_task[]"]')]
+          .map(i => i.value.trim()).filter(Boolean);
+        for (const title of bulkTitles) {
+          await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
+        }
+        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))})${bulkTitles.length ? ` with ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''}` : ''}.`);
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, created);
         if (unsaved.length) showToast(`Project created, but ${unsaved.join(', ')} could not be saved. Run the latest Supabase schema.`, 'warning');
