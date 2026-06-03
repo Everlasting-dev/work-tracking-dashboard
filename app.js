@@ -2943,6 +2943,19 @@ const actions = {
     if (workflowProjectStatus) {
       await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} after the logistics workflow changed.`);
     }
+    // Auto-complete / auto-reactivate regular (non-workflow) projects
+    if (!isLogisticsWorkflow(p) && (p.status === 'active' || p.status === 'completed')) {
+      const tasksAfterUpdate = projectTasks.map(pt => pt.id === t.id ? { ...pt, status: nextStatus } : pt);
+      const allDone = tasksAfterUpdate.length > 0 && tasksAfterUpdate.every(pt => pt.status === 'done');
+      if (allDone && p.status !== 'completed') {
+        await DB.updateProject(p.id, { status: 'completed' }, uid);
+        showToast(`"${p.name}" completed — all tasks done!`, 'success');
+        await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to Completed after all tasks were done.`);
+      } else if (!allDone && p.status === 'completed') {
+        await DB.updateProject(p.id, { status: 'active' }, uid);
+        await mirrorBacklogActivity(`[Backlog] "${p.name}" moved back to Active after a task was reopened.`);
+      }
+    }
     // Notify project owner when an assignee completes a task they didn't own.
     if (nextStatus === 'done' && p.ownerId && p.ownerId !== uid) {
       const actor = await DB.getUser(uid);
