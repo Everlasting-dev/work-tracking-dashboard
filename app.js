@@ -2296,10 +2296,13 @@ async function refreshNotificationBadge() {
   if (!uid) return;
   try {
     const count = await DB.getUnreadNotificationCount(uid);
-    const badge = document.getElementById('notif-badge');
-    if (!badge) return;
-    if (count > 0) { badge.textContent = String(count > 99 ? '99+' : count); badge.classList.remove('hidden'); }
-    else { badge.classList.add('hidden'); }
+    const label = count > 0 ? String(count > 99 ? '99+' : count) : '';
+    for (const id of ['notif-badge', 'mobile-notif-badge']) {
+      const badge = document.getElementById(id);
+      if (!badge) continue;
+      if (count > 0) { badge.textContent = label; badge.classList.remove('hidden'); }
+      else { badge.classList.add('hidden'); }
+    }
   } catch (_) {}
 }
 
