@@ -1158,7 +1158,6 @@ async function renderProjects() {
   if (query) baseList = baseList.filter(p => projectMatchesSearch(p, uMap[p.ownerId], query));
   const f = state.projectFilter;
   const list = f === 'all' ? baseList : baseList.filter(p => p.status === f);
-
   const pData = list.map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
 
   const cnt = {
@@ -1174,71 +1173,53 @@ async function renderProjects() {
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
   const deptOptions = [...new Set(all.map(p => projectDepartmentValue(p, uMap)).filter(Boolean))].sort();
 
+  // Current in-progress task per project (first doing task found)
+  const doingTask = {};
+  for (const t of allTasks) {
+    if (t.status === 'doing' && !doingTask[t.projectId]) doingTask[t.projectId] = t;
+  }
+
+  // Status → card accent color
+  const STATUS_ACCENT = { active: '#3b82f6', completed: '#10b981', 'on-hold': '#f59e0b', archived: '#9ca3af' };
+
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
-    ? `<p class="text-muted text-sm workspace-hint">Use <strong>Everyone</strong> to browse teammates&apos; projects (read-only).</p>` : '';
-
-  // Active projects strip — top 8 active projects sorted by most recently updated
-  const activeForStrip = [...all]
-    .filter(p => p.status === 'active')
-    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
-    .slice(0, 8)
-    .map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
-
-  const activeStripHtml = activeForStrip.length > 1 ? `
-    <div class="active-projects-strip">
-      <span class="active-strip-label">Active now</span>
-      <div class="active-strip-scroll">
-        ${activeForStrip.map(p => {
-          const fillClass = p.progress >= 100 ? 'progress-done' : p.progress > 30 ? 'progress-mid' : 'progress-low';
-          const owner = uMap[p.ownerId];
-          return `<a href="#/projects/${p.id}" class="active-strip-card">
-            <div class="active-strip-name">${esc(p.name)}${p.isOngoing ? ' <span class="active-strip-ongoing" title="Ongoing">↻</span>' : ''}</div>
-            <div class="progress-bar active-strip-bar"><div class="progress-fill ${fillClass}" style="width:${p.progress}%"></div></div>
-            <div class="active-strip-meta">
-              <span>${p.progress}%</span>
-              <span>${p.doneCount}/${p.taskCount} tasks</span>
-              ${owner ? `<span class="active-strip-owner">${esc((owner.displayName || owner.username).split(' ')[0])}</span>` : ''}
-            </div>
-          </a>`;
-        }).join('')}
-      </div>
-    </div>` : '';
+    ? `<p class="text-muted text-sm workspace-hint" style="margin-bottom:12px">Use <strong>Everyone</strong> to browse teammates' projects (read-only).</p>` : '';
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Projects</h1><p class="view-subtitle">${list.length} matching &middot; ${all.length} visible &middot; ${allRaw.length} total</p></div>
-      <div class="view-actions">
-        <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} New Task</button>
+    <div class="projects-page-header">
+      <div class="projects-page-title">
+        <h1>Projects</h1>
+        <span class="projects-page-count">${allRaw.length} total</span>
+      </div>
+      <div class="projects-page-actions">
+        <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} Task</button>
+        <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
       </div>
     </div>
     ${teamHint}
-    ${activeStripHtml}
     ${workspaceScopeBarHtml()}
-    <div class="project-toolbar">
-      <div class="project-toolbar-search">
-        <label class="text-muted text-sm" for="project-search">Search projects</label>
-        <input id="project-search" type="search" placeholder="Name, owner, notes, workflow..." value="${esc(state.projectSearch)}" data-project-filter-input="search">
+    <div class="projects-controls">
+      <div class="projects-search-wrap">
+        <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="projects-search-input" type="search" placeholder="Search projects…" value="${esc(state.projectSearch)}" data-project-filter-input="search">
       </div>
-      <div class="project-toolbar-filters">
-        <label class="project-filter-field">
-          <span class="text-muted text-sm">Owner</span>
-          <select data-project-filter-input="owner">
-            <option value="all" ${ownerFilter === 'all' ? 'selected' : ''}>All owners</option>
-            <option value="me" ${ownerFilter === 'me' ? 'selected' : ''}>My projects</option>
-            ${ownerOptions.map(u => `<option value="${u.id}" ${ownerFilter === String(u.id) ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="project-filter-field">
-          <span class="text-muted text-sm">Department</span>
-          <select data-project-filter-input="department">
-            <option value="all" ${deptFilter === 'all' ? 'selected' : ''}>All departments</option>
-            ${deptOptions.map(dept => `<option value="${dept}" ${deptFilter === dept ? 'selected' : ''}>${esc(departmentLabel(dept))}</option>`).join('')}
-          </select>
-        </label>
+      <div class="projects-filters-row">
+        <select class="projects-filter-select" data-project-filter-input="owner">
+          <option value="all" ${ownerFilter === 'all' ? 'selected' : ''}>All owners</option>
+          <option value="me" ${ownerFilter === 'me' ? 'selected' : ''}>My projects</option>
+          ${ownerOptions.map(u => `<option value="${u.id}" ${ownerFilter === String(u.id) ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
+        </select>
+        <select class="projects-filter-select" data-project-filter-input="department">
+          <option value="all" ${deptFilter === 'all' ? 'selected' : ''}>All departments</option>
+          ${deptOptions.map(dept => `<option value="${dept}" ${deptFilter === dept ? 'selected' : ''}>${esc(departmentLabel(dept))}</option>`).join('')}
+        </select>
       </div>
     </div>
-    <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
-      <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
+    <div class="projects-status-pills">
+      ${Object.entries(fLabels).map(([k, l]) => `
+        <button class="status-pill ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">
+          ${l} <span class="status-pill-count">${cnt[k]}</span>
+        </button>`).join('')}
     </div>
     ${pData.length === 0 ? emptyState(f === 'all' ? {
       icon: 'folder',
@@ -1251,24 +1232,45 @@ async function renderProjects() {
       title: `No ${fLabels[f].toLowerCase()} projects`,
       description: 'Try another filter or create a new project.'
     }) :
-    `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; const dept = projectDepartmentValue(p, uMap); return `
-      <a href="#/projects/${p.id}" class="project-card">
-        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
-        <h3 class="project-card-title" title="${esc(p.name)}"><span class="title-text">${esc(p.name)}</span></h3>
-        <p class="project-card-notes">${esc(p.notes || 'No description')}</p>
-        <div class="project-card-progress">${progressBar(p.progress)}<span class="text-muted text-sm">${p.progress}% &middot; ${p.doneCount}/${p.taskCount} tasks</span></div>
-        <div class="project-card-footer">
-          <span class="text-muted text-sm">${ICONS.clock} ${timeAgo(p.updatedAt)}</span>
-          <span class="text-muted text-sm">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+    `<div class="projects-grid-v2">${pData.map(p => {
+      const owner = uMap[p.ownerId];
+      const mine = p.ownerId === s.userId;
+      const dept = projectDepartmentValue(p, uMap);
+      const accent = STATUS_ACCENT[p.status] || '#9ca3af';
+      const ct = doingTask[p.id];
+      const ctAssignee = ct ? uMap[ct.assigneeId] : null;
+      const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
+      return `<a href="#/projects/${p.id}" class="project-card-v2" style="--card-accent:${accent}">
+        <div class="project-card-v2-accent-bar"></div>
+        <div class="project-card-v2-body">
+          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
+          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}</h3>
+          <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
+          <div class="project-card-v2-progress">
+            ${progressBar(p.progress)}
+            <div class="project-card-v2-progress-meta">
+              <span class="project-card-v2-progress-pct">${p.progress}%</span>
+              <span class="text-muted text-sm">${p.doneCount}/${p.taskCount} tasks</span>
+            </div>
+          </div>
+          ${ct ? `<div class="project-card-v2-current-task">
+            <span class="project-card-v2-ct-pulse"></span>
+            <div class="project-card-v2-ct-info">
+              <span class="project-card-v2-ct-label">In Progress</span>
+              <span class="project-card-v2-ct-title">${esc(ct.title)}</span>
+            </div>
+            ${ctAssignee ? `<span class="project-card-v2-ct-assignee" ${userColorStyle(ctAssignee)} title="${esc(ctAssignee.displayName || ctAssignee.username)}">${(ctAssignee.displayName || ctAssignee.username).charAt(0).toUpperCase()}</span>` : ''}
+          </div>` : ''}
         </div>
-      </a>`; }).join('')}</div>`}`;
-
-  // Tag overflowing card titles so CSS can animate them on hover.
-  requestAnimationFrame(() => {
-    document.querySelectorAll('.project-card-title > .title-text').forEach(el => {
-      if (el.scrollWidth - el.clientWidth > 2) el.classList.add('is-overflowing');
-    });
-  });
+        <div class="project-card-v2-footer">
+          <span class="project-card-v2-owner">
+            <span class="project-card-v2-owner-avatar" ${userColorStyle(owner)}>${ownerInit}</span>
+            <span class="project-card-v2-owner-name">${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+          </span>
+          <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
+        </div>
+      </a>`;
+    }).join('')}</div>`}`;
 }
 
 /* ──── Task order helpers (localStorage) ──── */
