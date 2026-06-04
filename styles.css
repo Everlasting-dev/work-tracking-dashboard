@@ -3185,3 +3185,21 @@ span.status-dot:hover::after { display: none; }
   .chat-v2-sidebar { display: none; }
   .admin-user-board { grid-template-columns: 1fr; }
 }
+
+/* ── Task card custom field chips ── */
+.task-card-fields {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  padding-top: 7px; margin-top: 2px;
+  border-top: 1px solid var(--border-light);
+}
+.task-cf-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(79,70,229,0.06); border: 1px solid rgba(79,70,229,0.15);
+  border-radius: 6px; padding: 3px 8px; cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  font-size: 0.72rem; line-height: 1.3;
+}
+.task-cf-chip:hover { background: rgba(79,70,229,0.12); border-color: rgba(79,70,229,0.3); }
+.task-cf-label { color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.65rem; }
+.task-cf-value { color: var(--text); font-weight: 700; font-family: 'SF Mono',Consolas,monospace; }
+.task-cf-more { font-size: 0.7rem; color: var(--text-muted); align-self: center; }
