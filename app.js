@@ -2272,112 +2272,111 @@ async function renderAdminDashboard() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   const { users, projects, tasks } = await getWorkspaceData();
-  const log = await DB.getActivityLog({ limit: 30 });
+  const log = await DB.getActivityLog({ limit: 25 });
   let sessions = [];
   try { sessions = DB.getUserSessions ? await DB.getUserSessions() : []; } catch (_) { sessions = []; }
   const now = Date.now();
   const sevenDays = 7 * 24 * 60 * 60 * 1000;
   const activeUsers = users.filter(u => u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays));
   const recentLogins = log.filter(l => l.action === 'logged_in').slice(0, 10);
-  const taskByProject = tasks.reduce((m, t) => { m[t.projectId] = (m[t.projectId] || 0) + 1; return m; }, {});
   const projectByOwner = projects.reduce((m, p) => { m[p.ownerId] = (m[p.ownerId] || 0) + 1; return m; }, {});
   const tasksByAssignee = tasks.reduce((m, t) => { if (t.assigneeId != null) m[t.assigneeId] = (m[t.assigneeId] || 0) + 1; return m; }, {});
-
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  const sessionsByUser = sessions.reduce((m, row) => {
-    (m[row.userId] ||= []).push(row);
-    return m;
-  }, {});
+  const sessionsByUser = sessions.reduce((m, row) => { (m[row.userId] ||= []).push(row); return m; }, {});
+
+  const sp = (icon, val, label, sub, color) => `
+    <div class="dash-stat">
+      <div class="dash-stat-icon dash-stat-icon--${color}">${icon}</div>
+      <div class="dash-stat-body">
+        <span class="dash-stat-value">${val}</span>
+        <span class="dash-stat-label">${label}</span>
+        ${sub ? `<span class="dash-stat-sub">${sub}</span>` : ''}
+      </div>
+    </div>`;
+
+  const userRow = u => {
+    const pCnt = projectByOwner[u.id] || 0;
+    const tCnt = tasksByAssignee[u.id] || 0;
+    const devCnt = (sessionsByUser[u.id] || []).length;
+    const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
+    const online = u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays);
+    return `<div class="dash-user-row">
+      <div class="dash-user-avatar-wrap">
+        <span class="dash-user-av" ${userColorStyle(u)}>${init}</span>
+        <span class="dash-online-dot ${online ? 'dash-online-dot--on' : ''}"></span>
+      </div>
+      <div class="dash-user-details">
+        <div class="dash-user-name-row">
+          <strong>${esc(u.displayName || u.username)}</strong>
+          ${u.role === 'admin' ? `<span class="dash-crown">${ICONS.crown}</span>` : ''}
+          ${departmentBadge(u.department || '')}
+        </div>
+        <div class="dash-user-stats">
+          <span>${pCnt}p</span><span class="dash-sep">·</span>
+          <span>${tCnt} tasks</span>
+          ${devCnt ? `<span class="dash-sep">·</span><span>${devCnt} devices</span>` : ''}
+          ${u.lastSeenAt ? `<span class="dash-sep">·</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
+          ${u.lastSeenIp ? `<span class="dash-sep">·</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  const actRow = entry => {
+    const who = uMap[entry.userId];
+    const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
+    return `<div class="dash-act-row">
+      <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
+      <div class="dash-act-body">
+        <span class="dash-act-text">${formatActivityMessage(entry, uMap)}</span>
+        <span class="dash-act-time">${timeAgo(entry.createdAt)}</span>
+      </div>
+    </div>`;
+  };
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>${ICONS.gauge} Dashboard</h1><p class="view-subtitle">Admin telemetry · ${users.length} users · ${projects.length} projects</p></div>
+    <div class="projects-page-header" style="margin-bottom:18px">
+      <div class="projects-page-title"><h1>Dashboard</h1><span class="projects-page-count">Admin</span></div>
     </div>
-    <div class="stats-grid">
-      <div class="stat-card">
-        <span class="stat-value">${users.length}</span>
-        <span class="stat-label">Total users</span>
-        <span class="stat-sub">${activeUsers.length} active in last 7 days</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${projects.length}</span>
-        <span class="stat-label">Projects</span>
-        <span class="stat-sub">${projects.filter(p => p.status === 'active').length} active · ${projects.filter(p => p.status === 'on-hold').length} on hold</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${tasks.length}</span>
-        <span class="stat-label">Tasks</span>
-        <span class="stat-sub">${tasks.filter(t => t.status === 'done').length} done · ${tasks.filter(t => t.status === 'doing').length} in progress</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${recentLogins.length}</span>
-        <span class="stat-label">Recent logins</span>
-        <span class="stat-sub">Last 30 audit entries</span>
-      </div>
+    <div class="dash-stats-row">
+      ${sp(ICONS.user, users.length, 'Team', `${activeUsers.length} active this week`, 'purple')}
+      ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active · ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
+      ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done · ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
+      ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
     </div>
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Users</h2></div>
-      <div class="section-body" style="padding:0">
-        <div class="admin-user-row admin-user-head">
-          <span>Member</span>
-          <span>Role</span>
-          <span>Department</span>
-          <span>Discord ID</span>
-          <span>Last seen</span>
-          <span>Last IP</span>
-          <span style="text-align:right">Workload</span>
+    <div class="dash-two-col">
+      <div>
+        <div class="dash-panel">
+          <div class="dash-panel-head"><h3>Team</h3><span class="projects-page-count">${users.length} members</span></div>
+          ${users.map(u => userRow(u)).join('')}
+          <p class="dash-ip-note">IPs via <code>api.ipify.org</code>. Device IDs are privacy-safe browser fingerprints.</p>
         </div>
-        ${users.map(u => {
-          const pCount = projectByOwner[u.id] || 0;
-          const tCount = tasksByAssignee[u.id] || 0;
-          const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
-          return `<div class="admin-user-row">
-            <span class="admin-user-name">
-              <span class="user-avatar-sm ${u.role === 'admin' ? 'user-avatar-admin' : ''}" ${userColorStyle(u)}>${init}</span>
-              <strong>${esc(u.displayName || u.username)}</strong>
-            </span>
-            <span>${u.role === 'admin' ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : 'Member'}</span>
-            <span>${departmentBadge(u.department || '')}</span>
-            <span>${u.discordId ? `<code>${esc(u.discordId)}</code>` : '<span class="text-muted">—</span>'}</span>
-            <span class="text-muted">${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Never signed in'}</span>
-            <span class="text-muted">${u.lastSeenIp ? `<code>${esc(u.lastSeenIp)}</code>` : '<span class="text-muted">—</span>'}</span>
-            <span class="text-muted" style="text-align:right">${pCount}p · ${tCount}t · ${(sessionsByUser[u.id] || []).length} devices</span>
-          </div>`;
-        }).join('')}
       </div>
-      <div class="section-body" style="padding:12px 20px;border-top:1px solid var(--border-light)">
-        <p class="text-muted text-sm">IP addresses are reported by the user's browser via <code>api.ipify.org</code>. Device identity is a privacy-safe browser fingerprint (browser, platform, screen, timezone, and network hints), not a MAC address or hostname.</p>
+      <div class="dash-right-col">
+        <div class="dash-panel">
+          <div class="dash-panel-head"><h3>Recent Activity</h3></div>
+          <div class="dash-act-scroll">
+            ${log.length === 0
+              ? `<p class="text-muted text-sm" style="padding:14px 16px">No activity yet.</p>`
+              : log.map(e => actRow(e)).join('')}
+          </div>
+        </div>
+        ${sessions.length ? `
+        <div class="dash-panel" style="margin-top:14px">
+          <div class="dash-panel-head"><h3>Devices</h3><span class="projects-page-count">${sessions.length}</span></div>
+          ${sessions.slice(0, 6).map(row => {
+            const u = uMap[row.userId];
+            return `<div class="dash-device-row">
+              <div>
+                <strong class="text-sm">${esc(u?.displayName || u?.username || 'Unknown')}</strong>
+                <span class="text-muted" style="font-size:0.75rem"> · ${esc(row.deviceLabel || 'Unknown device')}</span>
+              </div>
+              <span class="text-muted" style="font-size:0.75rem;white-space:nowrap">${row.loginCount || 1}× · ${timeAgo(row.lastSeenAt)}</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
       </div>
-    </section>
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Known devices</h2></div>
-      <div class="section-body" style="padding:0">${
-        sessions.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No device logins recorded yet.</p>` :
-        `<div class="device-list">${sessions.slice(0, 20).map(row => {
-          const u = uMap[row.userId];
-          return `<div class="device-row">
-            <span><strong>${esc(u?.displayName || u?.username || 'Unknown')}</strong><small>${esc(row.deviceLabel || 'Unknown device')}</small></span>
-            <span class="text-muted">${row.ip ? `<code>${esc(row.ip)}</code>` : 'No IP'}</span>
-            <span class="text-muted">${esc(row.deviceId || '').slice(0, 12)}</span>
-            <span class="text-muted">${row.loginCount || 1} logins · ${timeAgo(row.lastSeenAt)}</span>
-          </div>`;
-        }).join('')}</div>`
-      }</div>
-    </section>
-    <section class="section-card">
-      <div class="section-header"><h2>Recent activity</h2></div>
-      <div class="section-body">${
-        log.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No activity recorded yet.</p>` :
-        `<div class="activity-log">${log.map(entry => `
-          <div class="activity-log-row">
-            <span class="activity-dot"></span>
-            <div class="activity-text">
-              ${formatActivityMessage(entry, uMap)}
-              <span class="text-muted text-sm">${timeAgo(entry.createdAt)}</span>
-            </div>
-          </div>`).join('')}</div>`
-      }</div>
-    </section>`;
+    </div>`;
 }
 
 /* ──── Notifications dropdown ──── */
