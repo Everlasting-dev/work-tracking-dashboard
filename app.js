@@ -1657,7 +1657,12 @@ async function renderDocumentPanel(projectId, editable) {
     if (main) main.classList.remove('with-doc-panel');
     return;
   }
+  // Revoke any previous panel blob URLs
+  if (state._docPanelUrls?.length) { state._docPanelUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} }); }
+  state._docPanelUrls = [];
+
   const items = await DB.getAttachments(projectId);
+  const projectItems = items.filter(a => !a.taskId); // project-level files only in panel
   const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   panel.classList.remove('hidden');
@@ -1668,19 +1673,34 @@ async function renderDocumentPanel(projectId, editable) {
     : items.map(item => {
       const who = uMap[item.uploadedBy];
       const isImg = item.mimeType?.startsWith('image/');
-      const icon = isImg ? '🖼' : (item.mimeType === 'application/pdf' ? '📄' : '📎');
-      return `<button type="button" class="doc-panel-item" data-action="preview-attachment" data-id="${item.id}">
-        <span class="doc-panel-icon">${icon}</span>
-        <span class="doc-panel-info">
+      const isPdf = item.mimeType === 'application/pdf';
+      const isTaskFile = !!item.taskId;
+      let thumbHtml = '';
+      if (isImg && item.blob) {
+        const url = URL.createObjectURL(item.blob);
+        state._docPanelUrls.push(url);
+        thumbHtml = `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">`;
+      } else if (isPdf) {
+        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--pdf"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12h1v4h1"/><path d="M8 12h4"/></svg>PDF</div>`;
+      } else {
+        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
+      }
+      return `<button type="button" class="doc-panel-item-v2" data-action="preview-attachment" data-id="${item.id}">
+        <div class="doc-panel-thumb-wrap">${thumbHtml}</div>
+        <div class="doc-panel-info">
           <span class="doc-panel-name">${esc(item.fileName)}</span>
-          <span class="doc-panel-meta">${who ? esc(who.displayName) : 'Unknown'} · ${timeAgo(item.createdAt)}${item.documentType ? ` · ${esc(documentTypeLabel(item.documentType))}` : ''}</span>
-        </span>
+          <span class="doc-panel-meta">
+            ${who ? esc((who.displayName || who.username).split(' ')[0]) : '?'} · ${timeAgo(item.createdAt)}
+            ${isTaskFile ? `<span class="doc-panel-task-tag">task</span>` : ''}
+            ${item.documentType ? ` · <em>${esc(documentTypeLabel(item.documentType))}</em>` : ''}
+          </span>
+        </div>
       </button>`;
     }).join('');
 
   panel.innerHTML = `
     <div class="doc-panel-header">
-      <h3>Documents</h3>
+      <h3>Documents <span class="projects-page-count" style="font-size:0.72rem">${items.length}</span></h3>
       <button type="button" class="btn-icon" data-action="toggle-doc-panel" title="Close panel">${ICONS.x}</button>
     </div>
     ${editable ? `<button type="button" class="btn btn-sm btn-primary doc-panel-upload" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.upload} Upload</button>` : ''}
@@ -1915,6 +1935,7 @@ async function renderTasks() {
   };
 
   let body = '';
+  if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
   if (f === 'all') {
     const projIds = [...new Set(all.map(t => t.projectId))].sort((a,b) => (pMap[a]?.name||'').localeCompare(pMap[b]?.name||''));
     body = projIds.map(pid => {
@@ -1923,8 +1944,12 @@ async function renderTasks() {
       const ordered = [...sortPrio(pt.filter(t=>t.status==='todo')), ...sortPrio(pt.filter(t=>t.status==='doing')), ...sortPrio(pt.filter(t=>t.status==='done'))];
       const todoCnt = pt.filter(t=>t.status==='todo').length;
       const doingCnt = pt.filter(t=>t.status==='doing').length;
-      return `<div class="task-proj-group">
+      const isCollapsed = !!state.collapsedTaskGroups[pid];
+      return `<div class="task-proj-group${isCollapsed ? ' tpg-collapsed' : ''}" data-pid="${pid}">
         <div class="task-proj-group-header">
+          <button class="tpg-toggle" data-action="toggle-task-group" data-pid="${pid}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
+            <svg class="tpg-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
           <a href="#/projects/${proj.id}" class="task-proj-group-name">${ICONS.folder} ${esc(proj.name)}</a>
           <div class="task-proj-group-badges">
             ${doingCnt ? `<span class="badge badge-blue">${doingCnt} in progress</span>` : ''}
@@ -1932,7 +1957,7 @@ async function renderTasks() {
             <span class="text-muted text-sm">${pt.length} tasks</span>
           </div>
         </div>
-        <div class="task-group-body-v2">${ordered.map(t => renderCard(t, false)).join('')}</div>
+        <div class="tpg-body task-group-body-v2">${ordered.map(t => renderCard(t, false)).join('')}</div>
       </div>`;
     }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
   } else {
@@ -2354,7 +2379,10 @@ async function renderAdminDashboard() {
       </div>
       <div class="dash-right-col">
         <div class="dash-panel">
-          <div class="dash-panel-head"><h3>Recent Activity</h3></div>
+          <div class="dash-panel-head">
+            <h3>Recent Activity</h3>
+            <a href="#/activity" class="btn btn-ghost" style="font-size:0.75rem;padding:4px 10px">View all</a>
+          </div>
           <div class="dash-act-scroll">
             ${log.length === 0
               ? `<p class="text-muted text-sm" style="padding:14px 16px">No activity yet.</p>`
@@ -2736,47 +2764,69 @@ async function showProjectModal(editId = null) {
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
   const defaultDepartment = p?.department || currentUser?.department || '';
   const isE = !!p;
+
   showModal(isE ? 'Edit Project' : 'New Project', `
-    <form data-form="project" data-edit-id="${editId || ''}">
-      <div class="form-group"><label>Project Name</label><input name="name" type="text" value="${esc(p?.name || '')}" placeholder="e.g. Job Search" required></div>
-      <div class="form-group"><label>Description</label><textarea name="notes" rows="3" placeholder="Brief description...">${esc(p?.notes || '')}</textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label>Type</label><select name="type">${Object.entries(TYPE_CFG).map(([v, c]) => `<option value="${v}" ${(p?.type || 'project') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
-        <div class="form-group"><label>Priority</label><select name="priority">${Object.entries(PRIO_CFG).map(([v, c]) => `<option value="${v}" ${(p?.priority || 'medium') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
+    <form data-form="project" data-edit-id="${editId || ''}" class="project-form-v2">
+      <div class="pf-name-block">
+        <input class="pf-name-input" name="name" type="text" value="${esc(p?.name || '')}" placeholder="Project name *" required autofocus>
+        <textarea class="pf-desc-input" name="notes" placeholder="Short description (optional)…" rows="2">${esc(p?.notes || '')}</textarea>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>Department</label><select name="department">
-          <option value="" ${defaultDepartment === '' ? 'selected' : ''}>Unassigned</option>
-          ${departmentOptionsHtml(defaultDepartment)}
-        </select></div>
-        <div class="form-group"><label>Workflow</label><select name="workflowTemplate">
-          ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([key, cfg]) => `<option value="${key}" ${(p?.workflowTemplate || '') === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
-        </select></div>
-      </div>
-      <div class="form-row">
-        <label class="check-card">
-          <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing ? 'checked' : ''}>
-          <span><strong>Ongoing / recurring project</strong><small>Use for maintenance, stock counting, upgrades, and timeless work.</small></span>
+      <div class="pf-meta-strip">
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Type</span>
+          <select name="type" class="pf-meta-select">${Object.entries(TYPE_CFG).map(([v,c]) => `<option value="${v}" ${(p?.type||'project')===v?'selected':''}>${c.l}</option>`).join('')}</select>
         </label>
-        <div class="form-group"><label>Cadence</label><select name="cadence">
-          <option value="" ${!p?.cadence ? 'selected' : ''}>No fixed repeat</option>
-          <option value="daily" ${p?.cadence === 'daily' ? 'selected' : ''}>Daily</option>
-          <option value="weekly" ${p?.cadence === 'weekly' ? 'selected' : ''}>Weekly</option>
-          <option value="monthly" ${p?.cadence === 'monthly' ? 'selected' : ''}>Monthly</option>
-          <option value="quarterly" ${p?.cadence === 'quarterly' ? 'selected' : ''}>Quarterly</option>
-        </select></div>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Priority</span>
+          <select name="priority" class="pf-meta-select">${Object.entries(PRIO_CFG).map(([v,c]) => `<option value="${v}" ${(p?.priority||'medium')===v?'selected':''}>${c.l}</option>`).join('')}</select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Department</span>
+          <select name="department" class="pf-meta-select">
+            <option value="" ${defaultDepartment===''?'selected':''}>Unassigned</option>
+            ${departmentOptionsHtml(defaultDepartment)}
+          </select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Workflow</span>
+          <select name="workflowTemplate" class="pf-meta-select">
+            ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([k,c]) => `<option value="${k}" ${(p?.workflowTemplate||'')===k?'selected':''}>${c.l}</option>`).join('')}
+          </select>
+        </label>
+        ${isE ? `<label class="pf-meta-item">
+          <span class="pf-meta-label">Status</span>
+          <select name="status" class="pf-meta-select">${Object.entries(STAT_CFG).map(([v,c]) => `<option value="${v}" ${p.status===v?'selected':''}>${c.l}</option>`).join('')}</select>
+        </label>` : ''}
       </div>
-      ${isE ? `<div class="form-group"><label>Status</label><select name="status">${Object.entries(STAT_CFG).map(([v, c]) => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>` : ''}
+      <label class="pf-ongoing-row">
+        <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing?'checked':''}>
+        <div class="pf-ongoing-text">
+          <strong>Ongoing / recurring</strong>
+          <span>Maintenance, stock counts, upgrades — work without a fixed end date</span>
+        </div>
+        <select name="cadence" class="pf-meta-select" style="margin-left:auto;min-width:130px">
+          <option value="" ${!p?.cadence?'selected':''}>No repeat</option>
+          <option value="daily" ${p?.cadence==='daily'?'selected':''}>Daily</option>
+          <option value="weekly" ${p?.cadence==='weekly'?'selected':''}>Weekly</option>
+          <option value="monthly" ${p?.cadence==='monthly'?'selected':''}>Monthly</option>
+          <option value="quarterly" ${p?.cadence==='quarterly'?'selected':''}>Quarterly</option>
+        </select>
+      </label>
       ${!isE ? `
-      <div class="form-group bulk-tasks-wrap">
-        <label>Tasks <span class="bulk-tasks-hint">add in order — press <kbd>↵</kbd> for next row</span></label>
+      <div class="pf-tasks-block">
+        <div class="pf-tasks-header">
+          <span class="pf-tasks-title">Starting tasks</span>
+          <span class="pf-tasks-hint">Press ↵ to add next</span>
+        </div>
         <div id="bulk-task-list" class="bulk-task-list"></div>
-        <button type="button" id="bulk-add-task-btn" class="btn btn-ghost btn-sm bulk-add-btn">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Add task
+        <button type="button" id="bulk-add-task-btn" class="pf-add-task-btn">
+          ${ICONS.plus} Add task
         </button>
       </div>` : ''}
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${isE ? 'Save' : 'Create Project'}</button></div>
+      <div class="form-actions pf-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">${isE ? 'Save changes' : 'Create Project'}</button>
+      </div>
     </form>`);
 
   if (!isE) {
@@ -3038,6 +3088,36 @@ function showOnboardingModal(force = false) {
 }
 
 
+async function renderActivityPage() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  const log = await DB.getActivityLog({ limit: 200 });
+  const users = await DB.getUsers();
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const ACTION_ICON = { created:'🟢', updated:'✏️', deleted:'🗑️', uploaded:'📎', logged_in:'🔑', logged_out:'🚪', noted:'📝', completed:'✅', assigned:'👤', task_done:'✅' };
+  content.innerHTML = `
+    <div class="projects-page-header" style="margin-bottom:20px">
+      <div class="projects-page-title"><h1>Activity Log</h1><span class="projects-page-count">${log.length} entries</span></div>
+      <a href="#/dashboard" class="btn btn-ghost">${ICONS.arrowLeft} Back to Dashboard</a>
+    </div>
+    <div class="activity-log-page">
+      ${log.length === 0 ? emptyState({ icon:'activity', title:'No activity yet', description:'Actions taken in the app appear here.' })
+        : log.map(entry => {
+          const who = uMap[entry.userId];
+          const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
+          const icon = ACTION_ICON[entry.action] || '●';
+          return `<div class="activity-page-row">
+            <span class="activity-page-icon">${icon}</span>
+            <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
+            <div class="activity-page-body">
+              <span class="activity-page-text">${formatActivityMessage(entry, uMap)}</span>
+              <span class="activity-page-time">${new Date(entry.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+            </div>
+          </div>`;
+        }).join('')}
+    </div>`;
+}
+
 function showAboutModal() {
   showModal('About WorkTracker', `
     <div class="about-modal">
@@ -3052,20 +3132,22 @@ function showAboutModal() {
         </div>
         <div>
           <div class="about-app-name">WorkTracker</div>
-          <div class="about-version">Version 2.0.0</div>
+          <div class="about-version">Version 2.0.0 · Built for SubZero Motors</div>
         </div>
       </div>
-      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, upload documents, and collaborate — all in one place.</p>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, attach files to tasks, and collaborate — all in one place.</p>
       <div class="about-features">
-        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Organize work into projects with status tracking and milestones.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — Create, assign, and track tasks with priorities and due dates.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>File Attachments</strong><span> — Attach images, PDFs, and documents to projects or individual tasks.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Timeline View</strong><span> — Visualize tasks on a timeline by due date.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team communication channels with Discord integration.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment alerts and project activity notifications.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Status tracking, milestones, progress bars, and department filters.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📝</span><div><strong>Task Details</strong><span> — Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>Files</strong><span> — Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Timeline</strong><span> — Visual Gantt-style timeline by due date with today marker.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team channels with Discord webhook integration.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell.</span></div></div>
       </div>
       <div class="about-footer">
-        <span class="text-muted text-sm">Built with ❤️ · Powered by Supabase + IndexedDB</span>
+        <span class="text-muted text-sm">Powered by Supabase + IndexedDB · Built with ❤️</span>
       </div>
       <div class="form-actions"><button class="btn btn-primary" data-action="close-modal">Close</button></div>
     </div>`);
@@ -3125,11 +3207,31 @@ async function showTaskDetailModal(taskId) {
           ${assignee ? `<span>${assigneeChipHtml(assignee)}</span>` : ''}`}
       </div>
       <div class="td-section">
-        <span class="td-section-label">Notes &amp; Tracking Info</span>
+        <span class="td-section-label">Notes</span>
         ${editable
-          ? `<textarea class="td-notes" data-td="notes" placeholder="Add tracking numbers, shipping details, notes…" rows="3">${esc(task.notes || '')}</textarea>`
+          ? `<textarea class="td-notes" data-td="notes" placeholder="Add notes, context, or any details…" rows="2">${esc(task.notes || '')}</textarea>`
           : `<p class="td-notes-view">${task.notes ? esc(task.notes) : '<span class="text-muted">No notes.</span>'}</p>`}
       </div>
+      ${editable ? `
+      <div class="td-section" id="td-custom-fields-section">
+        <div class="td-section-header">
+          <span class="td-section-label">Custom Fields</span>
+          <button type="button" class="btn btn-sm btn-ghost" id="td-add-field-btn">${ICONS.plus} Add field</button>
+        </div>
+        <div id="td-custom-fields" class="td-custom-fields">
+          ${(task.customFields||[]).map((f,i) => `
+            <div class="td-cf-row" data-cf-index="${i}">
+              <input class="td-cf-label" type="text" value="${esc(f.label)}" placeholder="Field name" data-cf="label" data-idx="${i}">
+              <input class="td-cf-value" type="text" value="${esc(f.value)}" placeholder="Value" data-cf="value" data-idx="${i}">
+              <button type="button" class="btn-icon td-cf-del" data-cf-del="${i}" title="Remove field">${ICONS.trash}</button>
+            </div>`).join('')}
+        </div>
+        <p class="text-muted text-sm" style="padding:0 0 4px;font-size:0.72rem">Use for tracking numbers, reference IDs, shipping details, or any custom info.</p>
+      </div>` : (task.customFields?.length ? `
+      <div class="td-section">
+        <span class="td-section-label">Custom Fields</span>
+        ${task.customFields.map(f => `<div class="td-cf-readonly"><span class="td-cf-readonly-label">${esc(f.label)}</span><span class="td-cf-readonly-value">${esc(f.value)}</span></div>`).join('')}
+      </div>` : '')}
       ${editable ? `
       <div class="td-section">
         <div class="td-section-header">
@@ -3148,6 +3250,27 @@ async function showTaskDetailModal(taskId) {
         <button class="btn btn-ghost" data-action="close-modal">Close</button>
       </div>
     </div>`);
+
+  // Custom fields: add new field
+  const addFieldBtn = document.getElementById('td-add-field-btn');
+  const cfContainer = document.getElementById('td-custom-fields');
+  if (addFieldBtn && cfContainer) {
+    addFieldBtn.addEventListener('click', () => {
+      const idx = cfContainer.querySelectorAll('.td-cf-row').length;
+      const row = document.createElement('div');
+      row.className = 'td-cf-row';
+      row.dataset.cfIndex = idx;
+      row.innerHTML = `<input class="td-cf-label" type="text" placeholder="Field name (e.g. Tracking #)" data-cf="label" data-idx="${idx}">
+        <input class="td-cf-value" type="text" placeholder="Value" data-cf="value" data-idx="${idx}">
+        <button type="button" class="btn-icon td-cf-del" data-cf-del="${idx}" title="Remove">${ICONS.trash}</button>`;
+      cfContainer.appendChild(row);
+      row.querySelector('.td-cf-label')?.focus();
+    });
+    cfContainer.addEventListener('click', e => {
+      const delBtn = e.target.closest('[data-cf-del]');
+      if (delBtn) { delBtn.closest('.td-cf-row')?.remove(); }
+    });
+  }
 
   // File input handler inside modal
   const fileInput = document.querySelector('.td-file-input');
@@ -3622,6 +3745,14 @@ const actions = {
     window.location.hash = '';
     await applyRoute();
   },
+  'toggle-task-group': (b) => {
+    const pid = b.dataset.pid;
+    const grp = document.querySelector(`.task-proj-group[data-pid="${pid}"]`);
+    if (!grp) return;
+    const collapsed = grp.classList.toggle('tpg-collapsed');
+    if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
+    state.collapsedTaskGroups[pid] = collapsed;
+  },
   'show-about': () => { closeUserMenu(); showAboutModal(); },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
@@ -3632,8 +3763,13 @@ const actions = {
     const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
     const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
     const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
+    const cfRows = document.querySelectorAll('.td-cf-row');
+    const customFields = [...cfRows].map(row => ({
+      label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
+      value: row.querySelector('[data-cf="value"]')?.value?.trim() || ''
+    })).filter(f => f.label || f.value);
     const uid = actorId();
-    await DB.updateTask(taskId, { ...(status&&{status}), ...(priority&&{priority}), dueDate, ...(assigneeId&&{assigneeId}), notes }, uid);
+    await DB.updateTask(taskId, { ...(status&&{status}), ...(priority&&{priority}), dueDate, ...(assigneeId&&{assigneeId}), notes, customFields }, uid);
     bustWorkspaceCache();
     hideModal();
     await router();
@@ -3641,13 +3777,11 @@ const actions = {
   },
   'clear-all-notifications': async () => {
     const uid = actorId(); if (!uid) return;
-    const rows = await DB.getNotifications(uid, { limit: 500 });
-    await Promise.all(rows.map(n => DB.markNotificationRead(n.id)));
-    if (DB.deleteNotifications) await DB.deleteNotifications(uid);
-    else await DB.markAllNotificationsRead(uid);
+    await DB.markAllNotificationsRead(uid);
     refreshNotificationBadge();
     await renderNotificationsPage();
-    showToast('Notifications cleared', 'info');
+    renderNotificationPanel();
+    showToast('All notifications marked as read', 'info');
   },
   'task-view': async (b) => {
     state.taskViewMode = b.dataset.view;
@@ -3876,6 +4010,7 @@ async function router() {
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/chat') await renderChat();
   else if (hash === '/notifications') await renderNotificationsPage();
+  else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/admin') await renderAdmin();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => content?.classList.remove('content-fade'));
