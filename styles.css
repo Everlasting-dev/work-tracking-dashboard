@@ -720,6 +720,34 @@ ul,ol { list-style: none; }
 .project-hero h1 { font-size: 1.5rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.025em; }
 .project-hero-progress { margin-top: 18px; }
 .project-hero-progress .text-muted { display: block; margin-top: 8px; font-size: 0.88rem; }
+.project-visible-fields {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; margin-bottom: 4px;
+}
+.project-visible-field {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 10px 12px; min-width: min(230px, 100%);
+  border: 1px solid rgba(37,99,235,0.18);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(239,246,255,0.95), rgba(255,255,255,0.9));
+  box-shadow: var(--shadow-sm);
+  color: var(--text); cursor: pointer;
+  transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+  text-align: left;
+}
+.project-visible-field:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37,99,235,0.34);
+  box-shadow: var(--shadow);
+}
+.project-visible-field-task {
+  max-width: 100%;
+  color: var(--text-muted); font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.project-visible-field-main { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.project-visible-field-main span { color: var(--blue-text); font-size: 0.76rem; font-weight: 800; text-transform: uppercase; }
+.project-visible-field-main strong { font-family: 'SF Mono', Consolas, monospace; font-size: 0.94rem; overflow-wrap: anywhere; }
 
 .workflow-card {
   background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,246,255,0.85));
@@ -2908,6 +2936,30 @@ span.status-dot:hover::after { display: none; }
 .td-cf-label { width: 130px; flex-shrink: 0; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.82rem; background: var(--card); }
 .td-cf-value { flex: 1; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.82rem; background: var(--card); font-weight: 600; }
 .td-cf-label:focus, .td-cf-value:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.12); }
+.td-cf-pin {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--card);
+  color: var(--text-muted); cursor: pointer; white-space: nowrap;
+  transition: border-color var(--transition), color var(--transition), background var(--transition);
+}
+.td-cf-pin:hover { border-color: rgba(99,102,241,0.35); color: var(--accent); }
+.td-cf-pin input { position: absolute; opacity: 0; pointer-events: none; }
+.td-cf-pin-box {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border); color: transparent;
+  transition: all var(--transition);
+}
+.td-cf-pin-box svg { width: 14px; height: 14px; }
+.td-cf-pin input:checked + .td-cf-pin-box {
+  background: var(--accent); border-color: var(--accent); color: white;
+}
+.td-cf-pin:has(input:checked) {
+  color: var(--accent); border-color: rgba(99,102,241,0.32);
+  background: rgba(99,102,241,0.06);
+}
+.td-cf-pin-text { font-size: 0.74rem; font-weight: 700; }
 .td-cf-del { opacity: 0; transition: opacity var(--transition); }
 .td-cf-row:hover .td-cf-del { opacity: 1; }
 .td-cf-readonly { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border-light); }
@@ -2987,6 +3039,7 @@ span.status-dot:hover::after { display: none; }
   .pf-ongoing-row .pf-meta-select { width: 100%; }
   .td-cf-row { flex-wrap: wrap; }
   .td-cf-label { width: 100%; }
+  .td-cf-pin { width: 100%; justify-content: center; }
 }
 
 /* ── Task card detail button ── */

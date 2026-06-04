@@ -82,6 +82,7 @@ create table if not exists public.wt_tasks (
   status text not null default 'todo',
   priority text not null default 'medium',
   notes text not null default '',
+  -- JSON array: [{ "label": "tracking number", "value": "DHL-123", "showInProject": true }]
   custom_fields jsonb not null default '[]',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
