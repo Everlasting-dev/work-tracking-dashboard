@@ -580,11 +580,13 @@ function filterProjectsByWorkspace(projects) {
 }
 
 function workspaceScopeBarHtml() {
+  if (!isAdmin() && effectiveWorkspaceScope() === 'mine') return '';
   const sc = effectiveWorkspaceScope();
-  return `<div class="workspace-scope-bar filter-bar" style="margin-bottom:4px">
-    <span class="text-muted text-sm" style="margin-right:10px">Workspace</span>
-    <button type="button" class="filter-tab ${sc === 'mine' ? 'active' : ''}" data-action="set-workspace-scope" data-scope="mine">Mine</button>
-    <button type="button" class="filter-tab ${sc === 'everyone' ? 'active' : ''}" data-action="set-workspace-scope" data-scope="everyone">Everyone</button>
+  return `<div class="workspace-scope-micro">
+    <span class="text-muted" style="font-size:0.75rem">View:</span>
+    <button type="button" class="scope-micro-btn${sc === 'mine' ? ' active' : ''}" data-action="set-workspace-scope" data-scope="mine">My Projects</button>
+    <span class="text-muted" style="font-size:0.75rem">/</span>
+    <button type="button" class="scope-micro-btn${sc === 'everyone' ? ' active' : ''}" data-action="set-workspace-scope" data-scope="everyone">Everyone</button>
   </div>`;
 }
 
@@ -722,14 +724,15 @@ function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
 /* ──── State ──── */
 
 const state = {
-  projectFilter: 'all',
+  projectFilter: 'active',
   projectSearch: '',
-  projectOwnerFilter: 'all',
+  projectOwnerFilter: 'me',
   projectDepartmentFilter: 'all',
   taskFilter: 'all',
+  taskViewMode: 'list',
   projectTab: 'tasks',
   currentProjectId: null,
-  workspaceScope: null,
+  workspaceScope: 'mine',
   docPanelOpen: true,
   userMenuOpen: false,
   notifOpen: false,
@@ -1096,7 +1099,9 @@ function renderUserMenu() {
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
     <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
+    <button type="button" class="user-menu-item" data-action="show-about">${ICONS.target} About WorkTracker</button>
     ${adminItems}
+    <hr class="user-menu-divider">
     <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
 }
 
@@ -1868,63 +1873,86 @@ async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
   const { projects: allProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
-  // Tasks are private per project owner. Non-admin members ALSO see tasks assigned to them.
   const myProjectIds = new Set(allProjects.filter(p => p.ownerId === s.userId).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
   let all = allTasks;
-  if (!isAdmin()) {
-    all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
-  }
+  if (!isAdmin()) all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
   const f = state.taskFilter;
-  const tasks = f === 'all' ? all : all.filter(t => t.status === f);
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
-  const fLabels = { all: 'All', todo: 'To Do', doing: 'In Progress', done: 'Done' };
+  const PRIO = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const sortPrio = ts => [...ts].sort((a,b) => (PRIO[a.priority]??2)-(PRIO[b.priority]??2));
 
-  const privacyHint = !isAdmin()
-    ? `<p class="text-muted text-sm workspace-hint">You see tasks from projects you own plus any task assigned to you.</p>`
-    : '';
-
-  content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} ${isAdmin() ? 'tasks in this workspace' : 'tasks visible to you'}</p></div>
-      <div class="view-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
-    </div>
-    ${privacyHint}
-    <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
-      <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-tasks" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
-    </div>
-    ${tasks.length === 0 ? emptyState(f === 'all' ? {
-      icon: 'tasks',
-      title: 'No tasks yet',
-      description: 'Add tasks from a project or use New Task to pick a project.',
-      cta: 'New Task',
-      ctaAction: 'add-task'
-    } : {
-      icon: 'tasks',
-      title: `No ${fLabels[f].toLowerCase()} tasks`,
-      description: 'Try another status filter or create a new task.'
-    }) :
-    `<div class="task-table">${tasks.map(t => { const proj = pMap[t.projectId]; const editable = proj && canEdit(proj); const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
-      <div class="task-table-row ${t.status === 'done' ? 'task-done' : ''}">
-        <div class="task-table-left">
+  const renderCard = (t, showProject = true) => {
+    const proj = pMap[t.projectId];
+    const editable = proj && canEdit(proj);
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const assignee = uMap[t.assigneeId];
+    const hasNotes = !!(t.notes?.trim());
+    return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}">
+      <div class="task-card-status-stripe"></div>
+      <div class="task-card-body">
+        <div class="task-card-top">
           ${editable
-            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Change status"></button>`
+            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <div>
-            <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
-            ${proj ? `<a href="#/projects/${proj.id}" class="text-muted text-sm task-project-link">${esc(proj.name)}</a>` : ''}
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open task detail">${esc(t.title)}</button>
+          ${showProject && proj ? `<a href="#/projects/${proj.id}" class="task-card-proj-badge">${esc(proj.name)}</a>` : ''}
+          ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
+        </div>
+        <div class="task-card-bottom">
+          ${editable
+            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}">${assigneeChipHtml(assignee)}</button>`
+            : assigneeChipHtml(assignee)}
+          <div class="task-card-tags">
+            ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
+            ${prioBadge(t.priority)}
+            ${hasNotes ? `<span class="task-note-dot" title="Has notes">●</span>` : ''}
           </div>
         </div>
-        <div class="task-table-right">
-          ${editable
-            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
-            : assigneeChipHtml(assignee)}
-          ${t.dueDate ? `<span class="due-date ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : ''}">${formatDateShort(t.dueDate)}</span>` : '<span class="text-muted text-sm">No date</span>'}
-          ${prioBadge(t.priority)} ${taskBadge(t.status)}
-          ${editable ? `<button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
+      </div>
+    </div>`;
+  };
+
+  let body = '';
+  if (f === 'all') {
+    const projIds = [...new Set(all.map(t => t.projectId))].sort((a,b) => (pMap[a]?.name||'').localeCompare(pMap[b]?.name||''));
+    body = projIds.map(pid => {
+      const proj = pMap[pid]; if (!proj) return '';
+      const pt = all.filter(t => t.projectId === pid);
+      const ordered = [...sortPrio(pt.filter(t=>t.status==='todo')), ...sortPrio(pt.filter(t=>t.status==='doing')), ...sortPrio(pt.filter(t=>t.status==='done'))];
+      const todoCnt = pt.filter(t=>t.status==='todo').length;
+      const doingCnt = pt.filter(t=>t.status==='doing').length;
+      return `<div class="task-proj-group">
+        <div class="task-proj-group-header">
+          <a href="#/projects/${proj.id}" class="task-proj-group-name">${ICONS.folder} ${esc(proj.name)}</a>
+          <div class="task-proj-group-badges">
+            ${doingCnt ? `<span class="badge badge-blue">${doingCnt} in progress</span>` : ''}
+            ${todoCnt ? `<span class="badge badge-amber">${todoCnt} to do</span>` : ''}
+            <span class="text-muted text-sm">${pt.length} tasks</span>
+          </div>
         </div>
-      </div>`; }).join('')}</div>`}`;
+        <div class="task-group-body-v2">${ordered.map(t => renderCard(t, false)).join('')}</div>
+      </div>`;
+    }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
+  } else {
+    const filtered = f === 'done' ? all.filter(t=>t.status==='done') : sortPrio(all.filter(t=>t.status===f));
+    body = filtered.length ? `<div class="task-group-body-v2">${filtered.map(t=>renderCard(t,true)).join('')}</div>`
+      : emptyState({ icon:'tasks', title:`No ${f==='todo'?'to-do':f==='doing'?'in-progress':'done'} tasks`, description:'Try another filter.' });
+  }
+
+  content.innerHTML = `
+    <div class="projects-page-header">
+      <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${all.length} visible</span></div>
+      <div class="projects-page-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
+    </div>
+    <div class="projects-status-pills">
+      <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
+      <button class="status-pill ${f==='doing'?'active':''}" data-action="filter-tasks" data-filter="doing">In Progress <span class="status-pill-count">${cnt.doing}</span></button>
+      <button class="status-pill ${f==='todo'?'active':''}" data-action="filter-tasks" data-filter="todo">To Do <span class="status-pill-count">${cnt.todo}</span></button>
+      <button class="status-pill ${f==='done'?'active':''}" data-action="filter-tasks" data-filter="done">Done <span class="status-pill-count">${cnt.done}</span></button>
+    </div>
+    ${body}`;
 }
 
 async function renderAdmin() {
@@ -2667,28 +2695,30 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
+  const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋' };
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>${ICONS.bell} Notifications</h1><p class="view-subtitle">${rows.length} recent updates · ${unread} unread</p></div>
-      <div class="view-actions">
-        ${unread ? `<button type="button" class="btn btn-primary" data-action="notif-mark-all">${ICONS.checkCircle} Mark all read</button>` : ''}
+    <div class="projects-page-header">
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${unread} unread</span></div>
+      <div class="projects-page-actions">
+        ${unread ? `<button type="button" class="btn btn-ghost" data-action="notif-mark-all">${ICONS.checkCircle} Mark all read</button>` : ''}
+        ${rows.length ? `<button type="button" class="btn btn-ghost btn-danger-text" data-action="clear-all-notifications">Clear all</button>` : ''}
       </div>
     </div>
-    <section class="section-card">
-      <div class="section-body" style="padding:0">
-        ${rows.length === 0 ? emptyState({
-          icon: 'activity',
-          title: 'No notifications yet',
-          description: 'Assignments, updates, and mentions will show up here.'
-        }) : `<div class="notification-page-list">${rows.map(n => {
-          const projectHref = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
-          return `<button type="button" class="notification-page-item ${n.readAt ? '' : 'unread'}" data-action="notif-open" data-id="${n.id}" data-href="${projectHref}">
-            <span class="notif-dot"></span>
-            <span><strong>${esc(n.message)}</strong><small>${timeAgo(n.createdAt)}</small></span>
+    <div class="notif-page-list">
+      ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
+        : rows.map(n => {
+          const href = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+          const icon = TYPE_ICON[n.type] || '🔔';
+          return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" data-action="notif-open" data-id="${n.id}" data-href="${href}">
+            <span class="notif-page-icon">${icon}</span>
+            <div class="notif-page-body">
+              <span class="notif-page-msg">${esc(n.message)}</span>
+              <span class="notif-page-time">${timeAgo(n.createdAt)}</span>
+            </div>
+            ${!n.readAt ? '<span class="notif-unread-dot"></span>' : ''}
           </button>`;
-        }).join('')}</div>`}
-      </div>
-    </section>`;
+        }).join('')}
+    </div>`;
 }
 
 /* ──── Modal System ──── */
@@ -3008,6 +3038,159 @@ function showOnboardingModal(force = false) {
   localStorage.setItem(howtoSeenKey(s.userId), String(Date.now()));
 }
 
+
+function showAboutModal() {
+  showModal('About WorkTracker', `
+    <div class="about-modal">
+      <div class="about-logo-row">
+        <div class="about-logo-mark">
+          <svg width="36" height="36" viewBox="0 0 100 100">
+            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="white" opacity="0.95"/>
+            <path d="M74 30 L80 36 L90 23" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="white" opacity="0.65"/>
+            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="white" opacity="0.4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="about-app-name">WorkTracker</div>
+          <div class="about-version">Version 2.0.0</div>
+        </div>
+      </div>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, upload documents, and collaborate — all in one place.</p>
+      <div class="about-features">
+        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Organize work into projects with status tracking and milestones.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — Create, assign, and track tasks with priorities and due dates.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>File Attachments</strong><span> — Attach images, PDFs, and documents to projects or individual tasks.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Timeline View</strong><span> — Visualize tasks on a timeline by due date.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team communication channels with Discord integration.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment alerts and project activity notifications.</span></div></div>
+      </div>
+      <div class="about-footer">
+        <span class="text-muted text-sm">Built with ❤️ · Powered by Supabase + IndexedDB</span>
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" data-action="close-modal">Close</button></div>
+    </div>`);
+}
+
+async function showTaskDetailModal(taskId) {
+  const task = await DB.getTask(taskId);
+  if (!task) { showToast('Task not found', 'error'); return; }
+  const project = await DB.getProject(task.projectId);
+  const editable = project && canEdit(project);
+  const users = await DB.getUsers();
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const assignee = uMap[task.assigneeId];
+  const attachments = await DB.getAttachments(task.projectId);
+  const taskAtts = attachments.filter(a => Number(a.taskId) === Number(taskId));
+
+  const blobUrls = [];
+  const filesHtml = taskAtts.map(a => {
+    const isImg = a.mimeType?.startsWith('image/');
+    const url = a.blob ? URL.createObjectURL(a.blob) : (DB.getAttachmentUrl ? DB.getAttachmentUrl(a.storagePath) : '');
+    if (a.blob && url) blobUrls.push(url);
+    return `<div class="td-file-card">
+      <button type="button" class="td-file-preview" data-action="preview-attachment" data-id="${a.id}">
+        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span style="font-size:1.6rem">${a.mimeType === 'application/pdf' ? '📄' : '📎'}</span>`}
+      </button>
+      <span class="td-file-name">${esc(a.fileName)}</span>
+      ${editable ? `<button class="btn-icon td-file-del" data-action="delete-attachment" data-id="${a.id}" title="Remove">${ICONS.trash}</button>` : ''}
+    </div>`;
+  }).join('');
+
+  showModal(`Task: ${esc(task.title)}`, `
+    <div class="task-detail-modal" data-task-id="${taskId}">
+      ${project ? `<div style="margin-bottom:14px"><a href="#/projects/${project.id}" class="badge badge-blue" data-action="close-modal" style="cursor:pointer">${ICONS.folder} ${esc(project.name)}</a></div>` : ''}
+      <div class="td-meta-row">
+        ${editable ? `
+          <label class="td-field"><span class="td-field-label">Status</span>
+            <select class="td-select" data-td="status">
+              <option value="todo" ${task.status === 'todo' ? 'selected' : ''}>To Do</option>
+              <option value="doing" ${task.status === 'doing' ? 'selected' : ''}>In Progress</option>
+              <option value="done" ${task.status === 'done' ? 'selected' : ''}>Done</option>
+            </select></label>
+          <label class="td-field"><span class="td-field-label">Priority</span>
+            <select class="td-select" data-td="priority">
+              <option value="low" ${task.priority === 'low' ? 'selected' : ''}>Low</option>
+              <option value="medium" ${task.priority === 'medium' ? 'selected' : ''}>Medium</option>
+              <option value="high" ${task.priority === 'high' ? 'selected' : ''}>High</option>
+              <option value="urgent" ${task.priority === 'urgent' ? 'selected' : ''}>Urgent</option>
+            </select></label>
+          <label class="td-field"><span class="td-field-label">Due Date</span>
+            <input type="date" class="td-select" data-td="dueDate" value="${esc(task.dueDate || '')}"></label>
+          <label class="td-field" style="flex:1.5"><span class="td-field-label">Assignee</span>
+            <select class="td-select" data-td="assigneeId">
+              ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
+            </select></label>
+        ` : `<span>${taskBadge(task.status)}</span><span>${prioBadge(task.priority)}</span>
+          ${task.dueDate ? `<span class="text-muted text-sm">${ICONS.calendar} ${formatDateShort(task.dueDate)}</span>` : ''}
+          ${assignee ? `<span>${assigneeChipHtml(assignee)}</span>` : ''}`}
+      </div>
+      <div class="td-section">
+        <span class="td-section-label">Notes &amp; Tracking Info</span>
+        ${editable
+          ? `<textarea class="td-notes" data-td="notes" placeholder="Add tracking numbers, shipping details, notes…" rows="3">${esc(task.notes || '')}</textarea>`
+          : `<p class="td-notes-view">${task.notes ? esc(task.notes) : '<span class="text-muted">No notes.</span>'}</p>`}
+      </div>
+      ${editable ? `
+      <div class="td-section">
+        <div class="td-section-header">
+          <span class="td-section-label">Attachments (${taskAtts.length})</span>
+          <label class="btn btn-sm btn-ghost td-attach-btn">
+            ${ICONS.upload} Add file
+            <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style="display:none" class="td-file-input" data-task-id="${taskId}" data-project-id="${task.projectId}">
+          </label>
+        </div>
+        <div class="td-drop-zone" data-task-id="${taskId}" data-project-id="${task.projectId}">
+          ${filesHtml || `<p class="td-drop-hint">Drag &amp; drop files here, or click <strong>Add file</strong></p>`}
+        </div>
+      </div>` : taskAtts.length ? `<div class="td-section"><span class="td-section-label">Attachments</span><div class="td-files-grid">${filesHtml}</div></div>` : ''}
+      <div class="form-actions" style="margin-top:20px">
+        ${editable ? `<button class="btn btn-primary" data-action="save-task-detail" data-id="${taskId}">Save Changes</button>` : ''}
+        <button class="btn btn-ghost" data-action="close-modal">Close</button>
+      </div>
+    </div>`);
+
+  // File input handler inside modal
+  const fileInput = document.querySelector('.td-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      const pid = Number(fileInput.dataset.projectId);
+      const tid = Number(fileInput.dataset.taskId);
+      const s = getSession();
+      const max = 10 * 1024 * 1024;
+      for (const file of files) {
+        if (file.size > max) { showToast(`${file.name} too large (max 10 MB)`, 'warning'); continue; }
+        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
+      }
+      bustWorkspaceCache();
+      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+      await showTaskDetailModal(tid);
+    });
+  }
+
+  // Drag-drop on the drop zone
+  const dz = document.querySelector('.td-drop-zone');
+  if (dz && editable) {
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('td-drop-zone--active'); });
+    dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('td-drop-zone--active'); });
+    dz.addEventListener('drop', async e => {
+      e.preventDefault(); dz.classList.remove('td-drop-zone--active');
+      const files = Array.from(e.dataTransfer.files || []);
+      const pid = Number(dz.dataset.projectId);
+      const tid = Number(dz.dataset.taskId);
+      const s = getSession();
+      const max = 10 * 1024 * 1024;
+      for (const file of files) {
+        if (file.size > max) { showToast(`${file.name} too large`, 'warning'); continue; }
+        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
+      }
+      bustWorkspaceCache();
+      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+      await showTaskDetailModal(tid);
+    });
+  }
+}
 
 async function handleFormSubmit(e) {
   e.preventDefault();
@@ -3439,6 +3622,33 @@ const actions = {
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();
+  },
+  'show-about': () => { closeUserMenu(); showAboutModal(); },
+  'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
+  'save-task-detail': async (b) => {
+    const taskId = Number(b.dataset.id);
+    const status = document.querySelector('[data-td="status"]')?.value;
+    const priority = document.querySelector('[data-td="priority"]')?.value;
+    const dueDate = document.querySelector('[data-td="dueDate"]')?.value || '';
+    const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
+    const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
+    const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
+    const uid = actorId();
+    await DB.updateTask(taskId, { ...(status&&{status}), ...(priority&&{priority}), dueDate, ...(assigneeId&&{assigneeId}), notes }, uid);
+    bustWorkspaceCache();
+    hideModal();
+    await router();
+    showToast('Task saved', 'success');
+  },
+  'clear-all-notifications': async () => {
+    const uid = actorId(); if (!uid) return;
+    const rows = await DB.getNotifications(uid, { limit: 500 });
+    await Promise.all(rows.map(n => DB.markNotificationRead(n.id)));
+    if (DB.deleteNotifications) await DB.deleteNotifications(uid);
+    else await DB.markAllNotificationsRead(uid);
+    refreshNotificationBadge();
+    await renderNotificationsPage();
+    showToast('Notifications cleared', 'info');
   },
   'task-view': async (b) => {
     state.taskViewMode = b.dataset.view;

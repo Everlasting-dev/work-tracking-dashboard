@@ -941,7 +941,7 @@ const SupabaseDB = {
     });
     if (upErr) throw upErr;
     const { data: row, error } = await this._sb().from('wt_attachments').insert({
-      project_id: data.projectId, uploaded_by: data.uploadedBy, file_name: fileName,
+      project_id: data.projectId, task_id: data.taskId || null, uploaded_by: data.uploadedBy, file_name: fileName,
       mime_type: data.mimeType || 'application/octet-stream', document_type: data.documentType || '', storage_path: path
     }).select().single();
     if (error) throw error;

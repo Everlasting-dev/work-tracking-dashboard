@@ -2597,3 +2597,167 @@ span.status-dot:hover::after { display: none; }
   .timeline-row-label-v2 { width: 110px; }
   .current-task-banner { flex-wrap: wrap; }
 }
+
+/* ── Splash version ── */
+.splash-version {
+  font-size: 0.62rem; color: rgba(13,17,23,0.22);
+  letter-spacing: 0.08em; margin-top: 6px;
+  opacity: 0; animation: splashFadeIn 0.4s 0.7s ease both;
+}
+
+/* ── Workspace micro bar ── */
+.workspace-scope-micro {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px; font-size: 0.78rem; color: var(--text-muted);
+}
+.scope-micro-btn {
+  background: none; border: none; cursor: pointer; font-size: 0.78rem;
+  color: var(--text-muted); padding: 2px 0; font-weight: 500;
+  transition: color var(--transition);
+}
+.scope-micro-btn.active { color: var(--accent); font-weight: 600; }
+.scope-micro-btn:hover { color: var(--text); }
+
+/* ── Task project group (All Tasks view) ── */
+.task-proj-group { margin-bottom: 28px; }
+.task-proj-group-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0 0 10px; margin-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+.task-proj-group-name {
+  font-size: 0.95rem; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 6px;
+  transition: color var(--transition);
+}
+.task-proj-group-name:hover { color: var(--accent); }
+.task-proj-group-name svg { opacity: 0.5; }
+.task-proj-group-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── Task card note dot ── */
+.task-note-dot { color: var(--accent); font-size: 0.55rem; line-height: 1; }
+.task-card-title-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  text-align: left; font-size: inherit; font-weight: inherit; color: inherit;
+  flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color var(--transition);
+}
+.task-card-title-link:hover { color: var(--accent); }
+.task-card-proj-badge {
+  flex-shrink: 0; font-size: 0.7rem; font-weight: 600;
+  color: var(--accent-text); background: var(--accent-light);
+  border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  transition: background var(--transition);
+}
+.task-card-proj-badge:hover { background: rgba(79,70,229,0.18); }
+
+/* ── User menu divider ── */
+.user-menu-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* ── About modal ── */
+.about-modal { max-width: 100%; }
+.about-logo-row { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.about-logo-mark {
+  width: 56px; height: 56px; border-radius: 14px; flex-shrink: 0;
+  background: linear-gradient(145deg, #4f46e5, #7c3aed);
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(79,70,229,0.25);
+}
+.about-app-name { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; }
+.about-version { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.about-desc { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.6; }
+.about-features { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.about-feature-row { display: flex; align-items: flex-start; gap: 12px; font-size: 0.88rem; }
+.about-feature-icon { font-size: 1.1rem; flex-shrink: 0; line-height: 1.4; }
+.about-feature-row span { color: var(--text-secondary); }
+.about-footer { text-align: center; padding-top: 14px; border-top: 1px solid var(--border); margin-bottom: 16px; }
+
+/* ── Task detail modal ── */
+.task-detail-modal { min-width: 0; }
+.td-meta-row {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border-light);
+}
+.td-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 100px; }
+.td-field-label { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.td-select {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); font-size: 0.85rem; color: var(--text);
+  transition: border-color var(--transition);
+}
+.td-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+.td-section { margin-bottom: 16px; }
+.td-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.td-section-label { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 6px; }
+.td-notes {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--card); font-size: 0.88rem;
+  resize: vertical; min-height: 72px; transition: border-color var(--transition);
+  font-family: inherit; color: var(--text); line-height: 1.5;
+}
+.td-notes:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+.td-notes-view { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap; }
+.td-drop-zone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 16px; min-height: 80px; transition: border-color var(--transition), background var(--transition);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.td-drop-zone--active { border-color: var(--accent); background: var(--accent-light); }
+.td-drop-hint { font-size: 0.82rem; color: var(--text-muted); text-align: center; margin: auto; }
+.td-files-grid, .td-drop-zone .td-files-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.td-file-card {
+  width: 80px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  position: relative;
+}
+.td-file-preview {
+  width: 72px; height: 72px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--border-light); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; overflow: hidden; transition: box-shadow var(--transition);
+}
+.td-file-preview:hover { box-shadow: var(--shadow-md); }
+.td-file-name { font-size: 0.68rem; color: var(--text-muted); text-align: center; word-break: break-all; max-height: 2.5em; overflow: hidden; }
+.td-file-del { position: absolute; top: -6px; right: -6px; background: var(--red); color: white; border-radius: 50%; width: 18px; height: 18px; display: none; align-items: center; justify-content: center; }
+.td-file-card:hover .td-file-del { display: flex; }
+.td-attach-btn { cursor: pointer; }
+
+/* ── Notifications page ── */
+.notif-page-list { display: flex; flex-direction: column; gap: 6px; }
+.notif-page-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 18px; border-radius: var(--radius);
+  background: var(--card); border: 1px solid var(--border);
+  cursor: pointer; text-align: left; width: 100%;
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+.notif-page-item:hover { box-shadow: var(--shadow-md); border-color: rgba(99,102,241,0.2); }
+.notif-page-item--unread { border-left: 3px solid var(--accent); }
+.notif-page-icon { font-size: 1.2rem; flex-shrink: 0; width: 28px; text-align: center; }
+.notif-page-body { flex: 1; min-width: 0; }
+.notif-page-msg { display: block; font-size: 0.9rem; font-weight: 500; color: var(--text); }
+.notif-page-time { display: block; font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+.notif-unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+/* ── Dashboard stat cards refresh ── */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 16px; margin-bottom: 28px; }
+.stats-grid .stat-card { gap: 14px; }
+.stats-grid .stat-card .stat-icon { width: 42px; height: 42px; border-radius: 11px; }
+
+/* ── Admin page refresh ── */
+.admin-section-title { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+
+/* ── Chat page refresh ── */
+.chat-message-mine .chat-bubble { background: var(--accent); color: white; }
+.chat-message-mine .chat-bubble a { color: rgba(255,255,255,0.85); }
+
+/* ── Logo mark for sidebar (if used) ── */
+.brand-icon-svg {
+  width: 28px; height: 28px; border-radius: 7px;
+  background: linear-gradient(145deg, #4f46e5, #7c3aed);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+@media (max-width: 600px) {
+  .td-meta-row { flex-direction: column; }
+  .notif-page-item { padding: 12px 14px; }
+  .task-proj-group-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+}

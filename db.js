@@ -138,6 +138,21 @@ db.version(9).stores({
   webhooks: '++id, scope, projectId, createdAt',
   sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
   departments: '&key, sortOrder'
+});
+
+db.version(10).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder'
 }).upgrade(async tx => {
   const defaults = [
     { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
@@ -501,6 +516,7 @@ const LocalDB = {
     const fileName = data.fileName || 'file';
     const id = await db.attachments.add({
       projectId: data.projectId,
+      taskId: data.taskId || null,
       uploadedBy: data.uploadedBy,
       fileName,
       mimeType: data.mimeType || 'application/octet-stream',
