@@ -1054,8 +1054,11 @@ function updateSidebarUser() {
   const init = display.charAt(0).toUpperCase();
   const isAdm = s.role === 'admin';
   const el = document.getElementById('sidebar-user');
+  const avatarHtml = s.avatarBase64
+    ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img" alt="${esc(display)}">`
+    : `<div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>`;
   el.innerHTML = `
-    <div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>
+    ${avatarHtml}
     <div class="user-details">
       <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
       <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
@@ -1333,7 +1336,10 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
           ${editable
             ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <span class="task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}">${esc(t.title)}</span>
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details · notes, tracking info, files">${esc(t.title)}</button>
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete task">${ICONS.trash}</button>` : ''}
         </div>
         <div class="task-card-bottom">
@@ -1676,10 +1682,11 @@ async function renderDocumentPanel(projectId, editable) {
       const isPdf = item.mimeType === 'application/pdf';
       const isTaskFile = !!item.taskId;
       let thumbHtml = '';
-      if (isImg && item.blob) {
-        const url = URL.createObjectURL(item.blob);
-        state._docPanelUrls.push(url);
-        thumbHtml = `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">`;
+      if (isImg) {
+        let url = '';
+        if (item.blob) { url = URL.createObjectURL(item.blob); state._docPanelUrls.push(url); }
+        else if (item.storagePath && DB.getAttachmentUrl) { url = DB.getAttachmentUrl(item.storagePath); }
+        thumbHtml = url ? `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">` : `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
       } else if (isPdf) {
         thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--pdf"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12h1v4h1"/><path d="M8 12h4"/></svg>PDF</div>`;
       } else {
@@ -1916,8 +1923,11 @@ async function renderTasks() {
           ${editable
             ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open task detail">${esc(t.title)}</button>
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Click to open details, add notes &amp; tracking info">${esc(t.title)}</button>
           ${showProject && proj ? `<a href="#/projects/${proj.id}" class="task-card-proj-badge">${esc(proj.name)}</a>` : ''}
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details · add notes, tracking number, files">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
         </div>
         <div class="task-card-bottom">
@@ -2012,24 +2022,34 @@ async function renderAdmin() {
       <div class="view-actions"><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
     </div>
     ${masterKeySection}
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Users (${users.length})</h2></div>
-      <div class="section-body">${users.map(u => `
-        <div class="user-row">
-          <div class="user-row-info">
-            <div class="user-avatar-sm">${(u.displayName || u.username).charAt(0).toUpperCase()}</div>
-            <div><strong>${esc(u.displayName || u.username)}</strong><br><span class="text-muted text-sm">@${esc(u.username)}${u.email ? ` &middot; ${esc(u.email)}` : ''}</span></div>
-            ${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')}
-            ${departmentBadge(u.department || '')}
+    <div class="admin-section-head">
+      <h2>Team Members <span class="projects-page-count">${users.length}</span></h2>
+      <button class="btn btn-primary btn-sm" data-action="add-user">${ICONS.plus} Add User</button>
+    </div>
+    <div class="admin-user-board">
+      ${users.map(u => {
+        const init = (u.displayName || u.username).charAt(0).toUpperCase();
+        const avatarHtml = u.avatarBase64
+          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img" alt="${esc(init)}">`
+          : `<div class="admin-ucard-avatar" ${userColorStyle(u)}>${init}</div>`;
+        return `<div class="admin-ucard">
+          <div class="admin-ucard-header">
+            ${avatarHtml}
+            <div class="admin-ucard-meta">
+              <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
+              <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+              <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
+            </div>
           </div>
-          <div class="user-row-actions">
+          ${u.bio ? `<p class="admin-ucard-bio">${esc(u.bio)}</p>` : ''}
+          <div class="admin-ucard-actions">
             <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
-            ${u.id !== s.userId ? `<button class="btn-icon" data-action="delete-user" data-id="${u.id}" title="Delete user">${ICONS.trash}</button>` : ''}
+            ${u.id !== s.userId ? `<button class="btn-icon btn-danger-text" data-action="delete-user" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
           </div>
-        </div>`).join('')}
-      </div>
-    </section>
+        </div>`;
+      }).join('')}
+    </div>
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header">
         <div>
@@ -2182,35 +2202,39 @@ async function refreshChatPane() {
 function renderChatMessagesHtml(messages, uMap) {
   const meId = actorId();
   if (!messages.length) {
-    return `<div class="chat-empty">
-      <div class="chat-empty-icon">${ICONS.chat}</div>
-      <p><strong>No messages yet</strong></p>
-      <p class="text-sm">Send a message below — it will show here and post to Discord.</p>
+    return `<div class="chat-empty-v2">
+      <div class="chat-empty-orb">${ICONS.chat}</div>
+      <strong>No messages yet</strong>
+      <span>Messages posted here are sent to the Discord channel.</span>
     </div>`;
   }
-  return `<div class="chat-messages">${messages.map(m => {
+  let html = '';
+  let lastDate = '';
+  messages.forEach(m => {
     const isDiscord = m.source === 'discord';
     const who = isDiscord ? null : uMap[m.userId];
-    const name = isDiscord
-      ? (m.discordDisplayName || m.discordAuthorName || 'Discord')
-      : (who ? (who.displayName || who.username) : 'Someone');
+    const name = isDiscord ? (m.discordDisplayName || m.discordAuthorName || 'Discord') : (who ? (who.displayName || who.username) : 'Someone');
     const init = name.charAt(0).toUpperCase();
     const mine = !isDiscord && m.userId === meId;
-    const avatarStyle = isDiscord ? 'style="background:#5865f2"' : userColorStyle(who);
+    const avatarBg = isDiscord ? 'background:#5865f2' : (who ? `background:${userColor(who)}` : '');
     const avatarContent = isDiscord && m.discordAvatar
-      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
-      : init;
-    const sourceBadge = isDiscord
-      ? `<span class="chat-source-discord" title="From Discord">${ICONS.discordMark} Discord</span>`
-      : '';
-    return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''} ${isDiscord ? 'chat-bubble-row-discord' : ''}">
-      <div class="chat-bubble-avatar" ${avatarStyle} title="${esc(name)}">${avatarContent}</div>
-      <div class="chat-bubble-wrap">
-        <div class="chat-bubble-meta"><strong>${esc(name)}</strong>${sourceBadge}<span>${timeAgo(m.createdAt)}</span></div>
-        <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''} ${isDiscord ? 'chat-bubble-discord' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : init;
+    const msgDate = new Date(m.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    if (msgDate !== lastDate) {
+      html += `<div class="chat-date-divider"><span>${msgDate}</span></div>`;
+      lastDate = msgDate;
+    }
+    html += `<div class="chat-msg-row ${mine ? 'chat-msg-mine' : ''} ${isDiscord ? 'chat-msg-discord' : ''}">
+      ${!mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
+      <div class="chat-msg-body">
+        ${!mine ? `<div class="chat-msg-name">${esc(name)} ${isDiscord ? `<span class="chat-discord-badge">${ICONS.discordMark}</span>` : ''}</div>` : ''}
+        <div class="chat-msg-bubble">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+        <div class="chat-msg-time">${timeAgo(m.createdAt)}</div>
       </div>
+      ${mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
     </div>`;
-  }).join('')}</div>`;
+  });
+  return `<div class="chat-msgs-wrap">${html}</div>`;
 }
 
 async function renderChat() {
@@ -2223,66 +2247,68 @@ async function renderChat() {
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   state.chatUsersMap = uMap;
 
-  const channels = [
-    { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null }
+  // Build channels - non-admins only see configured channels
+  const allChannels = [
+    { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null, live: !!generalHook?.url }
   ];
   for (const p of visibleProjects) {
     const h = projectHookMap[p.id];
-    channels.push({
-      id: `project-${p.id}`, name: p.name, webhook: h, channelUrl: h?.channelUrl || '',
-      projectId: p.id, configured: !!h?.url
-    });
+    allChannels.push({ id: `project-${p.id}`, name: p.name, webhook: h, channelUrl: h?.channelUrl || '', projectId: p.id, live: !!h?.url });
   }
+  const channels = isAdmin() ? allChannels : allChannels.filter(c => c.live);
 
-  if (!state.chatChannel) state.chatChannel = channels[0]?.id || 'general';
+  if (!state.chatChannel || !channels.find(c => c.id === state.chatChannel)) {
+    state.chatChannel = channels[0]?.id || 'general';
+  }
   const active = channels.find(c => c.id === state.chatChannel) || channels[0];
   const messages = active ? await getChatMessagesForChannel(active.id) : [];
   const messagesHtml = renderChatMessagesHtml(messages, uMap);
   const hasWebhook = !!active?.webhook?.url;
-
-  const channelList = `
-    <div class="chat-channels">
-      <h3>Channels</h3>
-      ${channels.map(c => `
-        <button type="button" class="chat-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
-          <span class="channel-hash">#</span>
-          <span class="chat-channel-name">${esc(c.name)}</span>
-          ${c.configured === false && c.id !== 'general' ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
-          ${c.id === 'general' && !c.webhook?.url ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
-        </button>`).join('')}
-      ${isAdmin() ? `<button type="button" class="chat-channel-btn" data-action="configure-chat" style="margin-top:8px;color:var(--accent-text)">${ICONS.plus} Configure channels</button>` : ''}
-    </div>`;
-
-  const composeHtml = hasWebhook ? `
-      <form class="chat-compose" data-form="chat-send" data-channel-id="${active.id}">
-        <textarea name="content" rows="1" placeholder="Type a message — sent as ${esc(getSession()?.displayName || 'you')} · Enter to send" required></textarea>
-        <button type="submit" class="btn btn-primary" title="Send">${ICONS.send}</button>
-      </form>` : `
-      <div class="chat-compose chat-compose-disabled">
-        <p class="text-muted text-sm">${isAdmin() ? 'Configure a webhook in Admin → Discord Integrations to send messages.' : 'Ask an admin to configure a Discord webhook for this channel.'}</p>
-        ${isAdmin() ? `<button type="button" class="btn btn-sm btn-primary" data-action="configure-chat">Open Integrations</button>` : ''}
-      </div>`;
-
-  const chatMain = `
-    <div class="chat-main">
-      <div class="chat-header">
-        <h2>${ICONS.chat} ${esc(active?.name || 'Chat')}</h2>
-        <div class="chat-header-actions">
-          ${active?.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Open in Discord</a>` : ''}
-          ${!hasWebhook && isAdmin() ? `<button type="button" class="btn btn-sm btn-ghost" data-action="configure-chat">Set up webhook</button>` : ''}
-        </div>
-      </div>
-      <div class="chat-body" id="chat-messages-pane">${messagesHtml}</div>
-      ${composeHtml}
-    </div>`;
+  const s = getSession();
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Chat</h1><p class="view-subtitle">Messages from WorkTracker and Discord, merged in real time</p></div>
-    </div>
-    <div class="chat-layout">
-      ${channelList}
-      ${chatMain}
+    <div class="chat-v2-layout">
+      <aside class="chat-v2-sidebar">
+        <div class="chat-v2-sidebar-header">
+          <span class="chat-v2-sidebar-title">Channels</span>
+          ${isAdmin() ? `<a href="#/admin" class="chat-v2-cfg-btn" title="Configure webhooks in Admin">${ICONS.edit}</a>` : ''}
+        </div>
+        <div class="chat-v2-channels">
+          ${channels.map(c => `
+            <button type="button" class="chat-v2-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
+              <span class="chat-v2-hash">#</span>
+              <span class="chat-v2-channel-name">${esc(c.name)}</span>
+              ${c.live ? `<span class="chat-v2-live-dot" title="Live"></span>` : (isAdmin() ? `<span class="chat-v2-uncfg" title="Not configured">!</span>` : '')}
+            </button>`).join('')}
+        </div>
+        ${!channels.length && !isAdmin() ? `<p class="chat-v2-no-channels">No channels configured yet.<br>Ask an admin to set up Discord webhooks.</p>` : ''}
+        <div class="chat-v2-sidebar-footer">
+          <div class="chat-v2-me-chip" ${userColorStyle(s)}>
+            <span class="chat-v2-me-init">${(s?.displayName || s?.username || '?').charAt(0).toUpperCase()}</span>
+            <span class="chat-v2-me-name">${esc(s?.displayName || s?.username || '')}</span>
+          </div>
+        </div>
+      </aside>
+      <div class="chat-v2-main">
+        <div class="chat-v2-header">
+          <div>
+            <span class="chat-v2-channel-title"># ${esc(active?.name || 'chat')}</span>
+            ${active?.live ? `<span class="chat-v2-live-badge">Live · Discord</span>` : ''}
+          </div>
+          <div class="chat-v2-header-actions">
+            ${active?.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Discord</a>` : ''}
+          </div>
+        </div>
+        <div class="chat-v2-body" id="chat-messages-pane">${messagesHtml}</div>
+        ${hasWebhook ? `
+        <form class="chat-v2-compose" data-form="chat-send" data-channel-id="${active.id}">
+          <textarea class="chat-v2-input" name="content" rows="1" placeholder="Message #${esc(active?.name || 'chat')}… (Enter to send, Shift+Enter for newline)" required></textarea>
+          <button type="submit" class="chat-v2-send-btn" title="Send">${ICONS.send}</button>
+        </form>` : `
+        <div class="chat-v2-compose chat-v2-compose-disabled">
+          <span class="text-muted text-sm">${isAdmin() ? 'Add a Discord webhook in Admin → Integrations to enable messaging.' : 'Messaging not configured for this channel yet.'}</span>
+        </div>`}
+      </div>
     </div>`;
 
   requestAnimationFrame(() => {
@@ -2722,14 +2748,12 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
+  // Auto-mark all as read when page is visited
+  if (uid && unread > 0) { await DB.markAllNotificationsRead(uid); refreshNotificationBadge(); }
   const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋' };
   content.innerHTML = `
     <div class="projects-page-header">
-      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${unread} unread</span></div>
-      <div class="projects-page-actions">
-        ${unread ? `<button type="button" class="btn btn-ghost" data-action="notif-mark-all">${ICONS.checkCircle} Mark all read</button>` : ''}
-        ${rows.length ? `<button type="button" class="btn btn-ghost btn-danger-text" data-action="clear-all-notifications">Clear all</button>` : ''}
-      </div>
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total</span></div>
     </div>
     <div class="notif-page-list">
       ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
@@ -2933,7 +2957,10 @@ async function showAssignTaskModal(taskId) {
 function assigneeChipHtml(user) {
   if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
-  return `<span class="assignee-chip" ${userColorStyle(user)} title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${initials}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+  const avatarInner = user.avatarBase64
+    ? `<img src="${esc(user.avatarBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
+    : initials;
+  return `<span class="assignee-chip" ${userColorStyle(user)} title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
 
 function showMilestoneModal(pid) {
@@ -3020,18 +3047,57 @@ async function showProfileModal() {
   const user = await DB.getUser(s.userId);
   if (!user) { showToast('Could not load profile', 'error'); return; }
   const isAdm = s.role === 'admin';
-  showModal('Edit Profile', `
-    <form data-form="edit-profile">
-      <p class="text-muted text-sm" style="margin-bottom:12px">This is how your name appears across WorkTracker. Your username (<strong>@${esc(user.username)}</strong>) stays the same.</p>
+  const avatarUrl = user.avatarBase64 || '';
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  showModal('My Profile', `
+    <form data-form="edit-profile" class="profile-form-v2">
+      <div class="profile-avatar-section">
+        <div class="profile-avatar-wrap">
+          ${avatarUrl
+            ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar">`
+            : `<div id="profile-avatar-preview" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`}
+          <label class="profile-avatar-edit-btn" title="Change photo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
+          </label>
+        </div>
+        <div class="profile-identity">
+          <strong class="profile-username">@${esc(user.username)}</strong>
+          ${isAdm ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : ''}
+          ${departmentBadge(user.department || '')}
+        </div>
+      </div>
+      <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="">
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
+      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="2" placeholder="What do you do? e.g. Procurement lead at SubZero Motors">${esc(user.bio || '')}</textarea></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
       </select></div>
-      ${isAdm ? `<p class="text-muted text-sm" style="margin:6px 0 12px"><span class="admin-tag">${ICONS.crown} Admin</span> badge is shown automatically.</p>` : ''}
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+      <div class="form-group"><label>Accent Color</label><div style="display:flex;gap:8px;align-items:center"><input name="color" type="color" value="${esc(user.color||'#4f46e5')}" style="height:36px;width:60px;border-radius:6px;border:1px solid var(--border);cursor:pointer"><span class="text-muted text-sm">Used for your avatar and highlights</span></div></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
     </form>`);
+  // Avatar preview
+  const avatarInput = document.getElementById('profile-avatar-input');
+  const avatarPreview = document.getElementById('profile-avatar-preview');
+  const avatarB64 = document.getElementById('profile-avatar-b64');
+  if (avatarInput) {
+    avatarInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { showToast('Image too large (max 2 MB)', 'warning'); return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const b64 = ev.target.result;
+        avatarB64.value = b64;
+        if (avatarPreview) {
+          avatarPreview.outerHTML = `<img id="profile-avatar-preview" src="${esc(b64)}" class="profile-avatar-img" alt="avatar">`;
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 }
 
 function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
@@ -3547,8 +3613,12 @@ async function handleFormSubmit(e) {
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
       const department = fd.get('department') || '';
+      const bio = fd.get('bio')?.trim() || '';
+      const color = fd.get('color') || '';
+      const avatarBase64 = fd.get('avatarBase64') || undefined;
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      await DB.updateUser(s.userId, { displayName, email, department }, s.userId);
+      const profileData = { displayName, email, department, bio, ...(color && { color }), ...(avatarBase64 && { avatarBase64 }) };
+      await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
       updateSidebarUser();
