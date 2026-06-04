@@ -1270,7 +1270,7 @@ async function renderProjects() {
       const ctAssignee = ct ? uMap[ct.assigneeId] : null;
       const pinnedFields = visibleFieldsByProject[p.id] || [];
       const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
-      return `<a href="#/projects/${p.id}" class="project-card-v2" style="--card-accent:${accent}">
+      return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
         <div class="project-card-v2-body">
           <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
@@ -1300,7 +1300,7 @@ async function renderProjects() {
           </span>
           <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
         </div>
-      </a>`;
+      </div>`;
     }).join('')}</div>`}`;
 }
 
@@ -1412,7 +1412,7 @@ function projectVisibleCustomFields(tasks = []) {
 function renderProjectVisibleFields(fields = []) {
   if (!fields.length) return '';
   return `<div class="project-visible-fields" aria-label="Pinned task details">
-    ${fields.map(field => `<button type="button" class="project-visible-field" data-action="open-task-detail" data-id="${field.taskId}" title="Open ${esc(field.taskTitle)}">
+    ${fields.map(field => `<button type="button" class="project-visible-field" data-action="copy-pinned-field" data-copy="${esc(field.value)}" title="Copy ${esc(field.label)}">
       <span class="project-visible-field-task">${esc(field.taskTitle)}</span>
       <span class="project-visible-field-main"><span>${esc(field.label)}</span><strong>${esc(field.value)}</strong></span>
     </button>`).join('')}
@@ -1422,10 +1422,10 @@ function renderProjectVisibleFields(fields = []) {
 function renderProjectCardVisibleFields(fields = []) {
   if (!fields.length) return '';
   return `<div class="project-card-v2-fields" aria-label="Pinned project fields">
-    ${fields.slice(0, 3).map(field => `<span class="project-card-v2-field" title="${esc(field.taskTitle)}">
+    ${fields.slice(0, 3).map(field => `<button type="button" class="project-card-v2-field" data-action="copy-pinned-field" data-copy="${esc(field.value)}" title="Copy ${esc(field.label)}">
       <span class="project-card-v2-field-label">${esc(field.label)}</span>
       <strong>${esc(field.value)}</strong>
-    </span>`).join('')}
+    </button>`).join('')}
     ${fields.length > 3 ? `<span class="project-card-v2-field-more">+${fields.length - 3} more</span>` : ''}
   </div>`;
 }
@@ -4010,6 +4010,31 @@ const actions = {
     const p = await DB.getProject(pid);
     await renderTab(tab, pid, p ? canEdit(p) : false);
   },
+  'open-project-card': (b) => {
+    const pid = Number(b.dataset.projectId);
+    if (pid) window.location.hash = `#/projects/${pid}`;
+  },
+  'copy-pinned-field': async (b) => {
+    const value = b.dataset.copy || '';
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      showToast('Copied tracking info', 'success');
+    } catch (_) {
+      showToast('Could not copy automatically', 'warning');
+    }
+  },
   'filter-projects': async (b) => { state.projectFilter = b.dataset.filter; await renderProjects(); },
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
   'close-modal': () => hideModal(),
@@ -4335,10 +4360,20 @@ async function init() {
       if (b && actions[b.dataset.action]) {
         // Prevent the nav-item anchor href="#" from changing the route
         if (b.tagName === 'A' && b.getAttribute('href') === '#') e.preventDefault();
+        if (b.dataset.action === 'copy-pinned-field') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         await actions[b.dataset.action](b);
       }
     });
     document.addEventListener('keydown', (e) => {
+      const card = e.target.matches?.('.project-card-v2[data-action="open-project-card"]') ? e.target : null;
+      if (card && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        actions['open-project-card'](card);
+        return;
+      }
       const ta = e.target.closest('.chat-compose textarea');
       if (ta && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
