@@ -1271,6 +1271,283 @@ async function renderProjects() {
   });
 }
 
+/* ──── Task order helpers (localStorage) ──── */
+
+function getTaskOrder(projectId) {
+  try { return JSON.parse(localStorage.getItem(`wt_task_order_${projectId}`)) || null; }
+  catch(_) { return null; }
+}
+function setTaskOrder(projectId, ids) {
+  try { localStorage.setItem(`wt_task_order_${projectId}`, JSON.stringify(ids.map(Number))); }
+  catch(_) {}
+}
+function applyTaskOrder(tasks, projectId) {
+  const order = getTaskOrder(projectId);
+  if (!order?.length) return tasks;
+  const map = new Map(order.map((id, i) => [Number(id), i]));
+  return [...tasks].sort((a, b) => (map.has(a.id) ? map.get(a.id) : 9e9) - (map.has(b.id) ? map.get(b.id) : 9e9));
+}
+
+/* ──── Task view renderers ──── */
+
+function _insertZoneHtml(afterId, status, projectId) {
+  return `<div class="task-insert-zone" data-after="${afterId}" data-status="${esc(status)}" data-project-id="${projectId}">
+    <div class="task-insert-line"></div>
+    <button class="task-insert-btn" data-action="quick-add-task" data-after="${afterId}" data-status="${esc(status)}" data-project-id="${projectId}" title="Add task here">+</button>
+  </div>`;
+}
+
+function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
+  if (!tasks.length) return emptyState({
+    icon: 'tasks', title: 'No tasks in this project',
+    description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
+    cta: editable ? 'Add a task' : '', ctaAction: editable ? 'add-task' : '',
+    ctaData: editable ? { 'project-id': projectId } : {}
+  });
+
+  const sorted = applyTaskOrder(tasks, projectId);
+  const statusGroups = [
+    { key: 'doing', label: 'In Progress', color: 'var(--blue)' },
+    { key: 'todo',  label: 'To Do',       color: 'var(--amber)' },
+    { key: 'done',  label: 'Done',        color: 'var(--green)' },
+  ];
+
+  const renderCard = (t) => {
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const assignee = uMap[t.assigneeId];
+    return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}"
+        draggable="${editable ? 'true' : 'false'}" data-task-id="${t.id}">
+      ${editable ? `<div class="task-card-drag-handle" title="Drag to reorder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="7" r="1.5"/><circle cx="15" cy="7" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="17" r="1.5"/><circle cx="15" cy="17" r="1.5"/></svg>
+      </div>` : ''}
+      <div class="task-card-status-stripe"></div>
+      <div class="task-card-body">
+        <div class="task-card-top">
+          ${editable
+            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
+            : `<span class="status-dot status-dot-${t.status}"></span>`}
+          <span class="task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}">${esc(t.title)}</span>
+          ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete task">${ICONS.trash}</button>` : ''}
+        </div>
+        <div class="task-card-bottom">
+          ${editable
+            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
+            : assigneeChipHtml(assignee)}
+          <div class="task-card-tags">
+            ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
+            ${prioBadge(t.priority)}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  for (const sg of statusGroups) {
+    const grpTasks = sorted.filter(t => t.status === sg.key);
+    if (!grpTasks.length && sg.key === 'done') continue;
+    html += `<div class="task-group-v2" data-status="${sg.key}">
+      <div class="task-group-header-v2" style="--group-color:${sg.color}">
+        <span class="task-group-dot-v2"></span>
+        <span class="task-group-label-v2">${sg.label}</span>
+        <span class="task-group-count-v2">${grpTasks.length}</span>
+      </div>
+      <div class="task-group-body-v2" data-project-id="${projectId}">
+        ${editable ? _insertZoneHtml('top-' + sg.key, sg.key, projectId) : ''}
+        ${grpTasks.map(t => renderCard(t) + (editable ? _insertZoneHtml(t.id, sg.key, projectId) : '')).join('')}
+        ${!grpTasks.length ? `<p class="task-group-empty-v2">No ${sg.label.toLowerCase()} tasks. Click + to add one.</p>` : ''}
+      </div>
+    </div>`;
+  }
+  return html;
+}
+
+function renderTaskBoardViewHtml(tasks, uMap, editable, projectId) {
+  const cols = [
+    { key: 'todo',  label: 'To Do',      color: '#f59e0b', bg: 'rgba(245,158,11,0.05)' },
+    { key: 'doing', label: 'In Progress', color: '#3b82f6', bg: 'rgba(59,130,246,0.05)' },
+    { key: 'done',  label: 'Done',        color: '#10b981', bg: 'rgba(16,185,129,0.05)' },
+  ];
+  return `<div class="task-board-v2">
+    ${cols.map(col => {
+      const colTasks = applyTaskOrder(tasks, projectId).filter(t => t.status === col.key);
+      return `<div class="task-board-col-v2" data-status="${col.key}" style="--col-color:${col.color};--col-bg:${col.bg}">
+        <div class="task-board-col-head-v2">
+          <div class="task-board-col-name-v2"><span class="task-board-col-dot-v2"></span>${col.label}</div>
+          <span class="task-board-col-cnt-v2">${colTasks.length}</span>
+        </div>
+        <div class="task-board-cards-v2">
+          ${colTasks.map(t => {
+            const od = isOverdue(t.dueDate) && t.status !== 'done';
+            const assignee = uMap[t.assigneeId];
+            return `<div class="task-board-card-v2${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}" style="--card-color:${col.color}">
+              <div class="task-board-card-title-v2">${esc(t.title)}</div>
+              <div class="task-board-card-footer-v2">
+                ${assigneeChipHtml(assignee)}
+                <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+                  ${t.dueDate ? `<span style="display:flex;align-items:center;gap:3px;font-size:0.78rem" class="${od ? 'overdue' : 'text-muted'}">${ICONS.calendar}${formatDateShort(t.dueDate)}</span>` : ''}
+                  ${prioBadge(t.priority)}
+                </div>
+              </div>
+              ${editable ? `<div class="task-board-card-actions-v2">
+                <button class="status-dot status-dot-${t.status}" style="width:18px;height:18px" data-action="cycle-task-status" data-id="${t.id}" title="Next status"></button>
+                <button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>
+              </div>` : ''}
+            </div>`;
+          }).join('') || `<div class="task-board-col-empty-v2">No tasks here</div>`}
+        </div>
+        ${editable ? `<button class="task-board-add-v2" data-action="add-task" data-project-id="${projectId}" data-default-status="${col.key}">${ICONS.plus} Add task</button>` : ''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderTaskTimelineViewHtml(tasks, uMap, projectId) {
+  const datedTasks = tasks.filter(t => t.dueDate);
+  const undatedCount = tasks.length - datedTasks.length;
+  if (!datedTasks.length) return `<div class="timeline-empty-v2">
+    ${ICONS.calendar}
+    <p style="font-size:0.95rem;font-weight:600;margin-top:8px">No due dates set</p>
+    <p class="text-muted text-sm">Add due dates to tasks to see them on the timeline.</p>
+  </div>`;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dueDates = datedTasks.map(t => new Date(t.dueDate + 'T00:00:00'));
+  let minDate = new Date(Math.min(...dueDates, today));
+  let maxDate = new Date(Math.max(...dueDates, today));
+  minDate.setDate(1); minDate.setMonth(minDate.getMonth() - 1);
+  maxDate.setDate(1); maxDate.setMonth(maxDate.getMonth() + 2);
+  const totalMs = maxDate - minDate;
+
+  const pct = (dateStr) => ((new Date(dateStr + 'T00:00:00') - minDate) / totalMs * 100).toFixed(3);
+  const todayPct = ((today - minDate) / totalMs * 100).toFixed(3);
+
+  const months = [];
+  let cur = new Date(minDate);
+  while (cur < maxDate) {
+    months.push({ label: cur.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }), left: ((cur - minDate) / totalMs * 100).toFixed(2) });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  const STATUS_COLOR = { todo: 'var(--amber)', doing: 'var(--blue)', done: 'var(--green)' };
+
+  const rows = datedTasks.map(t => {
+    const assignee = uMap[t.assigneeId];
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const dueP = Number(pct(t.dueDate));
+    const barW = Math.max(2, Math.min(12, dueP * 0.12));
+    const barLeft = Math.max(0, dueP - barW);
+    const color = od ? 'var(--red)' : (STATUS_COLOR[t.status] || 'var(--border)');
+    const init = assignee ? (assignee.displayName || assignee.username || '?').charAt(0).toUpperCase() : '?';
+    return `<div class="timeline-row-v2" data-task-id="${t.id}">
+      <div class="timeline-row-label-v2" title="${esc(t.title)}">
+        <span class="status-dot status-dot-${t.status}" style="width:10px;height:10px;flex-shrink:0;min-width:10px"></span>
+        <span class="timeline-label-text-v2">${esc(t.title)}</span>
+        <span class="timeline-assignee-v2" title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init}</span>
+      </div>
+      <div class="timeline-row-track-v2">
+        <div class="timeline-today-track" style="left:${todayPct}%"></div>
+        <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} — Due ${formatDateShort(t.dueDate)}">
+          <span class="timeline-bar-label-v2">${formatDateShort(t.dueDate)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="task-timeline-v2">
+    <div class="timeline-header-v2">
+      <div class="timeline-label-col-v2"></div>
+      <div class="timeline-track-col-v2">
+        ${months.map(m => `<div class="timeline-month-v2" style="left:${m.left}%">${m.label}</div>`).join('')}
+        <div class="timeline-today-v2" style="left:${todayPct}%">
+          <span class="timeline-today-label-v2">Today</span>
+          <div class="timeline-today-line-v2"></div>
+        </div>
+      </div>
+    </div>
+    <div class="timeline-rows-v2">${rows}</div>
+    ${undatedCount ? `<p class="text-muted text-sm" style="margin-top:14px;padding-left:180px">${undatedCount} task${undatedCount !== 1 ? 's' : ''} without due dates not shown.</p>` : ''}
+  </div>`;
+}
+
+function setupTaskDragDropList(projectId) {
+  const container = document.getElementById('tab-content');
+  if (!container) return;
+  let draggedId = null;
+
+  container.querySelectorAll('.task-card-v2[draggable=true]').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      draggedId = Number(card.dataset.taskId);
+      card.classList.add('task-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(draggedId));
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('task-dragging');
+      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
+    });
+  });
+
+  container.querySelectorAll('.task-insert-zone').forEach(zone => {
+    zone.addEventListener('dragover', e => {
+      if (!draggedId) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
+      zone.classList.add('drop-active');
+    });
+    zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-active'); });
+    zone.addEventListener('drop', async e => {
+      e.preventDefault(); zone.classList.remove('drop-active');
+      if (!draggedId) return;
+      const afterId = zone.dataset.after;
+      const allCards = [...container.querySelectorAll('.task-card-v2')];
+      const orderedIds = allCards.map(c => Number(c.dataset.taskId));
+      const withoutDragged = orderedIds.filter(id => id !== draggedId);
+      let newOrder;
+      if (afterId && afterId.startsWith('top-')) {
+        newOrder = [draggedId, ...withoutDragged];
+      } else {
+        const idx = withoutDragged.indexOf(Number(afterId));
+        if (idx === -1) newOrder = [...withoutDragged, draggedId];
+        else { newOrder = [...withoutDragged]; newOrder.splice(idx + 1, 0, draggedId); }
+      }
+      setTaskOrder(projectId, newOrder);
+      draggedId = null;
+      const p = await DB.getProject(projectId);
+      if (p) await renderTab('tasks', projectId, canEdit(p));
+    });
+  });
+}
+
+async function createQuickTask(projectId, afterId, status) {
+  const qaf = document.querySelector('.task-qaf');
+  const titleInput = qaf?.querySelector('.task-qaf-input');
+  const title = titleInput?.value?.trim();
+  if (!title) { titleInput?.focus(); return; }
+  const uid = actorId();
+  const s = getSession();
+  try {
+    const newId = await DB.createTask({ projectId, title, status: status || 'todo', priority: 'medium', assigneeId: s?.userId || uid, actorUserId: uid });
+    const allTasks = await DB.getTasks({ projectId });
+    const currentOrder = getTaskOrder(projectId) || allTasks.map(t => t.id);
+    const withoutNew = currentOrder.filter(id => Number(id) !== Number(newId));
+    let newOrder;
+    if (!afterId || afterId.startsWith('top-')) newOrder = [newId, ...withoutNew];
+    else {
+      const idx = withoutNew.indexOf(Number(afterId));
+      if (idx === -1) newOrder = [...withoutNew, newId];
+      else { newOrder = [...withoutNew]; newOrder.splice(idx + 1, 0, newId); }
+    }
+    setTaskOrder(projectId, newOrder);
+    bustWorkspaceCache();
+    const project = await DB.getProject(projectId);
+    if (project) await renderTab('tasks', projectId, canEdit(project));
+    showToast('Task added', 'success');
+  } catch(err) {
+    showToast('Failed to add task', 'error');
+  }
+}
+
 async function renderProjectDetail(projectId) {
   const content = document.getElementById('content');
   const main = document.getElementById('main-content');
@@ -1302,7 +1579,7 @@ async function renderProjectDetail(projectId) {
   const owner = users.find(u => u.id === project.ownerId);
   const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
   let tab = state.projectTab;
-  if (!canSeeTasks && tab === 'tasks') tab = 'milestones';
+  if (!canSeeTasks && (tab === 'tasks' || tab === 'timeline')) tab = 'milestones';
   state.projectTab = tab;
   const attCount = attList.length;
   state._detailCache = { projectId, allProjectTasks, milestones, users, attList };
@@ -1310,8 +1587,21 @@ async function renderProjectDetail(projectId) {
   if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
   await renderDocumentPanel(projectId, editable);
 
+  const currentTask = canSeeTasks ? allProjectTasks.find(t => t.status === 'doing') : null;
+  const currentTaskAssignee = currentTask ? users.find(u => u.id === currentTask.assigneeId) : null;
+  const currentTaskBanner = currentTask ? `
+    <div class="current-task-banner">
+      <span class="current-task-pulse"></span>
+      <div class="current-task-info">
+        <span class="current-task-meta">In Progress</span>
+        <strong class="current-task-title">${esc(currentTask.title)}</strong>
+      </div>
+      ${currentTaskAssignee ? assigneeChipHtml(currentTaskAssignee) : ''}
+      ${currentTask.dueDate ? `<span class="current-task-due ${isOverdue(currentTask.dueDate) ? 'overdue' : isDueSoon(currentTask.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(currentTask.dueDate)}</span>` : ''}
+    </div>` : '';
+
   const progressLine = canSeeTasks
-    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>`
+    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>${currentTaskBanner}`
     : `<p class="text-muted text-sm" style="margin-top:14px">${ICONS.target} Task details are visible only to the project owner.</p>`;
 
   content.innerHTML = `
@@ -1337,6 +1627,7 @@ async function renderProjectDetail(projectId) {
     ${isLogisticsWorkflow(project) ? renderLogisticsWorkflowCard(project, allProjectTasks, attList, editable) : ''}
     <div class="tab-bar">
       ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
+      ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
       <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
       <button class="tab-btn ${tab === 'library' ? 'active' : ''}" data-action="switch-tab" data-tab="library" data-project-id="${projectId}">Library (${attCount})</button>
       <button class="tab-btn ${tab === 'updates' ? 'active' : ''}" data-action="switch-tab" data-tab="updates" data-project-id="${projectId}">Activity</button>
@@ -1439,38 +1730,38 @@ async function renderTab(tab, projectId, editable) {
     const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
     const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-    el.innerHTML = `
-      ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button></div>` : ''}
-      ${tasks.length === 0 ? emptyState({
-        icon: 'tasks',
-        title: 'No tasks in this project',
-        description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
-        cta: editable ? 'Add a task' : '',
-        ctaAction: editable ? 'add-task' : '',
-        ctaData: editable ? { 'project-id': projectId } : {}
-      }) :
-      `<div class="task-list">${tasks.map(t => { const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
-        <div class="task-item ${t.status === 'done' ? 'task-done' : ''}">
-          <div class="task-item-left">
-            ${editable
-              ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Change status"></button>`
-              : `<span class="status-dot status-dot-${t.status}"></span>`}
-            <div class="task-item-info">
-              <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
-              <div class="task-item-meta">
-                ${editable
-                  ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
-                  : assigneeChipHtml(assignee)}
-                ${t.dueDate ? `<span class="${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
-                ${t.priority !== 'medium' ? prioBadge(t.priority) : ''}
-              </div>
-            </div>
-          </div>
-          <div class="task-item-right">
-            ${taskBadge(t.status)}
-            ${editable ? `<button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
-          </div>
-        </div>`; }).join('')}</div>`}`;
+    const view = state.taskViewMode || 'list';
+
+    const viewToggle = `<div class="task-view-toggle">
+      <button class="tvt-btn${view === 'list' ? ' active' : ''}" data-action="task-view" data-view="list" data-project-id="${projectId}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        List
+      </button>
+      <button class="tvt-btn${view === 'board' ? ' active' : ''}" data-action="task-view" data-view="board" data-project-id="${projectId}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+        Board
+      </button>
+    </div>`;
+
+    el.innerHTML = `<div class="task-view-header">
+      ${viewToggle}
+      ${editable ? `<button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>` : ''}
+    </div>
+    <div id="task-view-body">
+      ${view === 'board' ? renderTaskBoardViewHtml(tasks, uMap, editable, projectId) : renderTaskListViewHtml(tasks, uMap, editable, projectId)}
+    </div>`;
+
+    if (view === 'list' && editable) {
+      setupTaskDragDropList(projectId);
+    }
+  } else if (tab === 'timeline') {
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
+    const s = getSession();
+    const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
+    const users = cache?.users ?? await getUsersCached();
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+    el.innerHTML = `<div style="padding-top:4px">${renderTaskTimelineViewHtml(tasks, uMap, projectId)}</div>`;
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -2771,10 +3062,13 @@ async function handleFormSubmit(e) {
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
+      const _taskSubmitBtn = form.querySelector('[type=submit]');
+      if (_taskSubmitBtn?.disabled) return;
+      if (_taskSubmitBtn) { _taskSubmitBtn.disabled = true; _taskSubmitBtn.textContent = 'Adding…'; }
       const picked = Number(fd.get('assigneeId'));
       const assigneeId = Number.isFinite(picked) && picked > 0 ? picked : uid;
       const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
-      if (!data.title || !data.projectId) return;
+      if (!data.title || !data.projectId) { if (_taskSubmitBtn) { _taskSubmitBtn.disabled = false; _taskSubmitBtn.textContent = 'Add Task'; } return; }
       const newId = await DB.createTask(data);
       const project = await DB.getProject(data.projectId);
       await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`);
@@ -3143,6 +3437,47 @@ const actions = {
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();
+  },
+  'task-view': async (b) => {
+    state.taskViewMode = b.dataset.view;
+    const pid = Number(b.dataset.projectId);
+    const p = await DB.getProject(pid);
+    if (p) await renderTab('tasks', pid, canEdit(p));
+  },
+  'quick-add-task': (b) => {
+    const afterId = b.dataset.after;
+    const status = b.dataset.status || 'todo';
+    const projectId = Number(b.dataset.projectId);
+    const zone = b.closest('.task-insert-zone');
+    if (!zone) return;
+    const form = document.createElement('div');
+    form.className = 'task-qaf';
+    form.dataset.projectId = String(projectId);
+    form.dataset.after = afterId || '';
+    form.dataset.status = status;
+    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name…" maxlength="200" autocomplete="off">
+      <div class="task-qaf-btns">
+        <button class="btn btn-sm btn-primary" data-action="confirm-quick-task" data-project-id="${projectId}" data-after="${afterId || ''}" data-status="${status}">Add</button>
+        <button class="btn btn-sm btn-ghost" data-action="cancel-quick-task" data-project-id="${projectId}">Cancel</button>
+      </div>`;
+    zone.replaceWith(form);
+    const inp = form.querySelector('.task-qaf-input');
+    inp?.focus();
+    inp?.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); await createQuickTask(projectId, afterId, status); }
+      else if (e.key === 'Escape') {
+        const p = await DB.getProject(projectId);
+        if (p) await renderTab('tasks', projectId, canEdit(p));
+      }
+    });
+  },
+  'confirm-quick-task': async (b) => {
+    await createQuickTask(Number(b.dataset.projectId), b.dataset.after, b.dataset.status);
+  },
+  'cancel-quick-task': async (b) => {
+    const pid = Number(b.dataset.projectId);
+    const p = await DB.getProject(pid);
+    if (p) await renderTab('tasks', pid, canEdit(p));
   },
   'switch-tab': async (b) => {
     const tab = b.dataset.tab; const pid = Number(b.dataset.projectId);
@@ -3544,25 +3879,35 @@ async function init() {
       const _upBar = document.getElementById('upload-progress-bar');
       const _upFill = document.getElementById('upload-progress-fill');
       const _upLabel = _upBar?.querySelector('.upload-progress-label');
+      let _hideTimer = null;
+      const hideBar = (delay = 0) => {
+        if (_upBar) { clearTimeout(_hideTimer); _hideTimer = setTimeout(() => _upBar.classList.add('hidden'), delay); }
+      };
       if (_upBar) { _upBar.classList.remove('hidden'); if (_upFill) _upFill.style.width = '0%'; if (_upLabel) _upLabel.textContent = `Uploading 0 / ${validFiles.length}…`; }
       let uploaded = 0;
-      for (const file of validFiles) {
-        await DB.addAttachment({
-          projectId: pid,
-          uploadedBy: s.userId,
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          documentType,
-          blob: file
-        });
-        await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
-        uploaded++;
-        if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
-        if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;
+      try {
+        for (const file of validFiles) {
+          await DB.addAttachment({
+            projectId: pid,
+            uploadedBy: s.userId,
+            fileName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            documentType,
+            blob: file
+          });
+          await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
+          uploaded++;
+          if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
+          if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;
+        }
+        if (_upBar) { if (_upFill) _upFill.style.width = '100%'; if (_upLabel) _upLabel.textContent = `Uploaded ${uploaded} file${uploaded !== 1 ? 's' : ''}`; }
+        if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
+        await router();
+      } catch (err) {
+        showToast('Upload error: ' + (err?.message || 'Unknown error'), 'error');
+      } finally {
+        hideBar(uploaded > 0 ? 1400 : 0);
       }
-      if (_upBar) { if (_upFill) _upFill.style.width = '100%'; if (_upLabel) _upLabel.textContent = `Uploaded ${uploaded} file${uploaded !== 1 ? 's' : ''}`; setTimeout(() => _upBar.classList.add('hidden'), 1200); }
-      if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
-      await router();
     });
     setupImport();
     const mt = document.getElementById('menu-toggle');
