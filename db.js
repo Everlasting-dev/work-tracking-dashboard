@@ -602,6 +602,8 @@ const LocalDB = {
   async updateTask(id, changes, actorUserId = null) {
     const patch = { ...changes };
     delete patch.actorUserId;
+    const activityDetails = patch.activityDetails;
+    delete patch.activityDetails;
     if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
     if (patch.workflowStepKey != null) patch.workflowStepKey = patch.workflowStepKey || '';
     patch.updatedAt = new Date().toISOString();
@@ -610,7 +612,7 @@ const LocalDB = {
     if (task) {
       await db.projects.update(task.projectId, { updatedAt: patch.updatedAt });
       if (actorUserId) {
-        const detail = patch.status ? `status → ${patch.status}` : (task.title || '');
+        const detail = activityDetails || (patch.status ? `status -> ${patch.status}` : (task.title || ''));
         await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }

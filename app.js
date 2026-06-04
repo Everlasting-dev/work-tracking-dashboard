@@ -325,7 +325,7 @@ function bustWorkspaceCache() {
 }
 
 // On startup, clear the Supabase shadow cache if schema version changed
-const _SCHEMA_VER = 'wt-schema-v10';
+const _SCHEMA_VER = 'wt-schema-v11';
 if (localStorage.getItem('wt-schema-version') !== _SCHEMA_VER) {
   try {
     localStorage.removeItem('wt-supabase-shadow-v1');
@@ -1391,6 +1391,40 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
   return html;
 }
 
+function projectVisibleCustomFields(tasks = []) {
+  return tasks.flatMap(task => (task.customFields || [])
+    .filter(field => field && field.showInProject && (field.label || field.value))
+    .map(field => ({
+      taskId: task.id,
+      taskTitle: task.title || 'Task',
+      label: field.label || 'Custom field',
+      value: field.value || ''
+    })));
+}
+
+function renderProjectVisibleFields(fields = []) {
+  if (!fields.length) return '';
+  return `<div class="project-visible-fields" aria-label="Pinned task details">
+    ${fields.map(field => `<button type="button" class="project-visible-field" data-action="open-task-detail" data-id="${field.taskId}" title="Open ${esc(field.taskTitle)}">
+      <span class="project-visible-field-task">${esc(field.taskTitle)}</span>
+      <span class="project-visible-field-main"><span>${esc(field.label)}</span><strong>${esc(field.value)}</strong></span>
+    </button>`).join('')}
+  </div>`;
+}
+
+function customFieldActivitySummary(before = [], after = []) {
+  const keyFor = (f) => `${(f.label || '').trim().toLowerCase()}::${(f.value || '').trim()}`;
+  const beforeMap = new Map((before || []).filter(f => f?.label || f?.value).map(f => [keyFor(f), f]));
+  const afterFields = (after || []).filter(f => f?.label || f?.value);
+  const added = afterFields.find(f => !beforeMap.has(keyFor(f)));
+  const pinned = afterFields.find(f => f.showInProject && !beforeMap.get(keyFor(f))?.showInProject);
+  const changed = added || pinned;
+  if (!changed) return afterFields.length !== (before || []).filter(f => f?.label || f?.value).length ? 'custom fields updated' : '';
+  const label = changed.label || 'custom field';
+  const value = changed.value ? `: ${changed.value}` : '';
+  return `${changed.showInProject ? 'pinned to project description - ' : 'custom field added - '}${label}${value}`;
+}
+
 function renderTaskBoardViewHtml(tasks, uMap, editable, projectId) {
   const cols = [
     { key: 'todo',  label: 'To Do',      color: '#f59e0b', bg: 'rgba(245,158,11,0.05)' },
@@ -1618,6 +1652,7 @@ async function renderProjectDetail(projectId) {
 
   const currentTask = canSeeTasks ? allProjectTasks.find(t => t.status === 'doing') : null;
   const currentTaskAssignee = currentTask ? users.find(u => u.id === currentTask.assigneeId) : null;
+  const visibleCustomFields = canSeeTasks ? projectVisibleCustomFields(allProjectTasks) : [];
   const currentTaskBanner = currentTask ? `
     <div class="current-task-banner">
       <span class="current-task-pulse"></span>
@@ -1650,6 +1685,7 @@ async function renderProjectDetail(projectId) {
       <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
+      ${renderProjectVisibleFields(visibleCustomFields)}
       <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
       ${progressLine}
     </div>
@@ -3306,6 +3342,11 @@ async function showTaskDetailModal(taskId) {
             <div class="td-cf-row" data-cf-index="${i}">
               <input class="td-cf-label" type="text" value="${esc(f.label)}" placeholder="Field name" data-cf="label" data-idx="${i}">
               <input class="td-cf-value" type="text" value="${esc(f.value)}" placeholder="Value" data-cf="value" data-idx="${i}">
+              <label class="td-cf-pin" title="Show this field in the main project description">
+                <input type="checkbox" data-cf="showInProject" data-idx="${i}" ${f.showInProject ? 'checked' : ''}>
+                <span class="td-cf-pin-box">${ICONS.checkCircle}</span>
+                <span class="td-cf-pin-text">Show in project</span>
+              </label>
               <button type="button" class="btn-icon td-cf-del" data-cf-del="${i}" title="Remove field">${ICONS.trash}</button>
             </div>`).join('')}
         </div>
@@ -3345,6 +3386,11 @@ async function showTaskDetailModal(taskId) {
       row.dataset.cfIndex = idx;
       row.innerHTML = `<input class="td-cf-label" type="text" placeholder="Field name (e.g. Tracking #)" data-cf="label" data-idx="${idx}">
         <input class="td-cf-value" type="text" placeholder="Value" data-cf="value" data-idx="${idx}">
+        <label class="td-cf-pin" title="Show this field in the main project description">
+          <input type="checkbox" data-cf="showInProject" data-idx="${idx}">
+          <span class="td-cf-pin-box">${ICONS.checkCircle}</span>
+          <span class="td-cf-pin-text">Show in project</span>
+        </label>
         <button type="button" class="btn-icon td-cf-del" data-cf-del="${idx}" title="Remove">${ICONS.trash}</button>`;
       cfContainer.appendChild(row);
       row.querySelector('.td-cf-label')?.focus();
@@ -3869,10 +3915,14 @@ const actions = {
       const cfRows = document.querySelectorAll('.td-cf-row');
       const customFields = [...cfRows].map(row => ({
         label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
-        value: row.querySelector('[data-cf="value"]')?.value?.trim() || ''
+        value: row.querySelector('[data-cf="value"]')?.value?.trim() || '',
+        showInProject: !!row.querySelector('[data-cf="showInProject"]')?.checked
       })).filter(f => f.label || f.value);
       const uid = actorId();
+      const oldTask = await DB.getTask(taskId);
+      const activityDetails = customFieldActivitySummary(oldTask?.customFields || [], customFields);
       const changes = { dueDate, notes, customFields };
+      if (activityDetails) changes.activityDetails = activityDetails;
       if (status) changes.status = status;
       if (priority) changes.priority = priority;
       if (assigneeId) changes.assigneeId = assigneeId;

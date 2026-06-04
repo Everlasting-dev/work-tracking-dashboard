@@ -1092,6 +1092,7 @@ const SupabaseDB = {
       return optimistic;
     }
     const task = await this._fetchRemoteTask(id);
+    const activityDetails = changes.activityDetails || '';
     const patch = { updated_at: new Date().toISOString() };
     if (changes.title != null) patch.title = changes.title;
     if (changes.status != null) patch.status = changes.status;
@@ -1108,7 +1109,7 @@ const SupabaseDB = {
       await this._sb().from('wt_projects').update({ updated_at: patch.updated_at }).eq('id', task.projectId);
       this._touchShadowProject(task.projectId, patch.updated_at);
       if (actorUserId) {
-        const detail = changes.status ? `status → ${changes.status}` : (task.title || '');
+        const detail = activityDetails || (changes.status ? `status -> ${changes.status}` : (task.title || ''));
         await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
