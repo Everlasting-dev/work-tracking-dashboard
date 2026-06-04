@@ -1937,9 +1937,10 @@ async function renderTasks() {
           <div class="task-card-tags">
             ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
             ${prioBadge(t.priority)}
-            ${hasNotes ? `<span class="task-note-dot" title="Has notes">●</span>` : ''}
+            ${hasNotes ? `<span class="task-note-dot" title="Has notes">📝</span>` : ''}
           </div>
         </div>
+        ${t.customFields?.length ? `<div class="task-card-fields">${t.customFields.slice(0,2).map(f => `<span class="task-cf-chip" data-action="open-task-detail" data-id="${t.id}" title="Click to edit"><span class="task-cf-label">${esc(f.label)}</span><span class="task-cf-value">${esc(f.value)}</span></span>`).join('')}${t.customFields.length > 2 ? `<span class="task-cf-more">+${t.customFields.length-2} more</span>` : ''}</div>` : ''}
       </div>
     </div>`;
   };
@@ -3826,24 +3827,34 @@ const actions = {
   'show-about': () => { closeUserMenu(); showAboutModal(); },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
-    const taskId = Number(b.dataset.id);
-    const status = document.querySelector('[data-td="status"]')?.value;
-    const priority = document.querySelector('[data-td="priority"]')?.value;
-    const dueDate = document.querySelector('[data-td="dueDate"]')?.value || '';
-    const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
-    const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
-    const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
-    const cfRows = document.querySelectorAll('.td-cf-row');
-    const customFields = [...cfRows].map(row => ({
-      label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
-      value: row.querySelector('[data-cf="value"]')?.value?.trim() || ''
-    })).filter(f => f.label || f.value);
-    const uid = actorId();
-    await DB.updateTask(taskId, { ...(status&&{status}), ...(priority&&{priority}), dueDate, ...(assigneeId&&{assigneeId}), notes, customFields }, uid);
-    bustWorkspaceCache();
-    hideModal();
-    await router();
-    showToast('Task saved', 'success');
+    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      const taskId = Number(b.dataset.id);
+      const status = document.querySelector('[data-td="status"]')?.value;
+      const priority = document.querySelector('[data-td="priority"]')?.value;
+      const dueDate = document.querySelector('[data-td="dueDate"]')?.value || '';
+      const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
+      const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
+      const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
+      const cfRows = document.querySelectorAll('.td-cf-row');
+      const customFields = [...cfRows].map(row => ({
+        label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
+        value: row.querySelector('[data-cf="value"]')?.value?.trim() || ''
+      })).filter(f => f.label || f.value);
+      const uid = actorId();
+      const changes = { dueDate, notes, customFields };
+      if (status) changes.status = status;
+      if (priority) changes.priority = priority;
+      if (assigneeId) changes.assigneeId = assigneeId;
+      await DB.updateTask(taskId, changes, uid);
+      bustWorkspaceCache();
+      hideModal();
+      await router();
+      showToast('Task saved', 'success');
+    } catch(err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
+      showToast('Save failed: ' + (err?.message || 'Unknown error'), 'error');
+    }
   },
   'clear-all-notifications': async () => {
     const uid = actorId(); if (!uid) return;

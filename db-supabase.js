@@ -237,6 +237,8 @@ const SupabaseDB = {
     if (changes.milestoneId !== undefined) next.milestoneId = changes.milestoneId;
     if (changes.assigneeId !== undefined) next.assigneeId = changes.assigneeId == null ? null : Number(changes.assigneeId);
     if (changes.workflowStepKey !== undefined) next.workflowStepKey = changes.workflowStepKey || '';
+    if (changes.notes !== undefined) next.notes = changes.notes ?? '';
+    if (changes.customFields !== undefined) next.customFields = changes.customFields ?? [];
     next.updatedAt = new Date().toISOString();
     return next;
   },
@@ -457,10 +459,13 @@ const SupabaseDB = {
 
   _mapTask(r) {
     if (!r) return null;
+    let customFields = [];
+    try { customFields = r.custom_fields ? (typeof r.custom_fields === 'string' ? JSON.parse(r.custom_fields) : r.custom_fields) : []; } catch(_) {}
     return {
       id: r.id, projectId: r.project_id, milestoneId: r.milestone_id, assigneeId: r.assignee_id,
       workflowStepKey: r.workflow_step_key || '',
       title: r.title, dueDate: r.due_date || '', status: r.status, priority: r.priority,
+      notes: r.notes || '', customFields,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -499,7 +504,7 @@ const SupabaseDB = {
   _mapAttachment(r, blob = null) {
     if (!r) return null;
     return {
-      id: r.id, projectId: r.project_id, uploadedBy: r.uploaded_by, fileName: r.file_name,
+      id: r.id, projectId: r.project_id, taskId: r.task_id || null, uploadedBy: r.uploaded_by, fileName: r.file_name,
       mimeType: r.mime_type, documentType: r.document_type || '', storagePath: r.storage_path,
       createdAt: r.created_at, blob
     };
@@ -1095,6 +1100,8 @@ const SupabaseDB = {
     if (changes.milestoneId !== undefined) patch.milestone_id = changes.milestoneId;
     if (changes.assigneeId !== undefined) patch.assignee_id = changes.assigneeId == null ? null : Number(changes.assigneeId);
     if (changes.workflowStepKey !== undefined) patch.workflow_step_key = changes.workflowStepKey || '';
+    if (changes.notes !== undefined) patch.notes = changes.notes ?? '';
+    if (changes.customFields !== undefined) patch.custom_fields = JSON.stringify(changes.customFields ?? []);
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
     if (task) {
