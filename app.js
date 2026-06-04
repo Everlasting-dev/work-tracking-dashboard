@@ -1202,6 +1202,11 @@ async function renderProjects() {
   for (const t of allTasks) {
     if (t.status === 'doing' && !doingTask[t.projectId]) doingTask[t.projectId] = t;
   }
+  const visibleFieldsByProject = {};
+  for (const t of allTasks) {
+    const fields = projectVisibleCustomFields([t]);
+    if (fields.length) visibleFieldsByProject[t.projectId] = [...(visibleFieldsByProject[t.projectId] || []), ...fields];
+  }
 
   // Status → card accent color
   const STATUS_ACCENT = { active: '#3b82f6', completed: '#10b981', 'on-hold': '#f59e0b', archived: '#9ca3af' };
@@ -1263,6 +1268,7 @@ async function renderProjects() {
       const accent = STATUS_ACCENT[p.status] || '#9ca3af';
       const ct = doingTask[p.id];
       const ctAssignee = ct ? uMap[ct.assigneeId] : null;
+      const pinnedFields = visibleFieldsByProject[p.id] || [];
       const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
       return `<a href="#/projects/${p.id}" class="project-card-v2" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
@@ -1270,6 +1276,7 @@ async function renderProjects() {
           <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
           <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}</h3>
           <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
+          ${renderProjectCardVisibleFields(pinnedFields)}
           <div class="project-card-v2-progress">
             ${progressBar(p.progress)}
             <div class="project-card-v2-progress-meta">
@@ -1409,6 +1416,17 @@ function renderProjectVisibleFields(fields = []) {
       <span class="project-visible-field-task">${esc(field.taskTitle)}</span>
       <span class="project-visible-field-main"><span>${esc(field.label)}</span><strong>${esc(field.value)}</strong></span>
     </button>`).join('')}
+  </div>`;
+}
+
+function renderProjectCardVisibleFields(fields = []) {
+  if (!fields.length) return '';
+  return `<div class="project-card-v2-fields" aria-label="Pinned project fields">
+    ${fields.slice(0, 3).map(field => `<span class="project-card-v2-field" title="${esc(field.taskTitle)}">
+      <span class="project-card-v2-field-label">${esc(field.label)}</span>
+      <strong>${esc(field.value)}</strong>
+    </span>`).join('')}
+    ${fields.length > 3 ? `<span class="project-card-v2-field-more">+${fields.length - 3} more</span>` : ''}
   </div>`;
 }
 
