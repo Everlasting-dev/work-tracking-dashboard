@@ -316,6 +316,21 @@ function bustWorkspaceCache() {
   _webhooksCacheAt = 0;
   _workspaceFetchPromise = null;
   try { sessionStorage.removeItem(SESSION_CACHE_KEY); } catch (_) {}
+  // Also bust the Supabase shadow cache so tasks are re-fetched with fresh data
+  if (window.WT_STORAGE_MODE === 'supabase' && window.SupabaseDB?._shadowState) {
+    window.SupabaseDB._shadowState.at = { projects: 0, tasks: 0, departments: 0 };
+    window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false };
+    try { window.SupabaseDB._persistShadowState(); } catch(_) {}
+  }
+}
+
+// On startup, clear the Supabase shadow cache if schema version changed
+const _SCHEMA_VER = 'wt-schema-v10';
+if (localStorage.getItem('wt-schema-version') !== _SCHEMA_VER) {
+  try {
+    localStorage.removeItem('wt-supabase-shadow-v1');
+    localStorage.setItem('wt-schema-version', _SCHEMA_VER);
+  } catch(_) {}
 }
 
 async function getUsersCached(force = false) {
@@ -1008,6 +1023,7 @@ async function showSyncDiagnosticsModal() {
     <div class="sync-diag-list">${rowsHtml}</div>
     <div class="form-actions sync-diag-actions">
       <button type="button" class="btn btn-primary" data-action="sync-retry-now">Retry now</button>
+      <button type="button" class="btn btn-ghost" data-action="sync-force-reload" title="Clear local cache and re-fetch everything from Supabase">Force reload from Supabase</button>
       <button type="button" class="btn btn-ghost" data-action="sync-copy-errors"${jobs.some(j => j.lastError) ? '' : ' disabled'}>Copy errors</button>
       ${status.failed ? '<button type="button" class="btn btn-ghost btn-danger-text" data-action="sync-clear-failed">Clear failed</button>' : ''}
     </div>`);
@@ -3785,6 +3801,20 @@ const actions = {
     renderSyncStatusIndicator();
     await showSyncDiagnosticsModal();
     showToast('Retrying cloud sync…', 'info');
+  },
+  'sync-force-reload': async () => {
+    try {
+      localStorage.removeItem('wt-supabase-shadow-v1');
+      localStorage.removeItem('wt-supabase-sync-queue-v1');
+      if (window.SupabaseDB) {
+        window.SupabaseDB._shadowState = window.SupabaseDB._emptyShadowState();
+        window.SupabaseDB._syncQueue = [];
+      }
+    } catch(_) {}
+    bustWorkspaceCache();
+    hideModal();
+    showToast('Cache cleared — reloading fresh data from Supabase…', 'info');
+    await router();
   },
   'sync-copy-errors': async () => {
     const jobs = DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : [];
