@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0-beta.10
+
+- Exposed the local Dexie database to the sync engine so initial cloud users can actually hydrate into IndexedDB before auth setup is chosen.
+
 ## 2.1.0-beta.9
 
 - Added a direct Supabase REST bootstrap for existing users so fresh installs show sign-in instead of admin setup even if the wider sync engine cannot hydrate yet.

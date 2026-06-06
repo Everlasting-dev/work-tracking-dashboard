@@ -254,6 +254,8 @@ function generateSalt() {
 /* ── Database helpers (Supabase-ready: swap Dexie calls for supabase.from() later) ── */
 
 const LocalDB = {
+  db,
+
   /* Activity audit log */
   async logActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
     if (!userId || !action) return null;
