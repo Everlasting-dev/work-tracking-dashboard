@@ -54,7 +54,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.10'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.11'; }
 
 /* ──── Config ──── */
 
@@ -313,6 +313,11 @@ function canEdit(project) {
   if (!s || !project) return false;
   return s.role === 'admin' || project.ownerId === s.userId || (project.editorIds || []).map(Number).includes(Number(s.userId));
 }
+function isHiddenFromUser(project, userId = actorId()) {
+  if (!project || !userId) return false;
+  if (project.ownerId === userId || (project.editorIds || []).map(Number).includes(Number(userId))) return false;
+  return (project.hiddenFromIds || []).map(Number).includes(Number(userId));
+}
 function canManageProjectAccess(project) {
   const s = getSession();
   if (!s || !project) return false;
@@ -490,8 +495,7 @@ async function fetchWorkspaceData() {
       const uid = getSession()?.userId;
       const filteredProjects = (uid && !isAdmin())
         ? projects.filter(p => {
-            const ids = Array.isArray(p.hiddenFromIds) ? p.hiddenFromIds : [];
-            return !ids.includes(uid) || p.ownerId === uid || (p.editorIds || []).includes(uid);
+            return !isHiddenFromUser(p, uid);
           })
         : projects;
       data = { projects: filteredProjects, tasks, users, classrooms };
@@ -1384,7 +1388,7 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
   menu.innerHTML = `
     ${syncMenuItem}
-    <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
+    <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} View Profile</button>
     <button type="button" class="user-menu-item" data-action="report-bug">${ICONS.alertTriangle} Report Bug</button>
     <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
     <button type="button" class="user-menu-item" data-action="show-about">${ICONS.target} About WorkTracker</button>
@@ -1552,8 +1556,8 @@ async function renderProjects() {
         const eu = uMap[eid]; if (!eu) return '';
         const init = (eu.displayName || eu.username).charAt(0).toUpperCase();
         return eu.avatarBase64
-          ? `<img class="project-card-v2-member-avatar" src="${esc(eu.avatarBase64)}" title="${esc(eu.displayName || eu.username)}">`
-          : `<span class="project-card-v2-member-avatar" ${userColorStyle(eu)} title="${esc(eu.displayName || eu.username)}">${init}</span>`;
+          ? `<img class="project-card-v2-member-avatar project-card-v2-user-click" src="${esc(eu.avatarBase64)}" title="${esc(eu.displayName || eu.username)}" data-action="show-user-profile" data-user-id="${eu.id}">`
+          : `<span class="project-card-v2-member-avatar project-card-v2-user-click" ${userColorStyle(eu)} title="${esc(eu.displayName || eu.username)}" data-action="show-user-profile" data-user-id="${eu.id}">${init}</span>`;
       }).join('');
       return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
@@ -1580,8 +1584,8 @@ async function renderProjects() {
         </div>
         <div class="project-card-v2-footer">
           <span class="project-card-v2-owner">
-            <span class="project-card-v2-owner-avatar" ${userColorStyle(owner)}>${ownerInit}</span>
-            <span class="project-card-v2-owner-name">${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+            <span class="project-card-v2-owner-avatar project-card-v2-user-click" ${userColorStyle(owner)} ${owner ? `data-action="show-user-profile" data-user-id="${owner.id}"` : ''}>${ownerInit}</span>
+            <span class="project-card-v2-owner-name project-card-v2-user-click" ${owner ? `data-action="show-user-profile" data-user-id="${owner.id}"` : ''}>${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
             ${memberAvatars ? `<span class="project-card-v2-members">${memberAvatars}</span>` : ''}
           </span>
           <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
@@ -1939,6 +1943,17 @@ async function renderProjectDetail(projectId) {
   }
 
   const s = getSession();
+  if (!isAdmin()) {
+    const allowedClassroomIds = await userClassroomIds();
+    const allowedSet = Array.isArray(allowedClassroomIds) ? new Set(allowedClassroomIds.map(Number)) : null;
+    const inAllowedClassroom = !allowedSet || project.classroomId == null || allowedSet.has(Number(project.classroomId));
+    if (!inAllowedClassroom || isHiddenFromUser(project, s?.userId)) {
+      hideDocumentPanel();
+      if (main) main.classList.remove('with-doc-panel');
+      content.innerHTML = `<div class="view-header"><a href="#/projects" class="btn btn-ghost">${ICONS.arrowLeft} Back</a></div>${emptyState({ icon:'lock', title:'Project not visible', description:'You are not assigned to this classroom or the project is hidden from you.' })}`;
+      return;
+    }
+  }
   const editable = canEdit(project);
   const manageAccess = canManageProjectAccess(project);
   const [allProjectTasks, milestones, users, attList] = await Promise.all([
@@ -2318,7 +2333,7 @@ async function renderTasks() {
   const editableProjectIds = new Set(allProjects.filter(p => canEdit(p)).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
   let all = allTasks.filter(t => visibleProjectIds.has(t.projectId));
-  if (!isAdmin()) all = all.filter(t => editableProjectIds.has(t.projectId) || t.assigneeId === s.userId);
+  if (!isAdmin()) all = all.filter(t => visibleProjectIds.has(t.projectId));
   const f = state.taskFilter;
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
@@ -2592,8 +2607,14 @@ async function renderSettings() {
           </div>`).join('') || '<p class="text-muted text-sm" style="padding:12px 16px">No classrooms yet.</p>'}
         </div>
         <form data-form="add-classroom" class="classroom-add-form">
-          <input name="name" type="text" placeholder="Classroom name" required>
-          <input name="description" type="text" placeholder="Short description (optional)">
+          <label class="classroom-add-field">
+            <span>Classroom name</span>
+            <input name="name" type="text" placeholder="e.g. Logistics team" required>
+          </label>
+          <label class="classroom-add-field">
+            <span>Description</span>
+            <input name="description" type="text" placeholder="What this classroom is for">
+          </label>
           <div class="classroom-add-form-row">
             <input name="color" type="color" value="#4f46e5" title="Pick a colour">
             <button type="submit" class="btn btn-primary" style="flex:1">+ Add Classroom</button>
@@ -2924,6 +2945,16 @@ async function renderAdminDashboard() {
       </div>
     </div>`;
   };
+  const taskStatusRows = [
+    ['Done', tasks.filter(t => t.status === 'done').length, 'green'],
+    ['In progress', tasks.filter(t => t.status === 'doing').length, 'blue'],
+    ['To do', tasks.filter(t => t.status === 'todo').length, 'amber'],
+  ];
+  const topContributors = users
+    .map(u => ({ user: u, stats: userProfileStats(u.id, projects, tasks) }))
+    .sort((a, b) => b.stats.score - a.stats.score)
+    .slice(0, 5);
+  const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
 
   content.innerHTML = `
     <div class="projects-page-header" style="margin-bottom:18px">
@@ -2934,6 +2965,28 @@ async function renderAdminDashboard() {
       ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active · ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
       ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done · ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
       ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
+    </div>
+    <div class="dash-graph-grid">
+      <div class="dash-panel">
+        <div class="dash-panel-head"><h3>Task Flow</h3><span class="projects-page-count">${tasks.length}</span></div>
+        <div class="dash-bars">
+          ${taskStatusRows.map(([label, value, tone]) => `<div class="dash-bar-row">
+            <span>${label}</span>
+            <div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill--${tone}" style="width:${tasks.length ? Math.max(4, Math.round((value / tasks.length) * 100)) : 0}%"></div></div>
+            <strong>${value}</strong>
+          </div>`).join('')}
+        </div>
+      </div>
+      <div class="dash-panel">
+        <div class="dash-panel-head"><h3>Contributor Rank</h3><span class="projects-page-count">Top ${topContributors.length}</span></div>
+        <div class="dash-bars">
+          ${topContributors.map(({ user, stats }) => `<div class="dash-bar-row dash-bar-row-user">
+            <span>${esc(user.displayName || user.username)}</span>
+            <div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill--purple" style="width:${Math.max(5, Math.round((stats.score / maxContributorScore) * 100))}%"></div></div>
+            <strong>${esc(stats.rank.label)}</strong>
+          </div>`).join('') || '<p class="text-muted text-sm">No ranked activity yet.</p>'}
+        </div>
+      </div>
     </div>
     <div class="dash-two-col">
       <div>
@@ -3646,24 +3699,75 @@ function assigneeChipHtml(user) {
   return `<span class="assignee-chip" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
 
+function profileRank(score) {
+  if (score >= 120) return { label: 'King', tone: 'purple', next: null };
+  if (score >= 80) return { label: 'Queen', tone: 'purple', next: 120 - score };
+  if (score >= 50) return { label: 'Rook', tone: 'blue', next: 80 - score };
+  if (score >= 28) return { label: 'Bishop', tone: 'green', next: 50 - score };
+  if (score >= 12) return { label: 'Knight', tone: 'amber', next: 28 - score };
+  return { label: 'Pawn', tone: 'muted', next: 12 - score };
+}
+
+function userProfileStats(userId, projects = [], tasks = []) {
+  const uid = Number(userId);
+  const founded = projects.filter(p => Number(p.ownerId) === uid);
+  const coediting = projects.filter(p => Number(p.ownerId) !== uid && (p.editorIds || []).map(Number).includes(uid));
+  const assigned = tasks.filter(t => Number(t.assigneeId) === uid);
+  const completedTasks = assigned.filter(t => t.status === 'done');
+  const completedFounded = founded.filter(p => p.status === 'completed' || projectStatsFromTasks(tasks, p.id).progress === 100);
+  const score = founded.length * 8 + completedFounded.length * 10 + coediting.length * 5 + completedTasks.length * 3 + assigned.filter(t => t.status === 'doing').length;
+  return {
+    founded: founded.length,
+    completedFounded: completedFounded.length,
+    coediting: coediting.length,
+    assigned: assigned.length,
+    completedTasks: completedTasks.length,
+    score,
+    rank: profileRank(score)
+  };
+}
+
 async function showUserProfileModal(userId) {
   const user = await DB.getUser(Number(userId));
   if (!user) { showToast('User not found', 'error'); return; }
+  const { projects, tasks } = await getWorkspaceData();
+  const stats = userProfileStats(user.id, projects, tasks);
+  const joined = user.createdAt ? formatDateShort(user.createdAt) : 'Unknown';
+  const isSelf = Number(user.id) === Number(actorId());
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
   const avatar = user.avatarBase64
-    ? `<img src="${esc(user.avatarBase64)}" class="profile-avatar-img" alt="${esc(initials)}">`
-    : `<div class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
+    ? `<img src="${esc(user.avatarBase64)}" class="profile-view-avatar-img" alt="${esc(initials)}">`
+    : `<div class="profile-view-avatar" ${userColorStyle(user)}>${initials}</div>`;
   showModal(esc(user.displayName || user.username), `
-    <div class="profile-view-card">
-      <div class="profile-avatar-wrap">${avatar}</div>
-      <div class="profile-view-main">
-        <strong>@${esc(user.username)}</strong>
-        <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
-        ${user.bio ? `<p>${esc(user.bio)}</p>` : '<p class="text-muted text-sm">No bio added yet.</p>'}
-        ${user.email ? `<span class="text-muted text-sm">${esc(user.email)}</span>` : ''}
+    <div class="profile-view-card profile-view-card-rich">
+      <div class="profile-view-hero" style="--profile-color:${esc(user.color || userColor(user))}">
+        <div class="profile-view-avatar-ring">${avatar}</div>
+        <div class="profile-view-meta">
+          <h3>${esc(user.displayName || user.username)}</h3>
+          <span>@${esc(user.username)} · Joined ${esc(joined)}</span>
+          <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
+        </div>
+        <div class="profile-rank profile-rank--${esc(stats.rank.tone)}">
+          <span>${esc(stats.rank.label)}</span>
+          <strong>${stats.score}</strong>
+        </div>
       </div>
+      <div class="profile-stat-grid">
+        <div><strong>${stats.founded}</strong><span>Founded</span></div>
+        <div><strong>${stats.completedFounded}</strong><span>Projects completed</span></div>
+        <div><strong>${stats.coediting}</strong><span>Co-editing</span></div>
+        <div><strong>${stats.completedTasks}</strong><span>Tasks completed</span></div>
+      </div>
+      <div class="profile-rank-track">
+        <div class="profile-rank-track-fill" style="width:${Math.min(100, Math.round((stats.score / (stats.score + (stats.rank.next || 0) || 1)) * 100))}%"></div>
+      </div>
+      <p class="profile-view-bio">${user.bio ? esc(user.bio) : 'No bio added yet.'}</p>
+      ${stats.rank.next ? `<p class="text-muted text-sm">${stats.rank.next} more points to the next rank.</p>` : '<p class="text-muted text-sm">Top rank reached.</p>'}
     </div>
-    <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Close</button><button type="button" class="btn btn-primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button></div>`);
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" data-action="close-modal">Close</button>
+      ${isSelf ? `<button type="button" class="btn btn-primary" data-action="edit-my-profile">Edit profile</button>` : `<button type="button" class="btn btn-primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button>`}
+    </div>`);
 }
 
 function showMilestoneModal(pid) {
@@ -4590,7 +4694,8 @@ const actions = {
   'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
-  'user-edit-profile': async () => { closeUserMenu(); await showProfileModal(); },
+  'user-view-profile': async () => { closeUserMenu(); await showUserProfileModal(actorId()); },
+  'edit-my-profile': async () => { await showProfileModal(); },
   'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'close-howto': () => hideModal(),

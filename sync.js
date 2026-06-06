@@ -55,7 +55,7 @@ const SyncEngine = (() => {
 
   function getStatus() {
     const pending = _queue.filter(o => o.status === 'pending').length;
-    const failed  = _queue.filter(o => o.status === 'failed').length;
+    const failed  = _queue.filter(o => o.status === 'failed').length + (_lastError ? 1 : 0);
     return {
       enabled: _initDone,
       pending,
@@ -342,6 +342,23 @@ const SyncEngine = (() => {
       if (accessRequests.status=== 'fulfilled') await _bulkPut(ldb.projectAccessRequests, accessRequests.value);
       if (bugReports.status    === 'fulfilled') await _bulkPut(ldb.bugReports,            bugReports.value);
       if (userClassrooms.status=== 'fulfilled') await _bulkPut(ldb.userClassrooms,        userClassrooms.value);
+
+      const criticalFailures = [
+        ['projects', projects],
+        ['tasks', tasks],
+        ['classrooms', classrooms],
+        ['user classrooms', userClassrooms],
+      ].filter(([, result]) => result.status === 'rejected');
+      if (criticalFailures.length) {
+        const first = criticalFailures[0][1].reason;
+        const detail = first?.message || first?.details || String(first || 'unknown error');
+        _lastError = `Cloud schema sync failed for ${criticalFailures.map(([name]) => name).join(', ')}: ${detail}`;
+        window.dispatchEvent(new CustomEvent('wt-sync-error', {
+          detail: { summary: 'schema pull', error: _lastError }
+        }));
+      } else {
+        _lastError = '';
+      }
 
       _lastPullAt = Date.now();
       localStorage.setItem(PULL_KEY, String(_lastPullAt));

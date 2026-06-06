@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0-beta.11
+
+- Cloud sync now surfaces missing project/task/classroom Supabase tables as a visible sync issue instead of silently reporting up to date.
+- Classroom observers can view projects and tasks in their assigned classroom while edit access remains owner/admin/editor only.
+- Profile viewing now opens before editing and includes joined date, contribution stats, task completions, and chess-style rank.
+- Project owner and co-editor avatars open user profiles.
+- Classroom creation UI now stacks name and description clearly.
+- Admin dashboard adds task-flow and contributor-rank graph bars.
+- Supabase schema reruns now create `wt_sessions` before altering it, preventing older workspaces from stopping mid-schema.
+
 ## 2.1.0-beta.10
 
 - Exposed the local Dexie database to the sync engine so initial cloud users can actually hydrate into IndexedDB before auth setup is chosen.
