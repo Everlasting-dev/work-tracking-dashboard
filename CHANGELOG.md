@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0-beta.12
+
+- Fixed the Supabase schema order so first-time SQL runs no longer stop before creating project, task, milestone, and classroom tables.
+- Added `Sample Classroom` to the Supabase schema and moved generated sample projects into a local Sample Classroom.
+- Added an always-available manual Supabase sync action that pulls fresh cloud data, flushes pending local changes, and confirms when everything is up to date.
+- Polished the classroom creation fields to match the app UI.
+- Added breathing room to Task Flow and Contributor Rank dashboard graphs so labels and ranks no longer touch card edges.
+
 ## 2.1.0-beta.11
 
 - Cloud sync now surfaces missing project/task/classroom Supabase tables as a visible sync issue instead of silently reporting up to date.

@@ -27,6 +27,7 @@ const ICONS = {
   chat: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
   externalLink: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>',
   gauge: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>',
+  refresh: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></svg>',
   send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
   discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
   paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
@@ -54,7 +55,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.11'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.12'; }
 
 /* ──── Config ──── */
 
@@ -1295,7 +1296,7 @@ function renderSyncStatusIndicator() {
   const status = _getSyncStatus();
   const offline = isOffline();
   const isCloud = isCloudMode();
-  const visible = isCloud && status?.enabled && (offline || status.pending || status.failed || status.syncing);
+  const visible = isCloud && status?.enabled;
   if (!visible) {
     el.textContent = '';
     el.className = 'sync-status-label hidden';
@@ -1325,6 +1326,13 @@ function renderSyncStatusIndicator() {
     el.className = 'sync-status-label is-pending is-clickable';
     el.title = 'Click for sync queue details';
     el.setAttribute('aria-label', 'Cloud sync in progress. Click for details.');
+    return;
+  }
+  if (!status.pending) {
+    el.textContent = ' · Sync';
+    el.className = 'sync-status-label is-clickable';
+    el.title = 'Sync with Supabase now';
+    el.setAttribute('aria-label', 'Sync with Supabase now.');
     return;
   }
   el.textContent = status.pending === 1 ? ' · 1 pending sync' : ` · ${status.pending} pending sync`;
@@ -1380,8 +1388,8 @@ function renderUserMenu() {
   menu.classList.remove('hidden');
   const syncStatus = _getSyncStatus();
   const isCloud = isCloudMode();
-  const syncMenuItem = isCloud && syncStatus?.enabled && (syncStatus.pending || syncStatus.failed)
-    ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="open-sync-diagnostics">${ICONS.alertTriangle} Cloud sync${syncStatus.failed ? ` (${syncStatus.failed} failed)` : ''}</button>`
+  const syncMenuItem = isCloud && syncStatus?.enabled
+    ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="sync-now">${syncStatus.failed ? ICONS.alertTriangle : ICONS.refresh} ${syncStatus.failed ? `Cloud sync (${syncStatus.failed} issue${syncStatus.failed === 1 ? '' : 's'})` : 'Sync now'}</button>`
     : '';
   const adminItems = isAdmin() ? `
     <button type="button" class="user-menu-item" data-action="user-export">${ICONS.download} Export Data</button>
@@ -4709,12 +4717,48 @@ const actions = {
   'show-sync-diagnostics': async () => {
     await showSyncDiagnosticsModal();
   },
+  'sync-now': async () => {
+    closeUserMenu();
+    if (!isCloudMode()) {
+      showToast('Cloud sync is not enabled for this build.', 'info');
+      return;
+    }
+    if (isOffline()) {
+      showToast('You are offline. Sync will run when the connection returns.', 'warning');
+      return;
+    }
+    showToast('Syncing with Supabase...', 'info');
+    try {
+      if (window.SyncEngine) {
+        await SyncEngine.pull();
+        await SyncEngine.flush();
+      } else if (DB.retrySyncNow) {
+        await DB.retrySyncNow();
+      } else if (DB.flushPendingSync) {
+        await DB.flushPendingSync();
+      }
+      bustWorkspaceCache();
+      await getWorkspaceData(true).catch(() => null);
+      renderSyncStatusIndicator();
+      updateOfflineSyncBanner();
+      const status = _getSyncStatus();
+      if (!status.failed && !status.pending && !status.syncing) {
+        showToast('Cloud sync is up to date.', 'success');
+      } else if (status.failed) {
+        showToast('Cloud sync needs attention. Open sync details for more.', 'warning');
+      } else {
+        showToast('Cloud sync is still working through pending changes.', 'info');
+      }
+    } catch (err) {
+      console.warn('[sync-now] failed', err);
+      renderSyncStatusIndicator();
+      showToast(`Cloud sync failed: ${err?.message || 'check sync details'}`, 'warning');
+    }
+  },
   'sync-retry-now': async () => {
-    if (DB.retrySyncNow) await DB.retrySyncNow();
-    else if (DB.flushPendingSync) await DB.flushPendingSync();
+    await actions['sync-now']();
     renderSyncStatusIndicator();
     await showSyncDiagnosticsModal();
-    showToast('Retrying cloud sync…', 'info');
   },
   'sync-force-reload': async () => {
     try {
@@ -4727,6 +4771,7 @@ const actions = {
     } catch(_) {}
     bustWorkspaceCache();
     hideModal();
+    if (window.SyncEngine) await SyncEngine.pull();
     showToast('Cache cleared — reloading fresh data from Supabase…', 'info');
     await router();
   },
@@ -5299,7 +5344,7 @@ async function init() {
       if (syncBtn && !syncBtn.classList.contains('hidden')) {
         e.preventDefault();
         e.stopPropagation();
-        await showSyncDiagnosticsModal();
+        await actions['sync-now']();
         return;
       }
       const userBtn = e.target.closest('#sidebar-user');

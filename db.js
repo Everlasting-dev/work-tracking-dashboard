@@ -1041,7 +1041,15 @@ const LocalDB = {
 
   /* Sample Data */
   async createSampleData(ownerId) {
-    const jobId = await LocalDB.createProject({ name: 'Job Search', notes: 'Track applications, resume updates, and follow-ups.', type: 'job-search', priority: 'high', ownerId });
+    let sampleRoom = await db.classrooms.where('name').equals('Sample Classroom').first();
+    const classroomId = sampleRoom?.id || await LocalDB.createClassroom({
+      name: 'Sample Classroom',
+      description: 'Demo workspace for sample projects',
+      color: '#7c3aed'
+    });
+    await LocalDB.setUserClassrooms(ownerId, [...new Set([...(await LocalDB.getUserClassroomIds(ownerId)), classroomId])]);
+
+    const jobId = await LocalDB.createProject({ name: 'Job Search', notes: 'Track applications, resume updates, and follow-ups.', type: 'job-search', priority: 'high', ownerId, classroomId });
     await LocalDB.createTask({ projectId: jobId, title: 'Update resume with latest experience', status: 'doing', priority: 'high' });
     await LocalDB.createTask({ projectId: jobId, title: 'Apply to 5 frontend developer roles', status: 'todo', priority: 'high', dueDate: '2026-05-20' });
     await LocalDB.createTask({ projectId: jobId, title: 'Send recruiter follow-up emails', status: 'done', priority: 'medium' });
@@ -1050,14 +1058,14 @@ const LocalDB = {
     await LocalDB.createMilestone({ projectId: jobId, title: '10 applications sent', dueDate: '2026-06-01', weight: 5 });
     await LocalDB.createUpdate({ projectId: jobId, content: 'Started updating resume. Need to add the latest project work and skills section.' });
 
-    const resId = await LocalDB.createProject({ name: 'ML Research Paper', notes: 'Investigating recommendation system approaches for the conference paper.', type: 'research', priority: 'medium', ownerId });
+    const resId = await LocalDB.createProject({ name: 'ML Research Paper', notes: 'Investigating recommendation system approaches for the conference paper.', type: 'research', priority: 'medium', ownerId, classroomId });
     await LocalDB.createTask({ projectId: resId, title: 'Complete literature review on collaborative filtering', status: 'done' });
     await LocalDB.createTask({ projectId: resId, title: 'Write introduction chapter', status: 'doing', dueDate: '2026-05-22', priority: 'high' });
     await LocalDB.createTask({ projectId: resId, title: 'Run baseline experiments', status: 'todo', priority: 'high', dueDate: '2026-05-30' });
     await LocalDB.createMilestone({ projectId: resId, title: 'Literature review complete', weight: 2 });
     await LocalDB.createUpdate({ projectId: resId, content: 'Finished initial literature review. Found 3 promising approaches to compare.' });
 
-    const sideId = await LocalDB.createProject({ name: 'Side Project \u2013 Budget App', notes: 'Personal finance tracking tool with charts and categories.', type: 'project', priority: 'low', ownerId });
+    const sideId = await LocalDB.createProject({ name: 'Side Project \u2013 Budget App', notes: 'Personal finance tracking tool with charts and categories.', type: 'project', priority: 'low', ownerId, classroomId });
     await LocalDB.createTask({ projectId: sideId, title: 'Design database schema', status: 'done' });
     await LocalDB.createTask({ projectId: sideId, title: 'Build UI prototype', status: 'doing' });
     await LocalDB.createTask({ projectId: sideId, title: 'Add authentication', status: 'todo' });

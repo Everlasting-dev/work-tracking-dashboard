@@ -3395,18 +3395,36 @@ span.status-dot:hover::after { display: none; }
   font-weight: 800;
   color: var(--text-secondary);
 }
-.classroom-add-form input[type="text"] { width: 100%; }
+.classroom-add-field input[type="text"] {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 10px 13px;
+  font-size: 0.9rem;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+.classroom-add-field input[type="text"]:focus {
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
 .classroom-add-form-row {
   display: flex;
   gap: 10px;
   align-items: center;
 }
 .classroom-add-form input[type="color"] {
-  width: 40px;
-  height: 36px;
-  padding: 2px 4px;
-  border-radius: 6px;
+  width: 46px;
+  height: 42px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -3727,17 +3745,18 @@ span.status-dot:hover::after { display: none; }
   gap: 14px;
   margin: 0 0 14px;
 }
-.dash-bars { display: grid; gap: 10px; padding: 2px 0; }
+.dash-bars { display: grid; gap: 12px; padding: 8px 10px 4px; }
 .dash-bar-row {
   display: grid;
-  grid-template-columns: 92px 1fr 48px;
-  gap: 10px;
+  grid-template-columns: minmax(88px, 120px) minmax(120px, 1fr) minmax(42px, auto);
+  gap: 12px;
   align-items: center;
+  padding: 1px 2px;
   font-size: 0.78rem;
 }
-.dash-bar-row-user { grid-template-columns: 120px 1fr 70px; }
+.dash-bar-row-user { grid-template-columns: minmax(110px, 150px) minmax(120px, 1fr) minmax(64px, auto); }
 .dash-bar-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.dash-bar-row strong { text-align: right; font-size: 0.75rem; color: var(--text); }
+.dash-bar-row strong { text-align: right; font-size: 0.75rem; color: var(--text); padding-right: 2px; }
 .dash-bar-track {
   height: 9px;
   overflow: hidden;
@@ -3757,6 +3776,19 @@ span.status-dot:hover::after { display: none; }
 
 @media (max-width: 860px) {
   .dash-graph-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .dash-bars { padding: 8px 4px 4px; }
+  .dash-bar-row,
+  .dash-bar-row-user {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .dash-bar-row strong {
+    text-align: left;
+    padding-right: 0;
+  }
 }
 
 /* ── Chat v2 ── */
