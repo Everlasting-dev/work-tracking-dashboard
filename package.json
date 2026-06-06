@@ -1,6 +1,6 @@
 {
   "name": "worktracker-desktop",
-  "version": "2.1.0-beta.13",
+  "version": "2.1.0-beta.14",
   "description": "WorkTracker desktop app for project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
@@ -40,8 +40,10 @@
       "styles.css",
       "db.js",
       "db-supabase.js",
+      "sync.js",
       "db-bridge.js",
       "config.js",
+      "vendor/**/*",
       "favicon.svg",
       "desktop/**/*",
       "package.json"

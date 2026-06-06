@@ -55,7 +55,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.13'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.14'; }
 
 /* ──── Config ──── */
 
@@ -401,15 +401,38 @@ async function hydrateCloudUsersViaRest() {
 async function waitForInitialCloudUsers() {
   if (initialCloudSyncChecked || !isCloudConfigured() || isOffline()) return;
   initialCloudSyncChecked = true;
+  await forceCloudAuthSync({ silent: true });
+}
+
+async function forceCloudAuthSync({ silent = false } = {}) {
+  if (!isCloudConfigured()) {
+    if (!silent) showAuthError('Supabase is not configured in this build.');
+    return false;
+  }
+  if (isOffline()) {
+    if (!silent) showAuthError('You are offline. Connect to the internet, then sync from Supabase.');
+    return false;
+  }
   try {
     await Promise.race([
       window.WT_INITIAL_SYNC,
-      new Promise(resolve => setTimeout(resolve, 8000))
+      new Promise(resolve => setTimeout(resolve, 12000))
     ]);
+    if (window.SyncEngine?.pull) await window.SyncEngine.pull();
   } catch (_) {}
   if (!(await DB.hasUsers().catch(() => false))) {
     await hydrateCloudUsersViaRest();
   }
+  return DB.hasUsers().catch(() => false);
+}
+
+function renderAuthCloudSync() {
+  if (!isCloudConfigured()) return '';
+  return `
+    <div class="auth-cloud-sync">
+      <span>Cloud workspace</span>
+      <button type="button" data-action="auth-sync-cloud">${ICONS.refresh} Sync from Supabase</button>
+    </div>`;
 }
 
 function persistWorkspaceCache(data) {
@@ -958,6 +981,7 @@ function renderLogin() {
     <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
     <h2>Welcome back</h2>
     <p class="auth-subtitle">Sign in to your account</p>
+    ${renderAuthCloudSync()}
     <div class="auth-error" id="auth-error"></div>
     <form data-form="login">
       <div class="form-group"><label for="l-user">Username</label><input id="l-user" name="username" type="text" required autocomplete="username"></div>
@@ -973,6 +997,7 @@ function renderAdminSetup() {
     <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
     <h2>Create administrator</h2>
     <p class="auth-subtitle">No accounts exist yet. Create the admin account and a master recovery key. Other users are added from Admin after you sign in.</p>
+    ${renderAuthCloudSync()}
     <div class="auth-error" id="auth-error"></div>
     <form data-form="admin-setup">
       <div class="form-group"><label for="a-user">Username</label><input id="a-user" name="username" type="text" placeholder="e.g. admin" required autocomplete="username"></div>
@@ -4717,6 +4742,30 @@ const actions = {
   },
   'show-sync-diagnostics': async () => {
     await showSyncDiagnosticsModal();
+  },
+  'auth-sync-cloud': async (b) => {
+    const oldHtml = b.innerHTML;
+    b.disabled = true;
+    b.innerHTML = `${ICONS.refresh} Syncing...`;
+    showAuthError('Checking Supabase for existing accounts...');
+    try {
+      const hasUsers = await forceCloudAuthSync();
+      if (hasUsers) {
+        renderLogin();
+        showAuthError('Cloud workspace found. Sign in with your existing account.');
+      } else {
+        renderAdminSetup();
+        showAuthError('Supabase is reachable, but no accounts were found. Create the first admin only if this is a new workspace.');
+      }
+    } catch (err) {
+      console.warn('[auth-sync-cloud] failed', err);
+      showAuthError(`Supabase sync failed: ${err?.message || 'check your connection and schema'}`);
+    } finally {
+      if (b.isConnected) {
+        b.disabled = false;
+        b.innerHTML = oldHtml;
+      }
+    }
   },
   'sync-now': async () => {
     closeUserMenu();

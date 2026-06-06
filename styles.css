@@ -129,6 +129,42 @@ ul,ol { list-style: none; }
 .auth-card h2 { text-align: center; margin-bottom: 6px; font-size: 1.35rem; letter-spacing: -0.02em; }
 .auth-card > p,.auth-card .auth-subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 24px; font-size: 0.93rem; }
 
+.auth-cloud-sync {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 12px;
+  margin: -10px 0 16px;
+  border: 1px solid rgba(99, 102, 241, 0.16);
+  border-radius: var(--radius);
+  background: rgba(99, 102, 241, 0.055);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+.auth-cloud-sync button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.auth-cloud-sync button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+.auth-cloud-sync svg {
+  width: 14px;
+  height: 14px;
+}
+
 .auth-forgot {
   text-align: center;
   margin-top: 12px;

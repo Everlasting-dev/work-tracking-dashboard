@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0-beta.14
+
+- Fixed installed offline builds missing `sync.js`, which prevented Supabase SyncEngine from starting.
+- Bundled Dexie and Supabase client scripts locally instead of loading them from CDNs.
+- Added a cloud sync/retry control to the auth screen so cloud hydration can be triggered before sign-in.
+
 ## 2.1.0-beta.13
 
 - Moves existing built-in sample projects into Sample Classroom on startup, not only newly generated sample data.
