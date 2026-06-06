@@ -2207,7 +2207,9 @@ span.status-dot:hover::after { display: none; }
 .project-card-v2-ct-title {
   font-size: 0.82rem; font-weight: 600; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer; width: 100%;
 }
+.project-card-v2-ct-title:hover { color: var(--accent); text-decoration: underline; }
 .project-card-v2-ct-assignee {
   width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
   background: var(--user-color, var(--accent)); color: #fff;
@@ -2227,6 +2229,15 @@ span.status-dot:hover::after { display: none; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .project-card-v2-owner-name { font-size: 0.82rem; color: var(--text-secondary); font-weight: 500; }
+.project-card-v2-members { display: flex; align-items: center; margin-left: 4px; }
+.project-card-v2-member-avatar {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--user-color, var(--accent)); color: #fff;
+  font-size: 0.62rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--card);
+  margin-left: -5px; object-fit: cover;
+}
 .project-card-v2-time { font-size: 0.78rem; color: var(--text-muted); }
 
 @media (max-width: 600px) {
@@ -3363,10 +3374,12 @@ span.status-dot:hover::after { display: none; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.classroom-admin-row strong { flex: 1; min-width: 0; }
+.classroom-admin-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.classroom-admin-row-info strong { font-size: 0.87rem; font-weight: 600; color: var(--text); }
+.classroom-admin-row-info small { font-size: 0.77rem; color: var(--text-muted); }
 .classroom-add-form {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 80px auto;
+  grid-template-columns: minmax(160px, 1fr) minmax(120px, 0.8fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 12px 16px 16px;
@@ -3398,6 +3411,89 @@ span.status-dot:hover::after { display: none; }
   color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* Global task board view */
+.global-task-board {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 2px 16px;
+  align-items: flex-start;
+}
+.global-task-board::-webkit-scrollbar { height: 6px; }
+.global-task-board::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.gtb-column {
+  flex: 0 0 260px;
+  background: var(--card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.gtb-col-header {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(248,250,255,0.7);
+}
+.gtb-proj-name {
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gtb-proj-name:hover { color: var(--accent); }
+.gtb-col-badges { display: flex; gap: 4px; flex-shrink: 0; }
+.gtb-col-tasks {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gtb-col-tasks::-webkit-scrollbar { width: 4px; }
+.gtb-col-tasks::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.gtb-task-card {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--border-light);
+  background: var(--bg);
+  transition: border-color 0.15s, background 0.15s;
+  min-width: 0;
+}
+.gtb-task-card:hover { border-color: var(--accent); background: var(--accent-light); }
+.gtb-task-title {
+  flex: 1;
+  font-size: 0.81rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.gtb-task-assignee {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  background: var(--user-color, var(--accent)); color: #fff;
+  font-size: 0.62rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 
 /* Simple task chain timeline */
@@ -3481,8 +3577,11 @@ span.status-dot:hover::after { display: none; }
   display: flex; align-items: center; justify-content: center;
 }
 .admin-ucard-avatar-img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.admin-ucard-avatar-clickable { cursor: pointer; transition: opacity 0.15s; }
+.admin-ucard-avatar-clickable:hover { opacity: 0.82; }
 .admin-ucard-meta { flex: 1; min-width: 0; }
 .admin-ucard-name { font-size: 0.92rem; font-weight: 700; color: var(--text); }
+.admin-ucard-name:hover { color: var(--accent); }
 .admin-ucard-sub { font-size: 0.73rem; color: var(--text-muted); margin: 2px 0; }
 .admin-ucard-badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 .admin-ucard-bio { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; font-style: italic; padding: 6px 0; border-top: 1px solid var(--border-light); }

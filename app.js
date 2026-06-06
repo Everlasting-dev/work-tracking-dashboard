@@ -29,6 +29,7 @@ const ICONS = {
   gauge: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>',
   send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
   discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
+  paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
 };
 
 /* ──── Utilities ──── */
@@ -841,6 +842,7 @@ const state = {
   classroomFilter: 'all',
   taskFilter: 'all',
   taskViewMode: 'list',
+  globalTaskViewMode: 'list',
   projectTab: 'tasks',
   currentProjectId: null,
   workspaceScope: 'everyone',
@@ -1446,11 +1448,19 @@ async function renderProjects() {
       const pinnedFields = visibleFieldsByProject[p.id] || [];
       const attachmentCount = attachmentCounts[p.id] || 0;
       const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
+      const editorIds = Array.isArray(p.editorIds) ? p.editorIds.filter(id => Number(id) !== p.ownerId) : [];
+      const memberAvatars = editorIds.slice(0, 4).map(eid => {
+        const eu = uMap[eid]; if (!eu) return '';
+        const init = (eu.displayName || eu.username).charAt(0).toUpperCase();
+        return eu.avatarBase64
+          ? `<img class="project-card-v2-member-avatar" src="${esc(eu.avatarBase64)}" title="${esc(eu.displayName || eu.username)}">`
+          : `<span class="project-card-v2-member-avatar" ${userColorStyle(eu)} title="${esc(eu.displayName || eu.username)}">${init}</span>`;
+      }).join('');
       return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
         <div class="project-card-v2-body">
           <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!editable ? badge('View Only', 'muted') : (!mine ? badge('Editor', 'blue') : '')}</div>
-          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}${attachmentCount ? `<span class="project-attach-indicator" title="${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}">${ICONS.file} ${attachmentCount}</span>` : ''}</h3>
+          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}${attachmentCount ? `<span class="project-attach-indicator" title="${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}">${ICONS.paperclip}</span>` : ''}</h3>
           <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
           ${renderProjectCardVisibleFields(pinnedFields)}
           <div class="project-card-v2-progress">
@@ -1464,7 +1474,7 @@ async function renderProjects() {
             <span class="project-card-v2-ct-pulse"></span>
             <div class="project-card-v2-ct-info">
               <span class="project-card-v2-ct-label">In Progress</span>
-              <span class="project-card-v2-ct-title">${esc(ct.title)}</span>
+              <button class="project-card-v2-ct-title" data-action="open-task-detail" data-id="${ct.id}" title="Open task details">${esc(ct.title)}</button>
             </div>
             ${ctAssignee ? `<span class="project-card-v2-ct-assignee" ${userColorStyle(ctAssignee)} title="${esc(ctAssignee.displayName || ctAssignee.username)}">${(ctAssignee.displayName || ctAssignee.username).charAt(0).toUpperCase()}</span>` : ''}
           </div>` : ''}
@@ -1473,6 +1483,7 @@ async function renderProjects() {
           <span class="project-card-v2-owner">
             <span class="project-card-v2-owner-avatar" ${userColorStyle(owner)}>${ownerInit}</span>
             <span class="project-card-v2-owner-name">${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+            ${memberAvatars ? `<span class="project-card-v2-members">${memberAvatars}</span>` : ''}
           </span>
           <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
         </div>
@@ -2155,6 +2166,41 @@ async function renderTab(tab, projectId, editable) {
   }
 }
 
+function renderGlobalTasksBoardHtml(tasks, pMap, uMap) {
+  const projectIds = [...new Set(tasks.map(t => t.projectId))].sort((a, b) =>
+    (pMap[a]?.name || '').localeCompare(pMap[b]?.name || ''));
+  if (!projectIds.length) return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
+  return `<div class="global-task-board">
+    ${projectIds.map(pid => {
+      const proj = pMap[pid];
+      if (!proj) return '';
+      const pt = tasks.filter(t => t.projectId === pid);
+      const doing = pt.filter(t => t.status === 'doing').length;
+      const todo = pt.filter(t => t.status === 'todo').length;
+      const ordered = [...pt.filter(t=>t.status==='doing'), ...pt.filter(t=>t.status==='todo'), ...pt.filter(t=>t.status==='done')];
+      return `<div class="gtb-column">
+        <div class="gtb-col-header">
+          <a href="#/projects/${pid}" class="gtb-proj-name">${ICONS.folder} ${esc(proj.name)}</a>
+          <div class="gtb-col-badges">
+            ${doing ? `<span class="badge badge-blue">${doing}</span>` : ''}
+            ${todo ? `<span class="badge badge-amber">${todo}</span>` : ''}
+          </div>
+        </div>
+        <div class="gtb-col-tasks">
+          ${ordered.map(t => {
+            const assignee = uMap[t.assigneeId];
+            return `<a href="#/projects/${pid}" class="gtb-task-card${t.status === 'done' ? ' task-done' : ''}" title="Go to project">
+              <span class="status-dot status-dot-${t.status}" style="width:10px;height:10px;flex-shrink:0"></span>
+              <span class="gtb-task-title${t.status === 'done' ? ' text-strikethrough' : ''}">${esc(t.title)}</span>
+              ${assignee ? `<span class="gtb-task-assignee" ${userColorStyle(assignee)} title="${esc(assignee.displayName || assignee.username)}">${(assignee.displayName || assignee.username).charAt(0).toUpperCase()}</span>` : ''}
+            </a>`;
+          }).join('') || '<p class="text-muted text-sm" style="padding:8px 10px">No tasks</p>'}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
@@ -2251,10 +2297,22 @@ async function renderTasks() {
       : emptyState({ icon:'tasks', title:`No ${f==='todo'?'to-do':f==='doing'?'in-progress':'done'} tasks`, description:'Try another filter.' });
   }
 
+  const vm = state.globalTaskViewMode || 'list';
+  const viewToggle = `<div class="task-view-toggle">
+    <button class="tvt-btn${vm === 'list' ? ' active' : ''}" data-action="global-task-view" data-view="list">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      List
+    </button>
+    <button class="tvt-btn${vm === 'board' ? ' active' : ''}" data-action="global-task-view" data-view="board">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+      Board
+    </button>
+  </div>`;
+  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(all, pMap, uMap) : body;
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${all.length} visible</span></div>
-      <div class="projects-page-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
+      <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}<button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
     </div>
     <div class="projects-status-pills">
       <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
@@ -2262,7 +2320,7 @@ async function renderTasks() {
       <button class="status-pill ${f==='todo'?'active':''}" data-action="filter-tasks" data-filter="todo">To Do <span class="status-pill-count">${cnt.todo}</span></button>
       <button class="status-pill ${f==='done'?'active':''}" data-action="filter-tasks" data-filter="done">Done <span class="status-pill-count">${cnt.done}</span></button>
     </div>
-    ${body}`;
+    ${boardBody}`;
 }
 
 async function renderAdmin() {
@@ -2335,7 +2393,10 @@ async function renderAdmin() {
         <div class="classroom-list">
           ${classrooms.map(c => `<div class="classroom-admin-row">
             <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
-            <div><strong>${esc(c.name)}</strong>${c.description ? `<span>${esc(c.description)}</span>` : ''}</div>
+            <div class="classroom-admin-row-info">
+              <strong>${esc(c.name)}</strong>
+              ${c.description ? `<small>${esc(c.description)}</small>` : ''}
+            </div>
             <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
           </div>`).join('') || '<p class="text-muted text-sm">No classrooms yet.</p>'}
         </div>
@@ -2349,19 +2410,18 @@ async function renderAdmin() {
     </section>
     <div class="admin-section-head">
       <h2>Team Members <span class="projects-page-count">${users.length}</span></h2>
-      <button class="btn btn-primary btn-sm" data-action="add-user">${ICONS.plus} Add User</button>
     </div>
     <div class="admin-user-board">
       ${users.map(u => {
         const init = (u.displayName || u.username).charAt(0).toUpperCase();
         const avatarHtml = u.avatarBase64
-          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img" alt="${esc(init)}">`
-          : `<div class="admin-ucard-avatar" ${userColorStyle(u)}>${init}</div>`;
+          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" title="View profile" alt="${esc(init)}">`
+          : `<div class="admin-ucard-avatar admin-ucard-avatar-clickable" ${userColorStyle(u)} data-action="show-user-profile" data-user-id="${u.id}" title="View profile">${init}</div>`;
         return `<div class="admin-ucard">
           <div class="admin-ucard-header">
             ${avatarHtml}
             <div class="admin-ucard-meta">
-              <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
+              <div class="admin-ucard-name" data-action="show-user-profile" data-user-id="${u.id}" style="cursor:pointer" title="View profile">${esc(u.displayName || u.username)}</div>
               <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
               <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
               <div class="admin-ucard-badges">${(userRoomMap[u.id] || []).map(id => {
@@ -4617,6 +4677,7 @@ const actions = {
   },
   'filter-projects': async (b) => { state.projectFilter = b.dataset.filter; await renderProjects(); },
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
+  'global-task-view': async (b) => { state.globalTaskViewMode = b.dataset.view; await renderTasks(); },
   'close-modal': () => hideModal(),
   'set-workspace-scope': async (b) => {
     state.workspaceScope = b.dataset.scope === 'everyone' ? 'everyone' : 'mine';
