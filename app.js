@@ -53,7 +53,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.4'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.5'; }
 
 /* ──── Config ──── */
 
@@ -3591,7 +3591,7 @@ async function showProfileModal() {
       <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
-      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Procurement lead at SubZero Motors">${esc(user.bio || '')}</textarea></div>
+      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Project lead at Everlasting">${esc(user.bio || '')}</textarea></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
@@ -3719,7 +3719,7 @@ function showAboutModal() {
         </div>
         <div>
           <div class="about-app-name">WorkTracker</div>
-          <div class="about-version">Version ${esc(getAppVersion())} · Built for SubZero Motors</div>
+          <div class="about-version">Version ${esc(getAppVersion())} · Built by Everlasting</div>
         </div>
       </div>
       <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, attach files to tasks, and collaborate — all in one place.</p>

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0-beta.5
+
+- Corrected legacy Windows package owner metadata to Everlasting.
+- Updated the Windows AppUserModelID to `com.everlasting.worktracker`.
+- Updated visible app owner text and profile placeholder copy.
+
 ## 2.1.0-beta.4
 
 - Disabled update code-signature enforcement for unsigned beta installers.

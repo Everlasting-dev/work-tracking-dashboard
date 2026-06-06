@@ -204,7 +204,7 @@ ipcMain.handle('updater:install', () => {
 });
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('com.subzeromotors.worktracker');
+  app.setAppUserModelId('com.everlasting.worktracker');
   createWindow();
   createMenu();
   configureAutoUpdater();

@@ -1,8 +1,8 @@
 {
   "name": "worktracker-desktop",
-  "version": "2.1.0-beta.4",
+  "version": "2.1.0-beta.5",
   "description": "WorkTracker desktop app for project, task, file, and team activity tracking.",
-  "author": "SubZero Motors",
+  "author": "Everlasting",
   "private": true,
   "main": "desktop/main.js",
   "homepage": "https://github.com/Everlasting-dev/work-tracking-dashboard",
@@ -26,10 +26,10 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.subzeromotors.worktracker",
+    "appId": "com.everlasting.worktracker",
     "productName": "WorkTracker",
     "artifactName": "${productName}-Setup-${version}.${ext}",
-    "copyright": "Copyright (c) 2026 SubZero Motors",
+    "copyright": "Copyright (c) 2026 Everlasting",
     "directories": {
       "output": "release",
       "buildResources": "build"
