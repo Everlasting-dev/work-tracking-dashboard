@@ -54,7 +54,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.6'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.7'; }
 
 /* ──── Config ──── */
 
@@ -418,7 +418,15 @@ async function fetchWorkspaceData() {
         getUsersCached(true),
         DB.getClassrooms ? DB.getClassrooms().catch(() => []) : Promise.resolve([])
       ]);
-      data = { projects, tasks, users, classrooms };
+      // Filter out projects hidden from the current user (non-admins only)
+      const uid = getSession()?.userId;
+      const filteredProjects = (uid && !isAdmin())
+        ? projects.filter(p => {
+            const ids = Array.isArray(p.hiddenFromIds) ? p.hiddenFromIds : [];
+            return !ids.includes(uid) || p.ownerId === uid || (p.editorIds || []).includes(uid);
+          })
+        : projects;
+      data = { projects: filteredProjects, tasks, users, classrooms };
     } catch (err) {
       if (!isOffline()) throw err;
       const persisted = loadPersistedWorkspaceCache();
@@ -1039,7 +1047,8 @@ async function showApp() {
   if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
   startSidebarClock();
-  DB.flushPendingSync?.().catch(() => {});
+  if (window.SyncEngine) SyncEngine.flush().catch(() => {});
+  else DB.flushPendingSync?.().catch(() => {});
   updateOfflineSyncBanner();
   await router();
   wtAppBootstrapped = true;
@@ -1050,8 +1059,9 @@ async function showApp() {
 function updateOfflineSyncBanner() {
   const el = document.getElementById('offline-sync-banner');
   if (!el) return;
-  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
-  const cloudMode = window.WT_STORAGE_MODE === 'supabase' && status?.enabled;
+  const status = _getSyncStatus();
+  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const cloudMode = isCloud && status?.enabled;
   const offline = isOffline();
   const pending = Number(status?.pending || 0);
   const failed = Number(status?.failed || 0);
@@ -1085,10 +1095,16 @@ function updateOfflineSyncBanner() {
 
 async function handleNetworkOnline() {
   updateOfflineSyncBanner();
-  if (window.WT_STORAGE_MODE !== 'supabase') return;
+  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  if (!isCloud) return;
   showToast('Back online. Syncing saved changes...', 'info');
   try {
-    await DB.retrySyncNow?.();
+    if (window.SyncEngine) {
+      await SyncEngine.pull();
+      await SyncEngine.flush();
+    } else {
+      await DB.retrySyncNow?.();
+    }
     bustWorkspaceCache();
     await getWorkspaceData(true);
     updateSidebarUser();
@@ -1102,7 +1118,8 @@ async function handleNetworkOnline() {
 
 function handleNetworkOffline() {
   updateOfflineSyncBanner();
-  if (window.WT_STORAGE_MODE === 'supabase') showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
+  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  if (isCloud) showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
 }
 
 function startSidebarClock() {
@@ -1190,12 +1207,18 @@ async function showSyncDiagnosticsModal() {
     </div>`);
 }
 
+function _getSyncStatus() {
+  if (window.SyncEngine) return SyncEngine.getStatus();
+  return DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+}
+
 function renderSyncStatusIndicator() {
   const el = document.getElementById('sync-status-indicator');
   if (!el) return;
-  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+  const status = _getSyncStatus();
   const offline = isOffline();
-  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (offline || status.pending || status.failed || status.syncing);
+  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const visible = isCloud && status?.enabled && (offline || status.pending || status.failed || status.syncing);
   if (!visible) {
     el.textContent = '';
     el.className = 'sync-status-label hidden';
@@ -1246,7 +1269,7 @@ function updateSidebarUser() {
     ${avatarHtml}
     <div class="user-details">
       <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
-      <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
+      <span class="user-role">@${esc(s.username)}${(window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid') ? ' · Cloud' : ''}</span>
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
@@ -1256,12 +1279,14 @@ function updateSidebarUser() {
       roleEl.insertAdjacentHTML('beforeend', '<button type="button" id="sync-status-indicator" class="sync-status-label hidden" aria-live="polite"></button>');
     }
   }
-  const adminNav = document.getElementById('nav-admin');
-  const dashNav = document.getElementById('nav-dashboard');
-  const reportNav = document.getElementById('nav-reports');
-  if (adminNav) adminNav.style.display = s.role === 'admin' ? '' : 'none';
-  if (dashNav) dashNav.style.display = s.role === 'admin' ? '' : 'none';
-  if (reportNav) reportNav.style.display = s.role === 'admin' ? '' : 'none';
+  const adminNav    = document.getElementById('nav-admin');
+  const settingsNav = document.getElementById('nav-settings');
+  const dashNav     = document.getElementById('nav-dashboard');
+  const reportNav   = document.getElementById('nav-reports');
+  if (adminNav)    adminNav.style.display    = s.role === 'admin' ? '' : 'none';
+  if (settingsNav) settingsNav.style.display = s.role === 'admin' ? '' : 'none';
+  if (dashNav)     dashNav.style.display     = s.role === 'admin' ? '' : 'none';
+  if (reportNav)   reportNav.style.display   = s.role === 'admin' ? '' : 'none';
   renderSyncStatusIndicator();
   renderUserMenu();
 }
@@ -1276,8 +1301,9 @@ function renderUserMenu() {
     return;
   }
   menu.classList.remove('hidden');
-  const syncStatus = DB.getSyncStatus ? DB.getSyncStatus() : null;
-  const syncMenuItem = window.WT_STORAGE_MODE === 'supabase' && syncStatus?.enabled && (syncStatus.pending || syncStatus.failed)
+  const syncStatus = _getSyncStatus();
+  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const syncMenuItem = isCloud && syncStatus?.enabled && (syncStatus.pending || syncStatus.failed)
     ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="open-sync-diagnostics">${ICONS.alertTriangle} Cloud sync${syncStatus.failed ? ` (${syncStatus.failed} failed)` : ''}</button>`
     : '';
   const adminItems = isAdmin() ? `
@@ -2377,37 +2403,11 @@ async function renderAdmin() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Admin Panel</h1><p class="view-subtitle">Manage users and settings</p></div>
+      <div><h1>Admin</h1><p class="view-subtitle">People management &amp; monitoring</p></div>
       <div class="view-actions"><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
     </div>
     ${masterKeySection}
     ${bugSection}
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header">
-        <div>
-          <h2>Classrooms</h2>
-          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Separate project canvases for different teams.</p>
-        </div>
-      </div>
-      <div class="section-body classroom-admin">
-        <div class="classroom-list">
-          ${classrooms.map(c => `<div class="classroom-admin-row">
-            <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
-            <div class="classroom-admin-row-info">
-              <strong>${esc(c.name)}</strong>
-              ${c.description ? `<small>${esc(c.description)}</small>` : ''}
-            </div>
-            <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
-          </div>`).join('') || '<p class="text-muted text-sm">No classrooms yet.</p>'}
-        </div>
-        <form data-form="add-classroom" class="classroom-add-form">
-          <input name="name" type="text" placeholder="Classroom name" required>
-          <input name="description" type="text" placeholder="Short description">
-          <input name="color" type="color" value="#4f46e5" title="Color">
-          <button type="submit" class="btn btn-sm btn-primary">Add Classroom</button>
-        </form>
-      </div>
-    </section>
     <div class="admin-section-head">
       <h2>Team Members <span class="projects-page-count">${users.length}</span></h2>
     </div>
@@ -2447,6 +2447,95 @@ async function renderAdmin() {
           <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Labels used on users, projects, filters, and reports.</p>
         </div>
       </div>
+    </div>`;
+}
+
+/* ──── Settings (admin only) ──── */
+
+async function renderSettings() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  await ensureDepartmentCfg();
+  const [{ users, projects }, departments, classrooms, projectHooksAll] = await Promise.all([
+    getWorkspaceData(),
+    DB.getDepartments(),
+    DB.getClassrooms ? DB.getClassrooms() : Promise.resolve([]),
+    getWebhooksCached(),
+  ]);
+  const generalHook  = projectHooksAll.find(h => h.scope === 'general');
+  const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
+
+  // Hidden-from-users section (per project)
+  const hiddenSection = `
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header">
+        <div>
+          <h2>Project Visibility</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Hide specific projects from individual members. Hidden projects are fully invisible unless the user is the owner or an editor.</p>
+        </div>
+      </div>
+      <div class="section-body" style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+        ${projects.map(p => {
+          const hiddenFrom = Array.isArray(p.hiddenFromIds) ? p.hiddenFromIds : [];
+          return `<div class="visibility-row">
+            <div class="visibility-row-name">${ICONS.folder} <strong>${esc(p.name)}</strong></div>
+            <div class="visibility-row-users">
+              ${users.filter(u => u.id !== p.ownerId).map(u => {
+                const isHidden = hiddenFrom.includes(u.id);
+                return `<label class="visibility-toggle" title="${isHidden ? 'Unhide' : 'Hide'} from ${esc(u.displayName || u.username)}">
+                  <input type="checkbox" data-action="toggle-project-visibility"
+                    data-project-id="${p.id}" data-user-id="${u.id}" ${isHidden ? 'checked' : ''}>
+                  <span class="visibility-user-chip ${isHidden ? 'is-hidden' : ''}">
+                    ${esc(u.displayName || u.username)}
+                  </span>
+                </label>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('') || '<p class="text-muted text-sm">No projects yet.</p>'}
+      </div>
+    </section>`;
+
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>Settings</h1><p class="view-subtitle">Workspace configuration</p></div>
+    </div>
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header">
+        <div>
+          <h2>Classrooms</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Separate project canvases for different teams.</p>
+        </div>
+      </div>
+      <div class="section-body classroom-admin">
+        <div class="classroom-list">
+          ${classrooms.map(c => `<div class="classroom-admin-row">
+            <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
+            <div class="classroom-admin-row-info">
+              <strong>${esc(c.name)}</strong>
+              ${c.description ? `<small>${esc(c.description)}</small>` : ''}
+            </div>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
+          </div>`).join('') || '<p class="text-muted text-sm" style="padding:12px 16px">No classrooms yet.</p>'}
+        </div>
+        <form data-form="add-classroom" class="classroom-add-form">
+          <input name="name" type="text" placeholder="Classroom name" required>
+          <input name="description" type="text" placeholder="Short description (optional)">
+          <div class="classroom-add-form-row">
+            <input name="color" type="color" value="#4f46e5" title="Pick a colour">
+            <button type="submit" class="btn btn-primary" style="flex:1">+ Add Classroom</button>
+          </div>
+        </form>
+      </div>
+    </section>
+    ${hiddenSection}
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header">
+        <div>
+          <h2>Departments</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Labels used on users, projects, filters, and reports.</p>
+        </div>
+      </div>
       <div class="dept-list">
         ${departments.map(d => `
           <div class="dept-row dept-row--${esc(d.color || 'blue')}">
@@ -2476,19 +2565,18 @@ async function renderAdmin() {
       <div class="section-body" style="padding:20px">
         <p class="text-secondary text-sm" style="margin-bottom:14px">
           Each channel is bound to a <strong>Discord webhook URL</strong>. The app posts chat messages and event notifications to that URL.
-          Webhook URLs are saved in your cloud database (visible to all admins). To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
+          To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
         </p>
         <div class="integrations-grid">
           <div class="integration-card">
             <h3>${ICONS.chat} #general channel</h3>
-            <p class="text-secondary text-sm">The default channel for events that don't belong to a specific project. It also mirrors the main backlog activity feed, so it works well as a locked audit channel.</p>
             <form data-form="webhook-general">
               <div class="webhook-input">
                 <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(generalHook?.url || '')}">
                 <button type="submit" class="btn btn-sm btn-primary">Save</button>
               </div>
               <div class="webhook-input">
-                <input type="url" name="channelUrl" placeholder="Optional: https://discord.com/channels/SERVER/CHANNEL (for 'Open in Discord' link)" value="${esc(generalHook?.channelUrl || '')}">
+                <input type="url" name="channelUrl" placeholder="Optional: Discord channel URL" value="${esc(generalHook?.channelUrl || '')}">
               </div>
               ${generalHook ? `<span class="integration-meta">Saved ${timeAgo(generalHook.updatedAt || generalHook.createdAt)} · <button type="button" class="btn-link" data-action="test-webhook" data-scope="general">Send test ping</button></span>` : ''}
             </form>
@@ -2497,7 +2585,6 @@ async function renderAdmin() {
             const h = hookByProject[p.id];
             return `<div class="integration-card">
               <h3>${ICONS.folder} ${esc(p.name)}</h3>
-              <p class="text-secondary text-sm">Project channel for ${esc(p.name)} events.</p>
               <form data-form="webhook-project" data-project-id="${p.id}">
                 <div class="webhook-input">
                   <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(h?.url || '')}">
@@ -2513,27 +2600,11 @@ async function renderAdmin() {
         </div>
       </div>
     </section>
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>${ICONS.sparkles} AI + two-way chat roadmap</h2></div>
-      <div class="section-body" style="padding:20px">
-        <div class="integrations-grid">
-          <div class="integration-card">
-            <h3>Claude assistant</h3>
-            <p class="text-secondary text-sm">Claude can be added safely through a Supabase Edge Function, Cloudflare Worker, or other backend proxy. The API key must not live in this GitHub Pages app.</p>
-            <span class="integration-meta">Recommended first feature: summarize a project and suggest next tasks.</span>
-          </div>
-          <div class="integration-card">
-            <h3>Discord → WorkTracker</h3>
-            <p class="text-secondary text-sm">Normal Discord messages require a Discord bot/proxy to read channel messages, map Discord IDs to WorkTracker users, and write them into the chat activity log.</p>
-            <span class="integration-meta">The current chat UI is ready to show ingested messages once the bot/proxy exists.</span>
-          </div>
-        </div>
-      </div>
-    </section>
     <section class="section-card">
       <div class="section-header"><h2>Data Management</h2></div>
-      <div class="section-body" style="padding:20px">
-        <p class="text-secondary text-sm" style="margin-bottom:12px">Reset the database to sample data. This deletes projects, tasks, milestones, activity, and uploaded library files.</p>
+      <div class="section-body" style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn btn-ghost" data-action="user-export">${ICONS.download} Export Data</button>
+        <button class="btn btn-ghost" data-action="user-import">${ICONS.upload} Import Data</button>
         <button class="btn btn-ghost btn-danger-text" data-action="reset-sample-data">${ICONS.trash} Reset to Sample Data</button>
       </div>
     </section>`;
@@ -4749,10 +4820,28 @@ const actions = {
       await DB.deleteClassroom(Number(b.dataset.id));
       bustWorkspaceCache();
       showToast('Classroom removed', 'success');
-      await renderAdmin();
+      await renderSettings();
     } catch (err) {
       showToast(err?.message || 'Could not remove classroom', 'error');
     }
+  },
+  'toggle-project-visibility': async (b) => {
+    if (!isAdmin()) return;
+    const projectId = Number(b.dataset.projectId);
+    const userId    = Number(b.dataset.userId);
+    const hidden    = b.checked;
+    try {
+      const project = (await getWorkspaceData()).projects.find(p => p.id === projectId);
+      if (!project) return;
+      let ids = Array.isArray(project.hiddenFromIds) ? [...project.hiddenFromIds] : [];
+      if (hidden) { if (!ids.includes(userId)) ids.push(userId); }
+      else { ids = ids.filter(id => id !== userId); }
+      await DB.updateProject(projectId, { hiddenFromIds: ids }, actorId());
+      bustWorkspaceCache();
+      // Update chip style immediately without full re-render
+      const chip = b.closest('label')?.querySelector('.visibility-user-chip');
+      if (chip) chip.classList.toggle('is-hidden', hidden);
+    } catch (err) { showToast(err?.message || 'Could not update visibility', 'error'); }
   },
   'reset-sample-data': async () => {
     if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
@@ -4872,6 +4961,7 @@ async function router() {
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/admin') await renderAdmin();
+  else if (hash === '/settings') await renderSettings();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => content?.classList.remove('content-fade'));
   refreshNotificationBadge().catch(() => {});
@@ -5017,6 +5107,11 @@ async function init() {
     });
     window.addEventListener('online', () => { handleNetworkOnline(); });
     window.addEventListener('offline', () => { handleNetworkOffline(); });
+    window.addEventListener('wt-sync-pulled', () => {
+      if (!wtAppBootstrapped) return;
+      bustWorkspaceCache();
+      router().catch(() => {});
+    });
     document.addEventListener('click', async (e) => {
       const syncBtn = e.target.closest('#sync-status-indicator');
       if (syncBtn && !syncBtn.classList.contains('hidden')) {

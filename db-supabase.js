@@ -520,6 +520,7 @@ const SupabaseDB = {
       ownerId: r.owner_id, classroomId: r.classroom_id || null, department: r.department || '', workflowTemplate: r.workflow_template || '',
       completedAt: r.completed_at || null, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
       editorIds: Array.isArray(r.editor_ids) ? r.editor_ids.map(Number).filter(Boolean) : [],
+      hiddenFromIds: Array.isArray(r.hidden_from_ids) ? r.hidden_from_ids.map(Number).filter(Boolean) : [],
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -1094,7 +1095,8 @@ const SupabaseDB = {
       completed_at: data.status === 'completed' ? now : null,
       is_ongoing: !!data.isOngoing,
       cadence: data.cadence || '',
-      editor_ids: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : []
+      editor_ids: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : [],
+      hidden_from_ids: Array.isArray(data.hiddenFromIds) ? data.hiddenFromIds.map(Number).filter(Boolean) : []
     };
     let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
@@ -1105,6 +1107,7 @@ const SupabaseDB = {
       delete payload.is_ongoing;
       delete payload.cadence;
       delete payload.editor_ids;
+      delete payload.hidden_from_ids;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
     if (error) throw error;
@@ -1190,6 +1193,7 @@ const SupabaseDB = {
     if (changes.isOngoing != null) patch.is_ongoing = !!changes.isOngoing;
     if (changes.cadence != null) patch.cadence = changes.cadence || '';
     if (changes.editorIds != null) patch.editor_ids = Array.isArray(changes.editorIds) ? changes.editorIds.map(Number).filter(Boolean) : [];
+    if (changes.hiddenFromIds != null) patch.hidden_from_ids = Array.isArray(changes.hiddenFromIds) ? changes.hiddenFromIds.map(Number).filter(Boolean) : [];
     if (changes.status != null) {
       if (changes.status === 'completed') patch.completed_at = existing?.completedAt || new Date().toISOString();
       else if (existing?.status === 'completed') patch.completed_at = null;
@@ -1206,6 +1210,7 @@ const SupabaseDB = {
       delete patch.is_ongoing;
       delete patch.cadence;
       delete patch.editor_ids;
+      delete patch.hidden_from_ids;
       ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
     }
     if (error) throw error;

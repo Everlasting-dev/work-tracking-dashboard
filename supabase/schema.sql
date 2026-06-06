@@ -85,6 +85,15 @@ alter table public.wt_projects add column if not exists editor_ids jsonb not nul
 alter table public.wt_projects add column if not exists completed_at timestamptz;
 alter table public.wt_projects add column if not exists is_ongoing boolean not null default false;
 alter table public.wt_projects add column if not exists cadence text not null default '';
+alter table public.wt_projects add column if not exists hidden_from_ids jsonb not null default '[]';
+
+-- Sync tracking: record last successful sync per device session
+alter table public.wt_sessions add column if not exists last_synced_at timestamptz;
+
+-- Performance indexes for incremental sync pulls
+create index if not exists wt_projects_updated_idx on public.wt_projects(updated_at desc);
+create index if not exists wt_tasks_updated_idx on public.wt_tasks(updated_at desc);
+create index if not exists wt_milestones_created_idx on public.wt_milestones(created_at desc);
 
 insert into public.wt_classrooms (name, description, color)
 select 'Main Classroom', 'Default workspace', '#4f46e5'
