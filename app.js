@@ -53,6 +53,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.3'; }
 
 /* ──── Config ──── */
 
@@ -260,11 +261,63 @@ function emptyState(opts) {
 
 /* ──── Session ──── */
 
+const TRUSTED_SESSION_KEY = 'wt-trusted-session-v1';
+const TRUSTED_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+
+function sessionPayload(u) {
+  return {
+    userId: u.id ?? u.userId,
+    username: u.username,
+    displayName: u.displayName,
+    role: u.role,
+    department: u.department || '',
+    color: u.color || '',
+    bio: u.bio || '',
+    avatarBase64: u.avatarBase64 || ''
+  };
+}
 function getSession() { try { return JSON.parse(sessionStorage.getItem('wt-session')); } catch { return null; } }
-function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role, department: u.department || '', color: u.color || '' })); }
-function clearSession() { sessionStorage.removeItem('wt-session'); }
+function getTrustedSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRUSTED_SESSION_KEY));
+    if (!saved?.userId || !saved?.savedAt || Date.now() - saved.savedAt > TRUSTED_SESSION_TTL_MS) {
+      localStorage.removeItem(TRUSTED_SESSION_KEY);
+      return null;
+    }
+    return saved;
+  } catch {
+    return null;
+  }
+}
+function restoreTrustedSession() {
+  const saved = getTrustedSession();
+  if (!saved) return null;
+  const payload = sessionPayload(saved);
+  sessionStorage.setItem('wt-session', JSON.stringify(payload));
+  return payload;
+}
+function setSession(u, opts = {}) {
+  const payload = sessionPayload(u);
+  sessionStorage.setItem('wt-session', JSON.stringify(payload));
+  if (opts.remember) localStorage.setItem(TRUSTED_SESSION_KEY, JSON.stringify({ ...payload, savedAt: Date.now() }));
+}
+function clearSession(opts = {}) {
+  sessionStorage.removeItem('wt-session');
+  if (opts.trusted) localStorage.removeItem(TRUSTED_SESSION_KEY);
+}
+function isOffline() { return typeof navigator !== 'undefined' && navigator.onLine === false; }
 function isAdmin() { return getSession()?.role === 'admin'; }
-function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
+function canEdit(project) {
+  const s = getSession();
+  if (!s || !project) return false;
+  return s.role === 'admin' || project.ownerId === s.userId || (project.editorIds || []).map(Number).includes(Number(s.userId));
+}
+function canManageProjectAccess(project) {
+  const s = getSession();
+  if (!s || !project) return false;
+  return s.role === 'admin' || project.ownerId === s.userId;
+}
+function isProjectOwner(project) { const s = getSession(); return !!s && !!project && project.ownerId === s.userId; }
 function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
@@ -286,18 +339,19 @@ let _workspaceFetchPromise = null;
 
 function persistWorkspaceCache(data) {
   try {
-    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+    localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
       at: Date.now(),
       projects: data.projects,
       tasks: data.tasks,
-      users: data.users
+      users: data.users,
+      classrooms: data.classrooms || []
     }));
   } catch (_) { /* quota / private mode */ }
 }
 
 function loadPersistedWorkspaceCache() {
   try {
-    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    const raw = localStorage.getItem(SESSION_CACHE_KEY) || sessionStorage.getItem(SESSION_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.projects || Date.now() - parsed.at > SESSION_CACHE_MS) return null;
@@ -315,17 +369,20 @@ function bustWorkspaceCache() {
   _webhooksCache = null;
   _webhooksCacheAt = 0;
   _workspaceFetchPromise = null;
-  try { sessionStorage.removeItem(SESSION_CACHE_KEY); } catch (_) {}
+  try {
+    sessionStorage.removeItem(SESSION_CACHE_KEY);
+    if (!isOffline()) localStorage.removeItem(SESSION_CACHE_KEY);
+  } catch (_) {}
   // Also bust the Supabase shadow cache so tasks are re-fetched with fresh data
   if (window.WT_STORAGE_MODE === 'supabase' && window.SupabaseDB?._shadowState) {
-    window.SupabaseDB._shadowState.at = { projects: 0, tasks: 0, departments: 0 };
-    window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false };
+    window.SupabaseDB._shadowState.at = { projects: 0, tasks: 0, departments: 0, users: 0, updates: 0 };
+    window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false, users: false, updates: false };
     try { window.SupabaseDB._persistShadowState(); } catch(_) {}
   }
 }
 
 // On startup, clear the Supabase shadow cache if schema version changed
-const _SCHEMA_VER = 'wt-schema-v11';
+const _SCHEMA_VER = 'wt-schema-v12';
 if (localStorage.getItem('wt-schema-version') !== _SCHEMA_VER) {
   try {
     localStorage.removeItem('wt-supabase-shadow-v1');
@@ -352,15 +409,25 @@ async function getWebhooksCached(force = false) {
 async function fetchWorkspaceData() {
   if (_workspaceFetchPromise) return _workspaceFetchPromise;
   _workspaceFetchPromise = (async () => {
-    const [projects, tasks, users] = await Promise.all([
-      DB.getProjects(),
-      DB.getTasks(),
-      getUsersCached(true)
-    ]);
-    const data = { projects, tasks, users };
+    let data;
+    try {
+      const [projects, tasks, users, classrooms] = await Promise.all([
+        DB.getProjects(),
+        DB.getTasks(),
+        getUsersCached(true),
+        DB.getClassrooms ? DB.getClassrooms().catch(() => []) : Promise.resolve([])
+      ]);
+      data = { projects, tasks, users, classrooms };
+    } catch (err) {
+      if (!isOffline()) throw err;
+      const persisted = loadPersistedWorkspaceCache();
+      data = persisted
+        ? { projects: persisted.projects || [], tasks: persisted.tasks || [], users: persisted.users || [], classrooms: persisted.classrooms || [] }
+        : { projects: [], tasks: [], users: getSession() ? [getSession()] : [], classrooms: [] };
+    }
     _workspaceCache = data;
     _workspaceCacheAt = Date.now();
-    persistWorkspaceCache(data);
+    if (!isOffline()) persistWorkspaceCache(data);
     return data;
   })().finally(() => { _workspaceFetchPromise = null; });
   return _workspaceFetchPromise;
@@ -375,11 +442,11 @@ async function getWorkspaceData(force = false) {
   if (!force && !_workspaceCache) {
     const persisted = loadPersistedWorkspaceCache();
     if (persisted) {
-      _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+      _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users, classrooms: persisted.classrooms || [] };
       _workspaceCacheAt = persisted.at;
       _usersCache = persisted.users;
       _usersCacheAt = persisted.at;
-      if (now - persisted.at < WORKSPACE_CACHE_MS) return _workspaceCache;
+      if (isOffline() || now - persisted.at < WORKSPACE_CACHE_MS) return _workspaceCache;
     }
   }
 
@@ -390,7 +457,7 @@ function prewarmWorkspaceCache() {
   if (_workspaceCache || _workspaceFetchPromise) return;
   const persisted = loadPersistedWorkspaceCache();
   if (persisted && Date.now() - persisted.at < WORKSPACE_CACHE_MS) {
-    _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+    _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users, classrooms: persisted.classrooms || [] };
     _workspaceCacheAt = persisted.at;
     _usersCache = persisted.users;
     _usersCacheAt = persisted.at;
@@ -584,7 +651,7 @@ async function captureLastSeen(userId) {
 
 function effectiveWorkspaceScope() {
   if (isAdmin()) return state.workspaceScope ?? 'everyone';
-  return state.workspaceScope ?? 'mine';
+  return state.workspaceScope ?? 'everyone';
 }
 
 function filterProjectsByWorkspace(projects) {
@@ -594,8 +661,36 @@ function filterProjectsByWorkspace(projects) {
   return projects.filter(p => p.ownerId === s.userId);
 }
 
+async function userClassroomIds() {
+  const s = getSession();
+  if (!s) return [];
+  if (isAdmin()) return null;
+  return DB.getUserClassroomIds ? await DB.getUserClassroomIds(s.userId).catch(() => []) : [];
+}
+
+function filterProjectsByClassroom(projects, allowedIds = null) {
+  const selected = state.classroomFilter || 'all';
+  const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
+  let rows = projects;
+  if (allowedSet) rows = rows.filter(p => p.classroomId == null || allowedSet.has(Number(p.classroomId)));
+  if (selected !== 'all') rows = rows.filter(p => Number(p.classroomId) === Number(selected));
+  return rows;
+}
+
+function classroomFilterHtml(classrooms = [], allowedIds = null) {
+  const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
+  const visible = allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms;
+  if (!visible.length) return '';
+  return `<div class="classroom-switcher">
+    <span class="text-muted" style="font-size:0.75rem">Classroom:</span>
+    <select class="projects-filter-select classroom-select" data-project-filter-input="classroom">
+      <option value="all" ${state.classroomFilter === 'all' ? 'selected' : ''}>All classrooms</option>
+      ${visible.map(c => `<option value="${c.id}" ${String(state.classroomFilter) === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
 function workspaceScopeBarHtml() {
-  if (!isAdmin() && effectiveWorkspaceScope() === 'mine') return '';
   const sc = effectiveWorkspaceScope();
   return `<div class="workspace-scope-micro">
     <span class="text-muted" style="font-size:0.75rem">View:</span>
@@ -741,13 +836,14 @@ function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
 const state = {
   projectFilter: 'active',
   projectSearch: '',
-  projectOwnerFilter: 'me',
+  projectOwnerFilter: 'all',
   projectDepartmentFilter: 'all',
+  classroomFilter: 'all',
   taskFilter: 'all',
   taskViewMode: 'list',
   projectTab: 'tasks',
   currentProjectId: null,
-  workspaceScope: 'mine',
+  workspaceScope: 'everyone',
   docPanelOpen: true,
   userMenuOpen: false,
   notifOpen: false,
@@ -783,6 +879,7 @@ function renderLogin() {
     <form data-form="login">
       <div class="form-group"><label for="l-user">Username</label><input id="l-user" name="username" type="text" required autocomplete="username"></div>
       <div class="form-group"><label for="l-pw">Password</label><input id="l-pw" name="password" type="password" required autocomplete="current-password"></div>
+      <label class="auth-remember"><input name="rememberDevice" type="checkbox" checked> Keep me signed in on this device</label>
       <div class="form-actions" style="justify-content:stretch"><button type="submit" class="btn btn-primary" style="flex:1;justify-content:center">Sign In</button></div>
     </form>
     <p class="auth-forgot"><a href="#/recovery">Forgot password?</a></p>`;
@@ -872,7 +969,7 @@ async function handleAuth(e) {
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
-    setSession(user);
+    setSession(user, { remember: fd.get('rememberDevice') === 'on' });
     // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
     captureLastSeen(user.id).then(async () => {
       const fresh = await DB.getUser(user.id);
@@ -899,7 +996,7 @@ async function handleAuth(e) {
     if (existing) { showAuthError('Username already taken'); return; }
     const id = await DB.createUser({ username, displayName, email, password, role: 'admin' });
     await DB.setMasterKey(masterKey);
-    setSession({ id, username, displayName, role: 'admin' });
+    setSession({ id, username, displayName, role: 'admin' }, { remember: true });
     showToast('Admin created. Use Import Data in the user menu to restore projects from a JSON backup.', 'success');
     await showApp();
   } else if (type === 'recovery-verify') {
@@ -941,10 +1038,69 @@ async function showApp() {
   prewarmWorkspaceCache();
   startSidebarClock();
   DB.flushPendingSync?.().catch(() => {});
+  updateOfflineSyncBanner();
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+}
+
+function updateOfflineSyncBanner() {
+  const el = document.getElementById('offline-sync-banner');
+  if (!el) return;
+  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+  const cloudMode = window.WT_STORAGE_MODE === 'supabase' && status?.enabled;
+  const offline = isOffline();
+  const pending = Number(status?.pending || 0);
+  const failed = Number(status?.failed || 0);
+  const syncing = !!status?.syncing;
+  if (!cloudMode || (!offline && !pending && !failed && !syncing)) {
+    el.className = 'offline-sync-banner hidden';
+    el.innerHTML = '';
+    return;
+  }
+  let tone = 'info';
+  let text = 'Cloud sync is up to date.';
+  if (offline) {
+    tone = 'offline';
+    text = pending
+      ? `Offline. ${pending} change${pending === 1 ? '' : 's'} saved locally and waiting for internet.`
+      : 'Offline. You can keep working; changes will be saved locally and synced when internet returns.';
+  } else if (failed) {
+    tone = 'warning';
+    text = `${failed} cloud sync issue${failed === 1 ? '' : 's'} need attention.`;
+  } else if (syncing) {
+    text = 'Syncing saved changes to Supabase...';
+  } else if (pending) {
+    text = `${pending} change${pending === 1 ? '' : 's'} waiting to sync.`;
+  }
+  el.className = `offline-sync-banner offline-sync-banner--${tone}`;
+  el.innerHTML = `
+    <span>${esc(text)}</span>
+    ${(pending || failed) ? '<button type="button" class="offline-sync-link" data-action="show-sync-diagnostics">Details</button>' : ''}
+  `;
+}
+
+async function handleNetworkOnline() {
+  updateOfflineSyncBanner();
+  if (window.WT_STORAGE_MODE !== 'supabase') return;
+  showToast('Back online. Syncing saved changes...', 'info');
+  try {
+    await DB.retrySyncNow?.();
+    bustWorkspaceCache();
+    await getWorkspaceData(true);
+    updateSidebarUser();
+    updateOfflineSyncBanner();
+    await router();
+  } catch (err) {
+    updateOfflineSyncBanner();
+    showToast('Cloud sync retry failed: ' + (err?.message || 'Unknown error'), 'error');
+  }
+}
+
+function handleNetworkOffline() {
+  updateOfflineSyncBanner();
+  if (window.WT_STORAGE_MODE === 'supabase') showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
 }
 
 function startSidebarClock() {
@@ -974,8 +1130,11 @@ function startSidebarClock() {
 
 function formatSyncJobType(type) {
   return ({
+    createProject: 'Create project',
     updateProject: 'Update project',
+    createTask: 'Create task',
     updateTask: 'Update task',
+    createUpdate: 'Add project note',
     upsertDepartment: 'Save department',
     deleteDepartment: 'Delete department'
   })[type] || type || 'Sync job';
@@ -1033,7 +1192,8 @@ function renderSyncStatusIndicator() {
   const el = document.getElementById('sync-status-indicator');
   if (!el) return;
   const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
-  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (status.pending || status.failed || status.syncing);
+  const offline = isOffline();
+  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (offline || status.pending || status.failed || status.syncing);
   if (!visible) {
     el.textContent = '';
     el.className = 'sync-status-label hidden';
@@ -1049,6 +1209,13 @@ function renderSyncStatusIndicator() {
     const errorHint = status.lastError ? `\n${status.lastError.slice(0, 160)}` : '';
     el.title = `Cloud sync failed — click for details.${errorHint}`;
     el.setAttribute('aria-label', `${n} failed cloud sync job${n > 1 ? 's' : ''}. Click for details.`);
+    return;
+  }
+  if (offline) {
+    el.textContent = status.pending ? ` · Offline (${status.pending})` : ' · Offline';
+    el.className = 'sync-status-label is-pending is-clickable';
+    el.title = 'Offline. Changes are saved locally and will sync when internet returns.';
+    el.setAttribute('aria-label', 'Offline. Click for cloud sync details.');
     return;
   }
   if (status.syncing) {
@@ -1117,6 +1284,7 @@ function renderUserMenu() {
   menu.innerHTML = `
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
+    <button type="button" class="user-menu-item" data-action="report-bug">${ICONS.alertTriangle} Report Bug</button>
     <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
     <button type="button" class="user-menu-item" data-action="show-about">${ICONS.target} About WorkTracker</button>
     ${adminItems}
@@ -1169,8 +1337,9 @@ function formatActivityMessage(entry, uMap) {
 async function renderProjects() {
   const content = document.getElementById('content');
   const s = getSession();
-  const { projects: allRaw, tasks: allTasks, users } = await getWorkspaceData();
-  const all = filterProjectsByWorkspace(allRaw);
+  const { projects: allRaw, tasks: allTasks, users, classrooms = [] } = await getWorkspaceData();
+  const allowedClassroomIds = await userClassroomIds();
+  const all = filterProjectsByClassroom(filterProjectsByWorkspace(allRaw), allowedClassroomIds);
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const query = normalizeSearchText(state.projectSearch);
   const ownerFilter = state.projectOwnerFilter;
@@ -1196,6 +1365,10 @@ async function renderProjects() {
     .filter(u => all.some(p => p.ownerId === u.id))
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
   const deptOptions = [...new Set(all.map(p => projectDepartmentValue(p, uMap)).filter(Boolean))].sort();
+  const attachmentCounts = {};
+  await Promise.all(all.map(async p => {
+    try { attachmentCounts[p.id] = (await DB.getAttachments(p.id)).length; } catch (_) { attachmentCounts[p.id] = 0; }
+  }));
 
   // Current in-progress task per project (first doing task found)
   const doingTask = {};
@@ -1227,6 +1400,7 @@ async function renderProjects() {
     </div>
     ${teamHint}
     ${workspaceScopeBarHtml()}
+    ${classroomFilterHtml(classrooms, allowedClassroomIds)}
     <div class="projects-controls">
       <div class="projects-search-wrap">
         <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -1264,17 +1438,19 @@ async function renderProjects() {
     `<div class="projects-grid-v2">${pData.map(p => {
       const owner = uMap[p.ownerId];
       const mine = p.ownerId === s.userId;
+      const editable = canEdit(p);
       const dept = projectDepartmentValue(p, uMap);
       const accent = STATUS_ACCENT[p.status] || '#9ca3af';
       const ct = doingTask[p.id];
       const ctAssignee = ct ? uMap[ct.assigneeId] : null;
       const pinnedFields = visibleFieldsByProject[p.id] || [];
+      const attachmentCount = attachmentCounts[p.id] || 0;
       const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
       return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
         <div class="project-card-v2-body">
-          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
-          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}</h3>
+          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!editable ? badge('View Only', 'muted') : (!mine ? badge('Editor', 'blue') : '')}</div>
+          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}${attachmentCount ? `<span class="project-attach-indicator" title="${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}">${ICONS.file} ${attachmentCount}</span>` : ''}</h3>
           <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
           ${renderProjectCardVisibleFields(pinnedFields)}
           <div class="project-card-v2-progress">
@@ -1330,7 +1506,7 @@ function _insertZoneHtml(afterId, status, projectId) {
   </div>`;
 }
 
-function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
+function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = []) {
   if (!tasks.length) return emptyState({
     icon: 'tasks', title: 'No tasks in this project',
     description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
@@ -1348,6 +1524,9 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
   const renderCard = (t) => {
     const od = isOverdue(t.dueDate) && t.status !== 'done';
     const assignee = uMap[t.assigneeId];
+    const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
+    const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+    const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
     return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}"
         draggable="${editable ? 'true' : 'false'}" data-task-id="${t.id}">
       ${editable ? `<div class="task-card-drag-handle" title="Drag to reorder">
@@ -1372,6 +1551,7 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId) {
           <div class="task-card-tags">
             ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
             ${prioBadge(t.priority)}
+            ${fileBadge}
           </div>
         </div>
       </div>
@@ -1443,7 +1623,7 @@ function customFieldActivitySummary(before = [], after = []) {
   return `${changed.showInProject ? 'pinned to project description - ' : 'custom field added - '}${label}${value}`;
 }
 
-function renderTaskBoardViewHtml(tasks, uMap, editable, projectId) {
+function renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments = []) {
   const cols = [
     { key: 'todo',  label: 'To Do',      color: '#f59e0b', bg: 'rgba(245,158,11,0.05)' },
     { key: 'doing', label: 'In Progress', color: '#3b82f6', bg: 'rgba(59,130,246,0.05)' },
@@ -1461,13 +1641,17 @@ function renderTaskBoardViewHtml(tasks, uMap, editable, projectId) {
           ${colTasks.map(t => {
             const od = isOverdue(t.dueDate) && t.status !== 'done';
             const assignee = uMap[t.assigneeId];
+            const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
+            const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+            const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
             return `<div class="task-board-card-v2${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}" style="--card-color:${col.color}">
-              <div class="task-board-card-title-v2">${esc(t.title)}</div>
+              <button type="button" class="task-board-card-title-v2" data-action="open-task-detail" data-id="${t.id}" title="Open details">${esc(t.title)}</button>
               <div class="task-board-card-footer-v2">
                 ${assigneeChipHtml(assignee)}
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
                   ${t.dueDate ? `<span style="display:flex;align-items:center;gap:3px;font-size:0.78rem" class="${od ? 'overdue' : 'text-muted'}">${ICONS.calendar}${formatDateShort(t.dueDate)}</span>` : ''}
                   ${prioBadge(t.priority)}
+                  ${fileBadge}
                 </div>
               </div>
               ${editable ? `<div class="task-board-card-actions-v2">
@@ -1477,7 +1661,7 @@ function renderTaskBoardViewHtml(tasks, uMap, editable, projectId) {
             </div>`;
           }).join('') || `<div class="task-board-col-empty-v2">No tasks here</div>`}
         </div>
-        ${editable ? `<button class="task-board-add-v2" data-action="add-task" data-project-id="${projectId}" data-default-status="${col.key}">${ICONS.plus} Add task</button>` : ''}
+        ${editable ? `<button class="task-board-add-v2" data-action="add-task" data-project-id="${projectId}" data-default-status="${col.key}">${ICONS.plus} Add ${col.label} task</button>` : ''}
       </div>`;
     }).join('')}
   </div>`;
@@ -1646,16 +1830,16 @@ async function renderProjectDetail(projectId) {
 
   const s = getSession();
   const editable = canEdit(project);
-  // Owner/admin sees everything; non-owners see only tasks assigned to them.
+  const manageAccess = canManageProjectAccess(project);
   const [allProjectTasks, milestones, users, attList] = await Promise.all([
     DB.getTasks({ projectId }),
     DB.getMilestones(projectId),
     getUsersCached(),
     DB.getAttachments(projectId)
   ]);
-  const visibleTasks = editable ? allProjectTasks : allProjectTasks.filter(t => t.assigneeId === s.userId);
-  const canSeeTasks = editable || visibleTasks.length > 0;
-  const progress = editable ? projectProgressFromTaskList(allProjectTasks) : null;
+  const visibleTasks = allProjectTasks;
+  const canSeeTasks = true;
+  const progress = projectProgressFromTaskList(allProjectTasks);
   const tasks = visibleTasks;
   const owner = users.find(u => u.id === project.ownerId);
   const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
@@ -1684,7 +1868,9 @@ async function renderProjectDetail(projectId) {
 
   const progressLine = canSeeTasks
     ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>${currentTaskBanner}`
-    : `<p class="text-muted text-sm" style="margin-top:14px">${ICONS.target} Task details are visible only to the project owner.</p>`;
+    : '';
+  const requestAccessBtn = !editable && s?.userId !== project.ownerId
+    ? `<button class="btn btn-ghost" data-action="request-project-access" data-project-id="${project.id}">${ICONS.userCog} Request edit access</button>` : '';
 
   content.innerHTML = `
     <div class="view-header">
@@ -1694,6 +1880,8 @@ async function renderProjectDetail(projectId) {
       </div>
       <div class="view-actions">
         <button type="button" class="btn btn-ghost ${state.docPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" title="Documents panel">${ICONS.file} Files (${attCount})</button>
+        ${requestAccessBtn}
+        ${manageAccess ? `<button class="btn btn-ghost" data-action="manage-project-access" data-project-id="${project.id}">${ICONS.userCog} Access</button>` : ''}
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
         ${canDeleteProject() ? `<button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` : ''}
         ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
@@ -1833,6 +2021,7 @@ async function renderTab(tab, projectId, editable) {
     const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
     const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
     const users = cache?.users ?? await getUsersCached();
+    const attachments = cache?.attList ?? await DB.getAttachments(projectId);
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     const view = state.taskViewMode || 'list';
 
@@ -1852,7 +2041,7 @@ async function renderTab(tab, projectId, editable) {
       ${editable ? `<button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>` : ''}
     </div>
     <div id="task-view-body">
-      ${view === 'board' ? renderTaskBoardViewHtml(tasks, uMap, editable, projectId) : renderTaskListViewHtml(tasks, uMap, editable, projectId)}
+      ${view === 'board' ? renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments) : renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments)}
     </div>`;
 
     if (view === 'list' && editable) {
@@ -1865,7 +2054,7 @@ async function renderTab(tab, projectId, editable) {
     const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
     const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-    el.innerHTML = `<div style="padding-top:4px">${renderTaskTimelineViewHtml(tasks, uMap, projectId)}</div>`;
+    el.innerHTML = `<div style="padding-top:4px">${renderTaskChainTimelineHtml(tasks, uMap)}</div>`;
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -1969,11 +2158,22 @@ async function renderTab(tab, projectId, editable) {
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
-  const { projects: allProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
-  const myProjectIds = new Set(allProjects.filter(p => p.ownerId === s.userId).map(p => p.id));
+  const { projects: rawProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
+  const attachmentRows = await Promise.all((rawProjects || []).map(p => DB.getAttachments(p.id).catch(() => [])));
+  const taskAttachmentMap = new Map();
+  attachmentRows.flat().forEach(a => {
+    if (a.taskId == null) return;
+    const key = Number(a.taskId);
+    if (!taskAttachmentMap.has(key)) taskAttachmentMap.set(key, []);
+    taskAttachmentMap.get(key).push(a);
+  });
+  const allowedClassroomIds = await userClassroomIds();
+  const allProjects = filterProjectsByClassroom(rawProjects, allowedClassroomIds);
+  const visibleProjectIds = new Set(allProjects.map(p => p.id));
+  const editableProjectIds = new Set(allProjects.filter(p => canEdit(p)).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
-  let all = allTasks;
-  if (!isAdmin()) all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
+  let all = allTasks.filter(t => visibleProjectIds.has(t.projectId));
+  if (!isAdmin()) all = all.filter(t => editableProjectIds.has(t.projectId) || t.assigneeId === s.userId);
   const f = state.taskFilter;
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
@@ -1986,6 +2186,9 @@ async function renderTasks() {
     const od = isOverdue(t.dueDate) && t.status !== 'done';
     const assignee = uMap[t.assigneeId];
     const hasNotes = !!(t.notes?.trim());
+    const taskAtts = taskAttachmentMap.get(Number(t.id)) || [];
+    const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+    const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
     return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}">
       <div class="task-card-status-stripe"></div>
       <div class="task-card-body">
@@ -2010,6 +2213,7 @@ async function renderTasks() {
             ${hasNotes ? `<span class="task-note-dot" title="Has notes">📝</span>` : ''}
           </div>
         </div>
+        ${fileBadge ? `<div class="task-card-fields">${fileBadge}</div>` : ''}
         ${t.customFields?.length ? `<div class="task-card-fields">${t.customFields.slice(0,2).map(f => `<span class="task-cf-chip" data-action="open-task-detail" data-id="${t.id}" title="Click to edit"><span class="task-cf-label">${esc(f.label)}</span><span class="task-cf-value">${esc(f.value)}</span></span>`).join('')}${t.customFields.length > 2 ? `<span class="task-cf-more">+${t.customFields.length-2} more</span>` : ''}</div>` : ''}
       </div>
     </div>`;
@@ -2066,14 +2270,40 @@ async function renderAdmin() {
   const content = document.getElementById('content');
   const s = getSession();
   await ensureDepartmentCfg();
-  const [{ users, projects }, hasMk, projectHooksAll, departments] = await Promise.all([
+  const [{ users, projects }, hasMk, projectHooksAll, departments, bugReports, classrooms] = await Promise.all([
     getWorkspaceData(),
     DB.hasMasterKey(),
     getWebhooksCached(),
-    DB.getDepartments()
+    DB.getDepartments(),
+    DB.getBugReports ? DB.getBugReports({ limit: 25 }) : [],
+    DB.getClassrooms ? DB.getClassrooms() : []
   ]);
+  const userRoomMap = {};
+  if (DB.getUserClassroomIds) {
+    await Promise.all(users.map(async u => { userRoomMap[u.id] = await DB.getUserClassroomIds(u.id).catch(() => []); }));
+  }
   const generalHook = projectHooksAll.find(h => h.scope === 'general');
   const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const bugSection = `
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>${ICONS.alertTriangle} Bug Reports</h2></div>
+      <div class="section-body bug-report-list">
+        ${bugReports.length ? bugReports.map(r => {
+          const who = uMap[r.userId];
+          return `<div class="bug-report-row">
+            <div>
+              <strong>${esc(r.title)}</strong>
+              <span>${esc(r.description)}</span>
+              ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
+              <small>${esc(who?.displayName || who?.username || 'Unknown')} · ${esc(r.severity)} · v${esc(r.appVersion || '?')} · ${timeAgo(r.createdAt)}</small>
+              ${r.githubIssueUrl ? `<a href="${esc(r.githubIssueUrl)}" target="_blank" rel="noreferrer">Open GitHub issue</a>` : ''}
+            </div>
+            ${badge(r.status || 'open', r.status === 'sent' ? 'green' : 'amber')}
+          </div>`;
+        }).join('') : '<p class="text-muted text-sm" style="padding:16px 20px">No bug reports yet.</p>'}
+      </div>
+    </section>`;
   const masterKeySection = !hasMk ? `
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header"><h2>Master recovery key</h2></div>
@@ -2093,6 +2323,30 @@ async function renderAdmin() {
       <div class="view-actions"><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
     </div>
     ${masterKeySection}
+    ${bugSection}
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header">
+        <div>
+          <h2>Classrooms</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Separate project canvases for different teams.</p>
+        </div>
+      </div>
+      <div class="section-body classroom-admin">
+        <div class="classroom-list">
+          ${classrooms.map(c => `<div class="classroom-admin-row">
+            <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
+            <div><strong>${esc(c.name)}</strong>${c.description ? `<span>${esc(c.description)}</span>` : ''}</div>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
+          </div>`).join('') || '<p class="text-muted text-sm">No classrooms yet.</p>'}
+        </div>
+        <form data-form="add-classroom" class="classroom-add-form">
+          <input name="name" type="text" placeholder="Classroom name" required>
+          <input name="description" type="text" placeholder="Short description">
+          <input name="color" type="color" value="#4f46e5" title="Color">
+          <button type="submit" class="btn btn-sm btn-primary">Add Classroom</button>
+        </form>
+      </div>
+    </section>
     <div class="admin-section-head">
       <h2>Team Members <span class="projects-page-count">${users.length}</span></h2>
       <button class="btn btn-primary btn-sm" data-action="add-user">${ICONS.plus} Add User</button>
@@ -2110,11 +2364,16 @@ async function renderAdmin() {
               <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
               <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
               <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
+              <div class="admin-ucard-badges">${(userRoomMap[u.id] || []).map(id => {
+                const room = classrooms.find(c => Number(c.id) === Number(id));
+                return room ? badge(room.name, 'accent') : '';
+              }).join('')}</div>
             </div>
           </div>
           ${u.bio ? `<p class="admin-ucard-bio">${esc(u.bio)}</p>` : ''}
           <div class="admin-ucard-actions">
             <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
+            <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
             ${u.id !== s.userId ? `<button class="btn-icon btn-danger-text" data-action="delete-user" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
           </div>
@@ -2223,6 +2482,17 @@ async function renderAdmin() {
 /* ──── Chat (Discord bridge) ──── */
 
 async function getChatMessagesForChannel(channelId) {
+  if (channelId?.startsWith('dm-')) {
+    const otherId = Number(channelId.slice(3));
+    const rows = DB.getDirectMessages ? await DB.getDirectMessages(actorId(), otherId, { limit: 150 }) : [];
+    return rows.map(m => ({
+      id: `dm-${m.id}`,
+      userId: m.fromUserId,
+      details: m.content,
+      source: 'direct',
+      createdAt: m.createdAt
+    }));
+  }
   const [appMsgs, discordMsgs] = await Promise.all([
     DB.getChatActivityLog ? DB.getChatActivityLog(channelId, { limit: 100 }) : (async () => {
       const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
@@ -2245,10 +2515,10 @@ function appendChatMessageToPane(message, uMap) {
   const empty = pane.querySelector('.chat-empty');
   if (empty) pane.innerHTML = renderChatMessagesHtml([message], uMap);
   else {
-    let container = pane.querySelector('.chat-messages');
+    let container = pane.querySelector('.chat-msgs-wrap');
     if (!container) {
       pane.innerHTML = renderChatMessagesHtml([message], uMap);
-      container = pane.querySelector('.chat-messages');
+      container = pane.querySelector('.chat-msgs-wrap');
     }
     if (container) {
       const wrap = document.createElement('div');
@@ -2310,23 +2580,18 @@ function renderChatMessagesHtml(messages, uMap) {
 
 async function renderChat() {
   const content = document.getElementById('content');
-  const { projects, users } = await getWorkspaceData();
-  const visibleProjects = filterProjectsByWorkspace(projects);
+  const { users } = await getWorkspaceData();
   const allHooks = await getWebhooksCached();
   const generalHook = allHooks.find(h => h.scope === 'general');
-  const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   state.chatUsersMap = uMap;
-
-  // Build channels - non-admins only see configured channels
+  const s = getSession();
+  const people = users.filter(u => u.id !== s?.userId).sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
   const allChannels = [
-    { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null, live: !!generalHook?.url }
+    { id: 'general', name: 'general', type: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null, live: !!generalHook?.url },
+    ...people.map(u => ({ id: `dm-${u.id}`, name: u.displayName || u.username, type: 'direct', user: u, live: false }))
   ];
-  for (const p of visibleProjects) {
-    const h = projectHookMap[p.id];
-    allChannels.push({ id: `project-${p.id}`, name: p.name, webhook: h, channelUrl: h?.channelUrl || '', projectId: p.id, live: !!h?.url });
-  }
-  const channels = isAdmin() ? allChannels : allChannels.filter(c => c.live);
+  const channels = allChannels;
 
   if (!state.chatChannel || !channels.find(c => c.id === state.chatChannel)) {
     state.chatChannel = channels[0]?.id || 'general';
@@ -2334,8 +2599,8 @@ async function renderChat() {
   const active = channels.find(c => c.id === state.chatChannel) || channels[0];
   const messages = active ? await getChatMessagesForChannel(active.id) : [];
   const messagesHtml = renderChatMessagesHtml(messages, uMap);
-  const hasWebhook = !!active?.webhook?.url;
-  const s = getSession();
+  const titlePrefix = active?.type === 'direct' ? '@' : '#';
+  const placeholder = active?.type === 'direct' ? `Message ${active.name}` : `Message #${active?.name || 'general'}`;
 
   content.innerHTML = `
     <div class="chat-v2-layout">
@@ -2347,12 +2612,11 @@ async function renderChat() {
         <div class="chat-v2-channels">
           ${channels.map(c => `
             <button type="button" class="chat-v2-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
-              <span class="chat-v2-hash">#</span>
+              <span class="chat-v2-hash">${c.type === 'direct' ? '@' : '#'}</span>
               <span class="chat-v2-channel-name">${esc(c.name)}</span>
-              ${c.live ? `<span class="chat-v2-live-dot" title="Live"></span>` : (isAdmin() ? `<span class="chat-v2-uncfg" title="Not configured">!</span>` : '')}
+              ${c.type === 'general' && c.live ? `<span class="chat-v2-live-dot" title="Discord connected"></span>` : ''}
             </button>`).join('')}
         </div>
-        ${!channels.length && !isAdmin() ? `<p class="chat-v2-no-channels">No channels configured yet.<br>Ask an admin to set up Discord webhooks.</p>` : ''}
         <div class="chat-v2-sidebar-footer">
           <div class="chat-v2-me-chip" ${userColorStyle(s)}>
             <span class="chat-v2-me-init">${(s?.displayName || s?.username || '?').charAt(0).toUpperCase()}</span>
@@ -2363,7 +2627,7 @@ async function renderChat() {
       <div class="chat-v2-main">
         <div class="chat-v2-header">
           <div>
-            <span class="chat-v2-channel-title"># ${esc(active?.name || 'chat')}</span>
+            <span class="chat-v2-channel-title">${titlePrefix} ${esc(active?.name || 'chat')}</span>
             ${active?.live ? `<span class="chat-v2-live-badge">Live · Discord</span>` : ''}
           </div>
           <div class="chat-v2-header-actions">
@@ -2371,14 +2635,15 @@ async function renderChat() {
           </div>
         </div>
         <div class="chat-v2-body" id="chat-messages-pane">${messagesHtml}</div>
-        ${hasWebhook ? `
+        
+        ${true ? `
         <form class="chat-v2-compose" data-form="chat-send" data-channel-id="${active.id}">
           <textarea class="chat-v2-input" name="content" rows="1" placeholder="Message #${esc(active?.name || 'chat')}… (Enter to send, Shift+Enter for newline)" required></textarea>
           <button type="submit" class="chat-v2-send-btn" title="Send">${ICONS.send}</button>
-        </form>` : `
-        <div class="chat-v2-compose chat-v2-compose-disabled">
+        </form>
+        <div hidden>
           <span class="text-muted text-sm">${isAdmin() ? 'Add a Discord webhook in Admin → Integrations to enable messaging.' : 'Messaging not configured for this channel yet.'}</span>
-        </div>`}
+        </div>` : ''}
       </div>
     </div>`;
 
@@ -2821,7 +3086,7 @@ async function renderNotificationsPage() {
   const unread = rows.filter(r => !r.readAt).length;
   // Auto-mark all as read when page is visited
   if (uid && unread > 0) { await DB.markAllNotificationsRead(uid); refreshNotificationBadge(); }
-  const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋' };
+  const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋', access_request: '🔐', access_approved: '✅', access_declined: '⛔', bug_report: '⚠️' };
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total</span></div>
@@ -2857,8 +3122,21 @@ function hideModal() { const ov = document.getElementById('modal-overlay'); ov.c
 async function showProjectModal(editId = null) {
   const p = editId ? await DB.getProject(editId) : null;
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
+  const users = await DB.getUsers();
+  const classrooms = DB.getClassrooms ? await DB.getClassrooms().catch(() => []) : [];
+  const allowedRooms = await userClassroomIds();
+  const allowedRoomSet = Array.isArray(allowedRooms) ? new Set(allowedRooms.map(Number)) : null;
+  const roomOptions = allowedRoomSet ? classrooms.filter(c => allowedRoomSet.has(Number(c.id))) : classrooms;
+  const defaultClassroomId = p?.classroomId || roomOptions[0]?.id || '';
   const defaultDepartment = p?.department || currentUser?.department || '';
   const isE = !!p;
+  const editorSet = new Set((p?.editorIds || []).map(Number));
+  const editorOptions = users
+    .filter(u => u.id !== p?.ownerId)
+    .map(u => `<label class="project-editor-option">
+      <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+    </label>`).join('');
 
   showModal(isE ? 'Edit Project' : 'New Project', `
     <form data-form="project" data-edit-id="${editId || ''}" class="project-form-v2">
@@ -2874,6 +3152,12 @@ async function showProjectModal(editId = null) {
         <label class="pf-meta-item">
           <span class="pf-meta-label">Priority</span>
           <select name="priority" class="pf-meta-select">${Object.entries(PRIO_CFG).map(([v,c]) => `<option value="${v}" ${(p?.priority||'medium')===v?'selected':''}>${c.l}</option>`).join('')}</select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Classroom</span>
+          <select name="classroomId" class="pf-meta-select">
+            ${roomOptions.map(c => `<option value="${c.id}" ${Number(defaultClassroomId) === Number(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select>
         </label>
         <label class="pf-meta-item">
           <span class="pf-meta-label">Department</span>
@@ -2917,6 +3201,14 @@ async function showProjectModal(editId = null) {
         <button type="button" id="bulk-add-task-btn" class="pf-add-task-btn">
           ${ICONS.plus} Add task
         </button>
+      </div>` : ''}
+      ${isE && canManageProjectAccess(p) ? `
+      <div class="pf-editors-block">
+        <div class="pf-tasks-header">
+          <span class="pf-tasks-title">Editors</span>
+          <span class="pf-tasks-hint">Can update this project</span>
+        </div>
+        <div class="project-editor-list">${editorOptions || '<p class="text-muted text-sm">No other users yet.</p>'}</div>
       </div>` : ''}
       <div class="form-actions pf-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
@@ -2967,7 +3259,7 @@ async function showProjectModal(editId = null) {
   }
 }
 
-async function showTaskModal(preId = null) {
+async function showTaskModal(preId = null, defaultStatus = 'todo') {
   const projects = await DB.getProjects();
   const editable = projects.filter(p => canEdit(p));
   if (editable.length === 0) { showToast('No projects you can add tasks to', 'warning'); return; }
@@ -2994,7 +3286,7 @@ async function showTaskModal(preId = null) {
       </div>
       <div class="form-row">
         <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
-        <div class="form-group"><label>Status</label><select name="status"><option value="todo" selected>To Do</option><option value="doing">In Progress</option><option value="done">Done</option></select></div>
+        <div class="form-group"><label>Status</label><select name="status"><option value="todo" ${defaultStatus === 'todo' ? 'selected' : ''}>To Do</option><option value="doing" ${defaultStatus === 'doing' ? 'selected' : ''}>In Progress</option><option value="done" ${defaultStatus === 'done' ? 'selected' : ''}>Done</option></select></div>
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Add Task</button></div>
     </form>`);
@@ -3004,6 +3296,122 @@ async function showTaskModal(preId = null) {
   projectSelect?.addEventListener('change', () => {
     const ownerId = projectSelect.selectedOptions[0]?.dataset.ownerId;
     if (ownerId && assigneeSelect?.querySelector(`option[value="${ownerId}"]`)) assigneeSelect.value = ownerId;
+  });
+}
+
+function renderTaskChainTimelineHtml(tasks, uMap) {
+  if (!tasks.length) return `<div class="timeline-empty-v2">
+    ${ICONS.calendar}
+    <p style="font-size:0.95rem;font-weight:600;margin-top:8px">No tasks yet</p>
+    <p class="text-muted text-sm">Add tasks to see the project chain.</p>
+  </div>`;
+  const statusWeight = { done: 0, doing: 1, todo: 2 };
+  const ordered = [...tasks].sort((a, b) => {
+    const sw = (statusWeight[a.status] ?? 3) - (statusWeight[b.status] ?? 3);
+    if (sw) return sw;
+    return (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31');
+  });
+  return `<div class="task-timeline-v2 task-timeline-chain">
+    ${ordered.map((t, index) => {
+      const assignee = uMap[t.assigneeId];
+      const od = t.dueDate && isOverdue(t.dueDate) && t.status !== 'done';
+      const init = assignee ? (assignee.displayName || assignee.username || '?').charAt(0).toUpperCase() : '?';
+      return `<div class="timeline-chain-step timeline-chain-step--${t.status}" data-task-id="${t.id}">
+        <div class="timeline-chain-node"><span>${index + 1}</span></div>
+        <button type="button" class="timeline-chain-card" data-action="open-task-detail" data-id="${t.id}">
+          <strong>${esc(t.title)}</strong>
+          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` · ${formatDateShort(t.dueDate)}` : ''}${od ? ' · overdue' : ''}</span>
+          <small title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init} ${esc(assignee?.displayName || assignee?.username || 'Unassigned')}</small>
+        </button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+async function showRequestProjectAccessModal(projectId) {
+  const project = await DB.getProject(projectId);
+  if (!project) { showToast('Project not found', 'error'); return; }
+  if (canEdit(project)) { showToast('You already have edit access', 'info'); return; }
+  const pending = DB.getProjectAccessRequests
+    ? (await DB.getProjectAccessRequests({ projectId, requesterId: actorId(), status: 'pending' }))[0]
+    : null;
+  showModal('Request Edit Access', `
+    <form data-form="project-access-request" data-project-id="${project.id}">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Ask the project owner for permission to edit <strong>${esc(project.name)}</strong>.</p>
+      ${pending ? `<p class="text-muted text-sm" style="margin-bottom:12px">${ICONS.bell} You already have a pending request.</p>` : ''}
+      <div class="form-group"><label>Message</label><textarea name="message" rows="3" class="fixed-textarea" placeholder="Why do you need access?">${esc(pending?.message || '')}</textarea></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${pending ? 'Update Request' : 'Send Request'}</button></div>
+    </form>`);
+}
+
+async function showProjectAccessModal(projectId) {
+  const project = await DB.getProject(projectId);
+  if (!project || !canManageProjectAccess(project)) { showToast('Permission denied', 'error'); return; }
+  const [users, requests] = await Promise.all([
+    DB.getUsers(),
+    DB.getProjectAccessRequests ? DB.getProjectAccessRequests({ projectId }) : []
+  ]);
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const editorSet = new Set((project.editorIds || []).map(Number));
+  const editorRows = users
+    .filter(u => u.id !== project.ownerId)
+    .map(u => `<label class="project-editor-option">
+      <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+    </label>`).join('');
+  const pendingRows = requests.filter(r => r.status === 'pending').map(r => {
+    const user = uMap[r.requesterId];
+    return `<div class="access-request-row">
+      <div><strong>${esc(user?.displayName || user?.username || 'Unknown user')}</strong><span>${esc(r.message || 'No message')} · ${timeAgo(r.createdAt)}</span></div>
+      <div class="access-request-actions">
+        <button type="button" class="btn btn-sm btn-primary" data-action="approve-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Approve</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="decline-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Decline</button>
+      </div>
+    </div>`;
+  }).join('');
+  showModal('Project Access', `
+    <form data-form="project-editors" data-project-id="${project.id}">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Editors can add tasks, update status, upload files, and change project details.</p>
+      <div class="project-editor-list">${editorRows || '<p class="text-muted text-sm">No other users yet.</p>'}</div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save Access</button></div>
+    </form>
+    <div class="access-request-block">
+      <div class="pf-tasks-header"><span class="pf-tasks-title">Pending requests</span></div>
+      ${pendingRows || '<p class="text-muted text-sm">No pending requests.</p>'}
+    </div>`);
+}
+
+function showBugReportModal() {
+  const version = getAppVersion();
+  showModal('Report Bug', `
+    <form data-form="bug-report">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Send a bug report to the admins. In cloud mode, this can also be forwarded to GitHub Issues by the Supabase function.</p>
+      <div class="form-group"><label>Title</label><input name="title" type="text" placeholder="Short summary" maxlength="140" required autofocus></div>
+      <div class="form-group"><label>Severity</label><select name="severity"><option value="normal" selected>Normal</option><option value="high">High</option><option value="critical">Critical</option><option value="low">Low</option></select></div>
+      <div class="form-group"><label>What happened?</label><textarea name="description" rows="5" class="fixed-textarea" placeholder="What were you doing, what did you expect, and what happened instead?" required></textarea></div>
+      <div class="form-group"><label>Images</label><input id="bug-report-images" type="file" accept="image/*" multiple><p class="text-muted text-sm" style="margin-top:4px">Optional. Up to 3 screenshots, 2 MB each.</p><div id="bug-report-preview" class="bug-report-preview"></div></div>
+      <input type="hidden" name="screenshots" id="bug-report-screenshots" value="[]">
+      <input type="hidden" name="appVersion" value="${esc(version)}">
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Send Report</button></div>
+    </form>`);
+  const input = document.getElementById('bug-report-images');
+  const hidden = document.getElementById('bug-report-screenshots');
+  const preview = document.getElementById('bug-report-preview');
+  input?.addEventListener('change', async () => {
+    const files = Array.from(input.files || []).slice(0, 3).filter(f => f.size <= 2 * 1024 * 1024);
+    const images = [];
+    for (const file of files) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      images.push({ name: file.name, mimeType: file.type || 'image/png', dataUrl });
+    }
+    hidden.value = JSON.stringify(images);
+    preview.innerHTML = images.map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name)}">`).join('');
+    if ((input.files || []).length > images.length) showToast('Some screenshots were skipped. Max 3 images, 2 MB each.', 'warning');
   });
 }
 
@@ -3031,7 +3439,27 @@ function assigneeChipHtml(user) {
   const avatarInner = user.avatarBase64
     ? `<img src="${esc(user.avatarBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
     : initials;
-  return `<span class="assignee-chip" ${userColorStyle(user)} title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+  return `<span class="assignee-chip" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+}
+
+async function showUserProfileModal(userId) {
+  const user = await DB.getUser(Number(userId));
+  if (!user) { showToast('User not found', 'error'); return; }
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  const avatar = user.avatarBase64
+    ? `<img src="${esc(user.avatarBase64)}" class="profile-avatar-img" alt="${esc(initials)}">`
+    : `<div class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
+  showModal(esc(user.displayName || user.username), `
+    <div class="profile-view-card">
+      <div class="profile-avatar-wrap">${avatar}</div>
+      <div class="profile-view-main">
+        <strong>@${esc(user.username)}</strong>
+        <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
+        ${user.bio ? `<p>${esc(user.bio)}</p>` : '<p class="text-muted text-sm">No bio added yet.</p>'}
+        ${user.email ? `<span class="text-muted text-sm">${esc(user.email)}</span>` : ''}
+      </div>
+    </div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Close</button><button type="button" class="btn btn-primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button></div>`);
 }
 
 function showMilestoneModal(pid) {
@@ -3104,6 +3532,28 @@ async function showEditUserModal(uid) {
     </form>`);
 }
 
+async function showUserClassroomsModal(uid) {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const [user, classrooms, selected] = await Promise.all([
+    DB.getUser(uid),
+    DB.getClassrooms ? DB.getClassrooms() : [],
+    DB.getUserClassroomIds ? DB.getUserClassroomIds(uid) : []
+  ]);
+  if (!user) { showToast('User not found', 'error'); return; }
+  const selectedSet = new Set((selected || []).map(Number));
+  showModal('User Classrooms', `
+    <form data-form="user-classrooms" data-user-id="${uid}">
+      <p class="text-muted text-sm" style="margin-bottom:12px">Choose which project canvases ${esc(user.displayName || user.username)} can access.</p>
+      <div class="project-editor-list">
+        ${classrooms.map(c => `<label class="project-editor-option">
+          <input type="checkbox" name="classroomIds" value="${c.id}" ${selectedSet.has(Number(c.id)) ? 'checked' : ''}>
+          <span>${esc(c.name)}</span>
+        </label>`).join('') || '<p class="text-muted text-sm">Create a classroom first.</p>'}
+      </div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save Classrooms</button></div>
+    </form>`);
+}
+
 function showResetPwModal(uid) {
   showModal('Reset Password', `
     <form data-form="reset-pw" data-user-id="${uid}">
@@ -3138,10 +3588,10 @@ async function showProfileModal() {
           ${departmentBadge(user.department || '')}
         </div>
       </div>
-      <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="">
+      <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
-      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="2" placeholder="What do you do? e.g. Procurement lead at SubZero Motors">${esc(user.bio || '')}</textarea></div>
+      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Procurement lead at SubZero Motors">${esc(user.bio || '')}</textarea></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
@@ -3269,7 +3719,7 @@ function showAboutModal() {
         </div>
         <div>
           <div class="about-app-name">WorkTracker</div>
-          <div class="about-version">Version 2.0.0 · Built for SubZero Motors</div>
+          <div class="about-version">Version ${esc(getAppVersion())} · Built for SubZero Motors</div>
         </div>
       </div>
       <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, attach files to tasks, and collaborate — all in one place.</p>
@@ -3474,10 +3924,14 @@ async function handleFormSubmit(e) {
         type: fd.get('type'),
         priority: fd.get('priority'),
         department: fd.get('department') || '',
+        classroomId: fd.get('classroomId') ? Number(fd.get('classroomId')) : null,
         workflowTemplate: fd.get('workflowTemplate') || '',
         isOngoing: fd.get('isOngoing') === '1',
         cadence: fd.get('cadence') || ''
       };
+      if (form.querySelector('[name="editorIds"]')) {
+        data.editorIds = fd.getAll('editorIds').map(Number).filter(Boolean);
+      }
       if (data.workflowTemplate === 'logistics-shipment') data.department = 'logistics';
       if (!data.name) return;
       const editId = form.dataset.editId;
@@ -3535,6 +3989,59 @@ async function handleFormSubmit(e) {
         const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
         await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId: data.projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
       }
+    } else if (type === 'project-access-request') {
+      const projectId = Number(form.dataset.projectId);
+      const project = await DB.getProject(projectId);
+      if (!project) { showToast('Project not found', 'error'); return; }
+      if (!DB.requestProjectAccess) { showToast('Run the latest app database update first', 'warning'); return; }
+      const message = fd.get('message')?.trim() || '';
+      const reqId = await DB.requestProjectAccess({ projectId, requesterId: uid, message });
+      const requester = await DB.getUser(uid);
+      await notifyUser({
+        userId: project.ownerId,
+        type: 'access_request',
+        message: `${requester?.displayName || requester?.username || 'Someone'} requested edit access to "${project.name}".`,
+        projectId,
+        entityType: 'project_access_request',
+        entityId: reqId,
+        actorUserId: uid
+      });
+      hideModal();
+      showToast('Access request sent', 'success');
+    } else if (type === 'project-editors') {
+      const projectId = Number(form.dataset.projectId);
+      const project = await DB.getProject(projectId);
+      if (!project || !canManageProjectAccess(project)) { showToast('Permission denied', 'error'); return; }
+      const editorIds = fd.getAll('editorIds').map(Number).filter(Boolean);
+      await DB.updateProject(projectId, { editorIds }, uid);
+      bustWorkspaceCache();
+      hideModal();
+      await router();
+      showToast('Project access updated', 'success');
+    } else if (type === 'bug-report') {
+      if (!DB.createBugReport) { showToast('Bug reporting needs the latest database update', 'warning'); return; }
+      const title = fd.get('title')?.trim();
+      const description = fd.get('description')?.trim();
+      const severity = fd.get('severity') || 'normal';
+      const appVersion = fd.get('appVersion') || getAppVersion();
+      let screenshots = [];
+      try { screenshots = JSON.parse(fd.get('screenshots') || '[]'); } catch (_) { screenshots = []; }
+      if (!title || !description) { showToast('Title and description are required', 'warning'); return; }
+      const reportId = await DB.createBugReport({ userId: uid, title, description, severity, appVersion, screenshots });
+      const admins = (await DB.getUsers()).filter(u => u.role === 'admin');
+      const reporter = await DB.getUser(uid);
+      for (const admin of admins) {
+        await notifyUser({
+          userId: admin.id,
+          type: 'bug_report',
+          message: `${reporter?.displayName || reporter?.username || 'Someone'} reported a ${severity} bug: ${title}`,
+          entityType: 'bug_report',
+          entityId: reportId,
+          actorUserId: uid
+        });
+      }
+      hideModal();
+      showToast('Bug report sent', 'success');
     } else if (type === 'reassign-task') {
       const taskId = Number(form.dataset.taskId);
       const task = await DB.getTask(taskId); if (!task) return;
@@ -3591,17 +4098,22 @@ async function handleFormSubmit(e) {
       const content = fd.get('content')?.trim();
       if (!content) return;
       const session = getSession();
+      if (channelId?.startsWith('dm-')) {
+        const toUserId = Number(channelId.slice(3));
+        await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
+        form.reset();
+        await refreshChatPane();
+        return;
+      }
       let hook = null;
       if (channelId === 'general') hook = await DB.getGeneralWebhook();
       else if (channelId?.startsWith('project-')) hook = await DB.getProjectWebhook(Number(channelId.split('-')[1]));
-      if (!hook?.url) { showToast('No webhook configured for this channel', 'error'); return; }
-      const result = await postToDiscordWebhook(hook.url, {
-        username: discordWebhookUsername(session),
-        content
-      });
-      if (!result.ok) {
-        showToast(discordFailToast(result), 'error');
-        return;
+      if (hook?.url) {
+        const result = await postToDiscordWebhook(hook.url, {
+          username: discordWebhookUsername(session),
+          content
+        });
+        if (!result.ok) showToast(discordFailToast(result), 'warning');
       }
       form.reset();
       const projectId = hook.projectId ?? null;
@@ -3696,9 +4208,9 @@ async function handleFormSubmit(e) {
       const department = fd.get('department') || '';
       const bio = fd.get('bio')?.trim() || '';
       const color = fd.get('color') || '';
-      const avatarBase64 = fd.get('avatarBase64') || undefined;
+      const avatarBase64 = fd.get('avatarBase64') || '';
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, department, bio, ...(color && { color }), ...(avatarBase64 && { avatarBase64 }) };
+      const profileData = { displayName, email, department, bio, avatarBase64, ...(color && { color }) };
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
@@ -3730,6 +4242,28 @@ async function handleFormSubmit(e) {
       showToast('Department updated', 'success');
       await renderAdmin();
       return;
+    } else if (type === 'add-classroom') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const name = fd.get('name')?.trim();
+      if (!name) return;
+      await DB.createClassroom({
+        name,
+        description: fd.get('description')?.trim() || '',
+        color: fd.get('color') || '#4f46e5'
+      });
+      bustWorkspaceCache();
+      showToast('Classroom added', 'success');
+      await renderAdmin();
+      return;
+    } else if (type === 'user-classrooms') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const targetId = Number(form.dataset.userId);
+      await DB.setUserClassrooms(targetId, fd.getAll('classroomIds').map(Number).filter(Boolean));
+      hideModal();
+      bustWorkspaceCache();
+      showToast('Classrooms updated', 'success');
+      await renderAdmin();
+      return;
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
       const mk = fd.get('masterKey')?.trim();
@@ -3755,7 +4289,7 @@ async function handleFormSubmit(e) {
 
 const actions = {
   'add-project': () => showProjectModal(),
-  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null),
+  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
   'edit-project': (b) => showProjectModal(Number(b.dataset.id)),
@@ -3853,10 +4387,17 @@ const actions = {
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
   'user-edit-profile': async () => { closeUserMenu(); await showProfileModal(); },
+  'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'close-howto': () => hideModal(),
   'open-sync-diagnostics': async () => {
     closeUserMenu();
+    await showSyncDiagnosticsModal();
+  },
+  'show-user-profile': async (b) => {
+    await showUserProfileModal(Number(b.dataset.userId));
+  },
+  'show-sync-diagnostics': async () => {
     await showSyncDiagnosticsModal();
   },
   'sync-retry-now': async () => {
@@ -3905,7 +4446,7 @@ const actions = {
     closeUserMenu();
     const s = getSession();
     if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username });
-    clearSession();
+    clearSession({ trusted: true });
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();
@@ -4014,6 +4555,45 @@ const actions = {
     const pid = Number(b.dataset.projectId);
     if (pid) window.location.hash = `#/projects/${pid}`;
   },
+  'request-project-access': async (b) => {
+    await showRequestProjectAccessModal(Number(b.dataset.projectId));
+  },
+  'manage-project-access': async (b) => {
+    await showProjectAccessModal(Number(b.dataset.projectId));
+  },
+  'approve-project-access': async (b) => {
+    if (!DB.respondProjectAccess) return;
+    const req = await DB.respondProjectAccess(Number(b.dataset.requestId), { status: 'approved', decidedBy: actorId() });
+    const project = await DB.getProject(Number(b.dataset.projectId));
+    await notifyUser({
+      userId: req.requesterId,
+      type: 'access_approved',
+      message: `Your edit access request for "${project?.name || 'a project'}" was approved.`,
+      projectId: project?.id || null,
+      entityType: 'project',
+      entityId: project?.id || null,
+      actorUserId: actorId()
+    });
+    bustWorkspaceCache();
+    await showProjectAccessModal(Number(b.dataset.projectId));
+    showToast('Access approved', 'success');
+  },
+  'decline-project-access': async (b) => {
+    if (!DB.respondProjectAccess) return;
+    const req = await DB.respondProjectAccess(Number(b.dataset.requestId), { status: 'declined', decidedBy: actorId() });
+    const project = await DB.getProject(Number(b.dataset.projectId));
+    await notifyUser({
+      userId: req.requesterId,
+      type: 'access_declined',
+      message: `Your edit access request for "${project?.name || 'a project'}" was declined.`,
+      projectId: project?.id || null,
+      entityType: 'project',
+      entityId: project?.id || null,
+      actorUserId: actorId()
+    });
+    await showProjectAccessModal(Number(b.dataset.projectId));
+    showToast('Access declined', 'info');
+  },
   'copy-pinned-field': async (b) => {
     const value = b.dataset.copy || '';
     if (!value) return;
@@ -4082,6 +4662,7 @@ const actions = {
   },
   'add-user': () => showAddUserModal(),
   'edit-user': (b) => showEditUserModal(Number(b.dataset.id)),
+  'edit-user-classrooms': (b) => showUserClassroomsModal(Number(b.dataset.id)),
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
@@ -4099,6 +4680,18 @@ const actions = {
     await refreshDepartmentCfg();
     showToast('Department removed', 'success');
     await renderAdmin();
+  },
+  'delete-classroom': async (b) => {
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+    if (!confirm('Remove this classroom? Projects will move to another classroom.')) return;
+    try {
+      await DB.deleteClassroom(Number(b.dataset.id));
+      bustWorkspaceCache();
+      showToast('Classroom removed', 'success');
+      await renderAdmin();
+    } catch (err) {
+      showToast(err?.message || 'Could not remove classroom', 'error');
+    }
   },
   'reset-sample-data': async () => {
     if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
@@ -4127,7 +4720,9 @@ const actions = {
   },
   'select-chat-channel': async (b) => {
     state.chatChannel = b.dataset.channelId;
-    await renderChat();
+    hideModal();
+    if (window.location.hash !== '#/chat') window.location.hash = '#/chat';
+    else await renderChat();
   },
   'export-report-csv': async () => { await exportMonthlyReportCsv(); },
   'generate-ai-report': async () => { await generateAIReport(); },
@@ -4275,13 +4870,30 @@ function setupImport() {
 async function applyRoute() {
   const raw = window.location.hash.slice(1) || '';
   const hash = raw.split('?')[0];
+  const savedSession = getSession() || restoreTrustedSession();
 
-  if (!(await DB.hasUsers())) {
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('menu-toggle').style.display = 'none';
-    document.getElementById('auth-screen').style.display = 'flex';
-    renderAdminSetup();
-    return;
+  if (!savedSession || !isOffline()) {
+    let hasUsers = true;
+    try {
+      hasUsers = await DB.hasUsers();
+    } catch (err) {
+      if (!savedSession && isOffline()) {
+        document.getElementById('app').style.display = 'none';
+        document.getElementById('menu-toggle').style.display = 'none';
+        document.getElementById('auth-screen').style.display = 'flex';
+        renderLogin();
+        showAuthError('You are offline. Sign in once while online to keep this device remembered.');
+        return;
+      }
+      if (!savedSession || !isOffline()) throw err;
+    }
+    if (!hasUsers) {
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('menu-toggle').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'flex';
+      renderAdminSetup();
+      return;
+    }
   }
 
   if (hash === '/recovery') {
@@ -4291,11 +4903,11 @@ async function applyRoute() {
     await renderRecovery();
     return;
   }
-  const s = getSession();
+  const s = savedSession;
   if (s) {
-    const user = await DB.getUser(s.userId);
+    const user = isOffline() ? s : await DB.getUser(s.userId);
     if (!user) {
-      clearSession();
+      clearSession({ trusted: true });
       wtAppBootstrapped = false;
       document.getElementById('app').style.display = 'none';
       document.getElementById('menu-toggle').style.display = 'none';
@@ -4303,6 +4915,7 @@ async function applyRoute() {
       renderLogin();
       return;
     }
+    if (!isOffline()) setSession(user, { remember: !!getTrustedSession() });
     if (!wtAppBootstrapped) {
       await showApp();
       return;
@@ -4331,6 +4944,7 @@ async function init() {
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
     window.addEventListener('wt-sync-status', () => {
       renderSyncStatusIndicator();
+      updateOfflineSyncBanner();
       if (state.userMenuOpen) renderUserMenu();
     });
     window.addEventListener('wt-sync-error', (e) => {
@@ -4338,7 +4952,10 @@ async function init() {
       const label = summary ? `"${summary}"` : 'A change';
       const hint = error ? ` — ${error.slice(0, 120)}` : '';
       showToast(`Cloud sync failed: ${label} couldn't be saved${hint}`, 'error');
+      updateOfflineSyncBanner();
     });
+    window.addEventListener('online', () => { handleNetworkOnline(); });
+    window.addEventListener('offline', () => { handleNetworkOffline(); });
     document.addEventListener('click', async (e) => {
       const syncBtn = e.target.closest('#sync-status-indicator');
       if (syncBtn && !syncBtn.classList.contains('hidden')) {
@@ -4403,6 +5020,9 @@ async function init() {
         await renderProjects();
       } else if (target?.dataset?.projectFilterInput === 'department') {
         state.projectDepartmentFilter = target.value || 'all';
+        await renderProjects();
+      } else if (target?.dataset?.projectFilterInput === 'classroom') {
+        state.classroomFilter = target.value || 'all';
         await renderProjects();
       } else if (target?.dataset?.reportInput === 'month') {
         state.reportMonth = target.value || formatMonthInput();

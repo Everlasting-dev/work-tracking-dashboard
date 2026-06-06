@@ -15,6 +15,10 @@ const SupabaseDB = {
   async init(url, anonKey) {
     if (!window.supabase?.createClient) throw new Error('Supabase SDK not loaded');
     this._client = window.supabase.createClient(url, anonKey);
+    if (this._isOffline()) {
+      this._initLocalSync();
+      return;
+    }
     const required = ['wt_users', 'wt_projects', 'wt_tasks', 'wt_settings'];
     for (const table of required) {
       const { error } = await this._client.from(table).select('*', { count: 'exact', head: true });
@@ -41,6 +45,46 @@ const SupabaseDB = {
 
   _sb() { return this._client; },
 
+  _isOffline() {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  },
+
+  _isNetworkError(error) {
+    const msg = `${error?.message || ''} ${error?.details || ''} ${error?.name || ''}`.toLowerCase();
+    return this._isOffline() || msg.includes('failed to fetch') || msg.includes('network') || msg.includes('fetch');
+  },
+
+  _offlineId() {
+    return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  },
+
+  _trustedSessionUser(id = null) {
+    try {
+      const raw = sessionStorage.getItem('wt-session') || localStorage.getItem('wt-trusted-session-v1');
+      const saved = raw ? JSON.parse(raw) : null;
+      if (!saved?.userId || (id != null && Number(saved.userId) !== Number(id))) return null;
+      return {
+        id: saved.userId,
+        username: saved.username,
+        displayName: saved.displayName || saved.username,
+        email: '',
+        passwordHash: '',
+        salt: '',
+        role: saved.role,
+        createdAt: '',
+        department: saved.department || '',
+        discordId: '',
+        color: saved.color || '',
+        bio: saved.bio || '',
+        avatarBase64: saved.avatarBase64 || '',
+        lastSeenAt: null,
+        lastSeenIp: null
+      };
+    } catch (_) {
+      return null;
+    }
+  },
+
   async _nextTableId(table) {
     const { data, error } = await this._sb().from(table).select('id').order('id', { ascending: false }).limit(1);
     if (error) throw error;
@@ -65,9 +109,9 @@ const SupabaseDB = {
 
   _emptyShadowState() {
     return {
-      collections: { projects: {}, tasks: {}, departments: {} },
-      at: { projects: 0, tasks: 0, departments: 0 },
-      complete: { projects: false, tasks: false, departments: false }
+      collections: { projects: {}, tasks: {}, departments: {}, users: {}, updates: {} },
+      at: { projects: 0, tasks: 0, departments: 0, users: 0, updates: 0 },
+      complete: { projects: false, tasks: false, departments: false, users: false, updates: false }
     };
   },
 
@@ -80,17 +124,23 @@ const SupabaseDB = {
       this._shadowState.collections = {
         projects: parsed?.collections?.projects || {},
         tasks: parsed?.collections?.tasks || {},
-        departments: parsed?.collections?.departments || {}
+        departments: parsed?.collections?.departments || {},
+        users: parsed?.collections?.users || {},
+        updates: parsed?.collections?.updates || {}
       };
       this._shadowState.at = {
         projects: parsed?.at?.projects || 0,
         tasks: parsed?.at?.tasks || 0,
-        departments: parsed?.at?.departments || 0
+        departments: parsed?.at?.departments || 0,
+        users: parsed?.at?.users || 0,
+        updates: parsed?.at?.updates || 0
       };
       this._shadowState.complete = {
         projects: !!parsed?.complete?.projects,
         tasks: !!parsed?.complete?.tasks,
-        departments: !!parsed?.complete?.departments
+        departments: !!parsed?.complete?.departments,
+        users: !!parsed?.complete?.users,
+        updates: !!parsed?.complete?.updates
       };
     } catch (_) {
       this._shadowState = this._emptyShadowState();
@@ -121,6 +171,8 @@ const SupabaseDB = {
   _initLocalSync() {
     if (!this._shadowState) this._loadShadowState();
     if (!Array.isArray(this._syncQueue)) this._loadSyncQueue();
+    for (const name of ['projects', 'tasks', 'departments', 'users', 'updates']) this._reapplyPendingToShadow(name);
+    this._persistShadowState();
     if (!this._syncHooksBound && typeof window !== 'undefined') {
       window.addEventListener('online', () => this._scheduleSyncFlush(150));
       window.addEventListener('focus', () => this._scheduleSyncFlush(150));
@@ -215,10 +267,12 @@ const SupabaseDB = {
     if (changes.type != null) next.type = changes.type;
     if (changes.status != null) next.status = changes.status;
     if (changes.priority != null) next.priority = changes.priority;
+    if (changes.classroomId != null) next.classroomId = changes.classroomId ? Number(changes.classroomId) : null;
     if (changes.department != null) next.department = changes.department || '';
     if (changes.workflowTemplate != null) next.workflowTemplate = changes.workflowTemplate || '';
     if (changes.isOngoing != null) next.isOngoing = !!changes.isOngoing;
     if (changes.cadence != null) next.cadence = changes.cadence || '';
+    if (changes.editorIds != null) next.editorIds = Array.isArray(changes.editorIds) ? changes.editorIds.map(Number).filter(Boolean) : [];
     if (changes.status != null) {
       if (changes.status === 'completed') next.completedAt = next.completedAt || new Date().toISOString();
       else if (existing?.status === 'completed') next.completedAt = null;
@@ -245,6 +299,20 @@ const SupabaseDB = {
 
   _applyPendingJobToShadow(job) {
     if (!job) return;
+    if (job.type === 'createProject' && job.payload?.project) {
+      this._shadowUpsert('projects', job.payload.project);
+      return;
+    }
+    if (job.type === 'createTask' && job.payload?.task) {
+      this._shadowUpsert('tasks', job.payload.task);
+      if (job.payload.task.projectId != null) this._touchShadowProject(job.payload.task.projectId, job.payload.task.updatedAt);
+      return;
+    }
+    if (job.type === 'createUpdate' && job.payload?.update) {
+      this._shadowUpsert('updates', job.payload.update);
+      if (job.payload.update.projectId != null) this._touchShadowProject(job.payload.update.projectId);
+      return;
+    }
     if (job.type === 'updateProject') {
       const current = this._shadowGet('projects', job.payload.id) || { id: job.payload.id };
       const next = this._applyProjectChanges(current, job.payload.changes || {});
@@ -301,8 +369,11 @@ const SupabaseDB = {
 
   _syncJobSummary(job) {
     if (!job) return '';
+    if (job.type === 'createProject') return `Create project "${job.payload?.project?.name || ''}"`;
     if (job.type === 'updateProject') return `Project #${job.payload?.id}`;
+    if (job.type === 'createTask') return `Create task "${job.payload?.task?.title || ''}"`;
     if (job.type === 'updateTask') return `Task #${job.payload?.id}`;
+    if (job.type === 'createUpdate') return `Project note #${job.payload?.update?.projectId || ''}`;
     if (job.type === 'upsertDepartment') return `Department “${job.payload?.label || job.payload?.key || ''}”`;
     if (job.type === 'deleteDepartment') return `Delete department “${job.payload?.key || ''}”`;
     return job.type || 'Unknown job';
@@ -421,6 +492,9 @@ const SupabaseDB = {
   },
 
   async _runSyncJob(job) {
+    if (job.type === 'createProject') return this.createProject({ ...(job.payload.project || {}), actorUserId: job.payload.actorUserId });
+    if (job.type === 'createTask') return this.createTask({ ...(job.payload.task || {}), actorUserId: job.payload.actorUserId });
+    if (job.type === 'createUpdate') return this.createUpdate({ ...(job.payload.update || {}), actorUserId: job.payload.actorUserId });
     if (job.type === 'updateProject') return this.updateProject(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
     if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
     if (job.type === 'upsertDepartment') return this.upsertDepartment(job.payload, true);
@@ -434,6 +508,7 @@ const SupabaseDB = {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
       department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
+      bio: r.bio || '', avatarBase64: r.avatar_base64 || '',
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
@@ -442,9 +517,41 @@ const SupabaseDB = {
     if (!r) return null;
     return {
       id: r.id, name: r.name, notes: r.notes, type: r.type, status: r.status, priority: r.priority,
-      ownerId: r.owner_id, department: r.department || '', workflowTemplate: r.workflow_template || '',
+      ownerId: r.owner_id, classroomId: r.classroom_id || null, department: r.department || '', workflowTemplate: r.workflow_template || '',
       completedAt: r.completed_at || null, isOngoing: !!r.is_ongoing, cadence: r.cadence || '',
+      editorIds: Array.isArray(r.editor_ids) ? r.editor_ids.map(Number).filter(Boolean) : [],
       createdAt: r.created_at, updatedAt: r.updated_at
+    };
+  },
+
+  _mapClassroom(r) {
+    if (!r) return null;
+    return {
+      id: r.id,
+      name: r.name || 'Classroom',
+      description: r.description || '',
+      color: r.color || '#4f46e5',
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    };
+  },
+
+  _mapProjectAccessRequest(r) {
+    if (!r) return null;
+    return {
+      id: r.id, projectId: r.project_id, requesterId: r.requester_id, message: r.message || '',
+      status: r.status || 'pending', decidedBy: r.decided_by || null, decidedAt: r.decided_at || null,
+      createdAt: r.created_at, updatedAt: r.updated_at
+    };
+  },
+
+  _mapBugReport(r) {
+    if (!r) return null;
+    return {
+      id: r.id, userId: r.user_id, title: r.title || '', description: r.description || '',
+      severity: r.severity || 'normal', appVersion: r.app_version || '', screenshots: Array.isArray(r.screenshots) ? r.screenshots : [],
+      status: r.status || 'open',
+      githubIssueUrl: r.github_issue_url || '', createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
 
@@ -586,6 +693,43 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapActivity(r)).reverse();
   },
 
+  async createDirectMessage({ fromUserId, toUserId, content }) {
+    const { data, error } = await this._sb().from('wt_direct_messages')
+      .insert({
+        from_user_id: Number(fromUserId),
+        to_user_id: Number(toUserId),
+        content: String(content || '').slice(0, 2000)
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data.id;
+  },
+
+  async getDirectMessages(userA, userB, { limit = 100 } = {}) {
+    const a = Number(userA);
+    const b = Number(userB);
+    const { data, error } = await this._sb()
+      .from('wt_direct_messages')
+      .select('*')
+      .or(`and(from_user_id.eq.${a},to_user_id.eq.${b}),and(from_user_id.eq.${b},to_user_id.eq.${a})`)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) {
+      const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
+      if (msg.includes('does not exist') || msg.includes('schema cache')) return [];
+      throw error;
+    }
+    return (data || []).map(r => ({
+      id: r.id,
+      fromUserId: r.from_user_id,
+      toUserId: r.to_user_id,
+      content: r.content || '',
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    })).reverse();
+  },
+
   _defaultDepartments() {
     return [
       { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
@@ -682,6 +826,83 @@ const SupabaseDB = {
     if (error) throw error;
   },
 
+  async ensureDefaultClassroom() {
+    const { data: first, error: findErr } = await this._sb().from('wt_classrooms').select('*').order('id').limit(1).maybeSingle();
+    if (findErr) throw findErr;
+    if (first?.id) return first.id;
+    const { data, error } = await this._sb().from('wt_classrooms')
+      .insert({ name: 'Main Classroom', description: 'Default workspace', color: '#4f46e5' })
+      .select()
+      .single();
+    if (error) throw error;
+    return data.id;
+  },
+
+  async getClassrooms() {
+    const { data, error } = await this._sb().from('wt_classrooms').select('*').order('name');
+    if (error) {
+      const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
+      if (msg.includes('does not exist') || msg.includes('schema cache')) return [];
+      throw error;
+    }
+    return (data || []).map(r => this._mapClassroom(r));
+  },
+
+  async createClassroom({ name, description = '', color = '#4f46e5' }) {
+    const { data, error } = await this._sb().from('wt_classrooms')
+      .insert({ name: name || 'Classroom', description, color })
+      .select()
+      .single();
+    if (error) throw error;
+    return data.id;
+  },
+
+  async updateClassroom(id, changes = {}) {
+    const patch = { updated_at: new Date().toISOString() };
+    if (changes.name != null) patch.name = changes.name || 'Classroom';
+    if (changes.description != null) patch.description = changes.description || '';
+    if (changes.color != null) patch.color = changes.color || '#4f46e5';
+    const { error } = await this._sb().from('wt_classrooms').update(patch).eq('id', Number(id));
+    if (error) throw error;
+  },
+
+  async deleteClassroom(id) {
+    const rooms = await this.getClassrooms();
+    if (rooms.length <= 1) throw new Error('At least one classroom is required');
+    const fallback = rooms.find(c => Number(c.id) !== Number(id));
+    await this._sb().from('wt_projects').update({ classroom_id: fallback?.id || null }).eq('classroom_id', Number(id));
+    await this._sb().from('wt_user_classrooms').delete().eq('classroom_id', Number(id));
+    const { error } = await this._sb().from('wt_classrooms').delete().eq('id', Number(id));
+    if (error) throw error;
+  },
+
+  async getUserClassroomIds(userId) {
+    const { data, error } = await this._sb().from('wt_user_classrooms').select('classroom_id').eq('user_id', Number(userId));
+    if (error) {
+      const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
+      if (!msg.includes('does not exist') && !msg.includes('schema cache')) throw error;
+      return [];
+    }
+    const ids = (data || []).map(r => Number(r.classroom_id)).filter(Boolean);
+    if (ids.length) return ids;
+    const defaultId = await this.ensureDefaultClassroom();
+    await this.setUserClassrooms(userId, [defaultId]);
+    return [defaultId];
+  },
+
+  async setUserClassrooms(userId, classroomIds = []) {
+    const uid = Number(userId);
+    const ids = [...new Set((classroomIds || []).map(Number).filter(Boolean))];
+    const finalIds = ids.length ? ids : [await this.ensureDefaultClassroom()];
+    await this._sb().from('wt_user_classrooms').delete().eq('user_id', uid);
+    const rows = finalIds.map(classroomId => ({ user_id: uid, classroom_id: classroomId }));
+    if (rows.length) {
+      const { error } = await this._sb().from('wt_user_classrooms').insert(rows);
+      if (error) throw error;
+    }
+    return finalIds;
+  },
+
   async createUser(data) {
     const salt = window.WT_CRYPTO.generateSalt();
     const pwHash = await window.WT_CRYPTO.hashPassword(data.password, salt);
@@ -693,22 +914,31 @@ const SupabaseDB = {
       salt,
       role: data.role || 'user',
       department: data.department || '',
-      color: data.color || ''
+      color: data.color || '',
+      bio: data.bio || '',
+      avatar_base64: data.avatarBase64 || ''
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
       delete payload.department;
       delete payload.color;
+      delete payload.bio;
+      delete payload.avatar_base64;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
     if (error) throw error;
+    await this.setUserClassrooms(row.id, data.classroomIds || [await this.ensureDefaultClassroom()]).catch(() => {});
     return row.id;
   },
 
   async getUser(id) {
+    const cached = this._shadowGet('users', id);
+    if (this._isOffline()) return cached || this._trustedSessionUser(id);
     const { data, error } = await this._sb().from('wt_users').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
-    return this._mapUser(data);
+    const user = this._mapUser(data);
+    if (user) this._shadowUpsert('users', user);
+    return user;
   },
 
   async getUserByUsername(username) {
@@ -718,9 +948,17 @@ const SupabaseDB = {
   },
 
   async getUsers() {
+    if (this._isOffline()) {
+      const cached = this._shadowRows('users');
+      if (cached.length) return cached.sort((a, b) => a.id - b.id);
+      const trusted = this._trustedSessionUser();
+      return trusted ? [trusted] : [];
+    }
     const { data, error } = await this._sb().from('wt_users').select('*').order('id');
     if (error) throw error;
-    return (data || []).map(r => this._mapUser(r));
+    const users = (data || []).map(r => this._mapUser(r));
+    this._shadowSetCollection('users', users);
+    return users;
   },
 
   async updateUser(id, changes, actorUserId = null) {
@@ -731,6 +969,8 @@ const SupabaseDB = {
     if (changes.department != null) patch.department = changes.department || '';
     if (changes.discordId != null) patch.discord_id = changes.discordId;
     if (changes.color != null) patch.color = changes.color;
+    if (changes.bio != null) patch.bio = changes.bio || '';
+    if (changes.avatarBase64 != null) patch.avatar_base64 = changes.avatarBase64 || '';
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
     if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
     if (changes.username != null) {
@@ -741,13 +981,15 @@ const SupabaseDB = {
       patch.username = next;
     }
     let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
-    if (error && this._isMissingColumn(error) && (patch.color != null || patch.department != null)) {
+    if (error && this._isMissingColumn(error) && (patch.color != null || patch.department != null || patch.bio != null || patch.avatar_base64 != null)) {
       delete patch.department;
       delete patch.color;
+      delete patch.bio;
+      delete patch.avatar_base64;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;
-    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username' };
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username', bio: 'bio', avatar_base64: 'profile photo' };
     if (actorUserId) {
       await this.logActivity({
         userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
@@ -805,29 +1047,69 @@ const SupabaseDB = {
   async createProject(data) {
     const actorUserId = data.actorUserId;
     const now = new Date().toISOString();
-    const id = await this._nextTableId('wt_projects');
+    if (this._isOffline()) {
+      const id = this._offlineId();
+      const project = {
+        id,
+        name: data.name || '',
+        notes: data.notes || '',
+        type: data.type || 'project',
+        status: data.status || 'active',
+        priority: data.priority || 'medium',
+        ownerId: data.ownerId ?? actorUserId ?? 1,
+        classroomId: data.classroomId != null ? Number(data.classroomId) : null,
+        department: data.department || '',
+        workflowTemplate: data.workflowTemplate || '',
+        completedAt: data.status === 'completed' ? now : null,
+        isOngoing: !!data.isOngoing,
+        cadence: data.cadence || '',
+        editorIds: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : [],
+        createdAt: now,
+        updatedAt: now
+      };
+      this._shadowUpsert('projects', project);
+      this._mergeOrQueueJob({
+        id: `project-create:${id}`,
+        type: 'createProject',
+        mergeKey: `createProject:${id}`,
+        collections: ['projects'],
+        payload: { project: this._clone(project), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: now,
+        updatedAt: now
+      });
+      return id;
+    }
+    const id = data.id ?? await this._nextTableId('wt_projects');
     const payload = {
       id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
       owner_id: data.ownerId ?? actorUserId ?? 1,
+      classroom_id: data.classroomId != null ? Number(data.classroomId) : (await this.getUserClassroomIds(data.ownerId ?? actorUserId ?? 1))[0] || null,
       department: data.department || '',
       workflow_template: data.workflowTemplate || '',
       completed_at: data.status === 'completed' ? now : null,
       is_ongoing: !!data.isOngoing,
-      cadence: data.cadence || ''
+      cadence: data.cadence || '',
+      editor_ids: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : []
     };
     let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
       delete payload.department;
+      delete payload.classroom_id;
       delete payload.workflow_template;
       delete payload.completed_at;
       delete payload.is_ongoing;
       delete payload.cadence;
+      delete payload.editor_ids;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
     if (error) throw error;
     this._shadowUpsert('projects', this._mapProject(row));
-    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name });
+    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: row.id, action: 'created', entityType: 'project', entityId: row.id, details: row.name }).catch(() => {});
     return row.id;
   },
 
@@ -839,6 +1121,7 @@ const SupabaseDB = {
 
   async getProjects() {
     const cached = this._shadowRows('projects');
+    if (this._isOffline()) return cached.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     if (cached.length && this._shadowComplete('projects') && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) {
       return cached.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     }
@@ -855,6 +1138,7 @@ const SupabaseDB = {
 
   async getProject(id) {
     const cached = this._shadowGet('projects', id);
+    if (this._isOffline()) return cached || null;
     if (cached && (this._shadowFresh('projects') || this._hasPendingCollection('projects'))) return cached;
     const row = await this._fetchRemoteProject(id);
     if (row) this._shadowUpsert('projects', row);
@@ -901,9 +1185,11 @@ const SupabaseDB = {
     if (changes.status != null) patch.status = changes.status;
     if (changes.priority != null) patch.priority = changes.priority;
     if (changes.department != null) patch.department = changes.department || '';
+    if (changes.classroomId != null) patch.classroom_id = changes.classroomId ? Number(changes.classroomId) : null;
     if (changes.workflowTemplate != null) patch.workflow_template = changes.workflowTemplate || '';
     if (changes.isOngoing != null) patch.is_ongoing = !!changes.isOngoing;
     if (changes.cadence != null) patch.cadence = changes.cadence || '';
+    if (changes.editorIds != null) patch.editor_ids = Array.isArray(changes.editorIds) ? changes.editorIds.map(Number).filter(Boolean) : [];
     if (changes.status != null) {
       if (changes.status === 'completed') patch.completed_at = existing?.completedAt || new Date().toISOString();
       else if (existing?.status === 'completed') patch.completed_at = null;
@@ -914,10 +1200,12 @@ const SupabaseDB = {
     }
     if (error && this._isMissingColumn(error)) {
       delete patch.department;
+      delete patch.classroom_id;
       delete patch.workflow_template;
       delete patch.completed_at;
       delete patch.is_ongoing;
       delete patch.cadence;
+      delete patch.editor_ids;
       ({ error } = await this._sb().from('wt_projects').update(patch).eq('id', id));
     }
     if (error) throw error;
@@ -999,19 +1287,56 @@ const SupabaseDB = {
     const actorUserId = data.actorUserId;
     const picked = data.assigneeId != null ? Number(data.assigneeId) : null;
     const assigneeId = picked != null && picked > 0 ? picked : (actorUserId ?? null);
-    const id = await this._nextTableId('wt_tasks');
+    if (this._isOffline()) {
+      const now = new Date().toISOString();
+      const id = this._offlineId();
+      const task = {
+        id,
+        projectId: data.projectId,
+        milestoneId: data.milestoneId || null,
+        assigneeId,
+        workflowStepKey: data.workflowStepKey || '',
+        title: data.title || '',
+        dueDate: data.dueDate || '',
+        status: data.status || 'todo',
+        priority: data.priority || 'medium',
+        notes: data.notes || '',
+        customFields: data.customFields || [],
+        createdAt: now,
+        updatedAt: now
+      };
+      this._shadowUpsert('tasks', task);
+      this._touchShadowProject(data.projectId, now);
+      this._mergeOrQueueJob({
+        id: `task-create:${id}`,
+        type: 'createTask',
+        mergeKey: `createTask:${id}`,
+        collections: ['tasks', 'projects'],
+        payload: { task: this._clone(task), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: now,
+        updatedAt: now
+      });
+      return id;
+    }
+    const id = data.id ?? await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
       id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
       workflow_step_key: data.workflowStepKey || '',
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
-      priority: data.priority || 'medium'
+      priority: data.priority || 'medium',
+      notes: data.notes || '',
+      custom_fields: JSON.stringify(data.customFields || [])
     }).select().single();
     if (error) throw error;
     const updatedAt = new Date().toISOString();
     await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', data.projectId);
     this._shadowUpsert('tasks', this._mapTask(row));
     this._touchShadowProject(data.projectId, updatedAt);
-    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title });
+    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title }).catch(() => {});
     return row.id;
   },
 
@@ -1027,6 +1352,12 @@ const SupabaseDB = {
   async getTasks(filter = {}) {
     const cached = this._shadowRows('tasks');
     const cachedProjectRows = filter.projectId ? cached.filter(r => r.projectId === filter.projectId) : [];
+    if (this._isOffline()) {
+      let rows = cached;
+      if (filter.projectId) rows = rows.filter(r => Number(r.projectId) === Number(filter.projectId));
+      if (filter.status) rows = rows.filter(r => r.status === filter.status);
+      return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
     if (cached.length && this._shadowComplete('tasks') && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) {
       let rows = cached;
       if (filter.projectId) rows = rows.filter(r => r.projectId === filter.projectId);
@@ -1052,6 +1383,7 @@ const SupabaseDB = {
 
   async getTask(id) {
     const cached = this._shadowGet('tasks', id);
+    if (this._isOffline()) return cached || null;
     if (cached && (this._shadowFresh('tasks') || this._hasPendingCollection('tasks'))) return cached;
     const row = await this._fetchRemoteTask(id);
     if (row) this._shadowUpsert('tasks', row);
@@ -1190,20 +1522,47 @@ const SupabaseDB = {
 
   async createUpdate(data) {
     const actorUserId = data.actorUserId;
-    const id = await this._nextTableId('wt_updates');
+    if (this._isOffline()) {
+      const now = new Date().toISOString();
+      const id = this._offlineId();
+      const update = { id, projectId: data.projectId, userId: actorUserId || null, content: data.content || '', createdAt: now };
+      this._shadowUpsert('updates', update);
+      this._touchShadowProject(data.projectId, now);
+      this._mergeOrQueueJob({
+        id: `update-create:${id}`,
+        type: 'createUpdate',
+        mergeKey: `createUpdate:${id}`,
+        collections: ['updates', 'projects'],
+        payload: { update: this._clone(update), actorUserId },
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: 0,
+        lastError: '',
+        createdAt: now,
+        updatedAt: now
+      });
+      return id;
+    }
+    const id = data.id ?? await this._nextTableId('wt_updates');
     const { data: row, error } = await this._sb().from('wt_updates').insert({
       id, project_id: data.projectId, user_id: actorUserId || null, content: data.content || ''
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
-    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'noted', entityType: 'update', entityId: row.id, details: (data.content || '').slice(0, 120) });
+    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'noted', entityType: 'update', entityId: row.id, details: (data.content || '').slice(0, 120) }).catch(() => {});
     return row.id;
   },
 
   async getUpdates(projectId) {
+    const cached = this._shadowRows('updates').filter(r => Number(r.projectId) === Number(projectId));
+    if (cached.length && (this._isOffline() || this._hasPendingCollection('updates'))) {
+      return cached.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
     const { data, error } = await this._sb().from('wt_updates').select('*').eq('project_id', projectId).order('created_at', { ascending: false });
     if (error) throw error;
-    return (data || []).map(r => this._mapUpdate(r));
+    const rows = (data || []).map(r => this._mapUpdate(r));
+    rows.forEach(row => this._shadowUpsert('updates', row));
+    return rows;
   },
 
   async deleteUpdate(id, actorUserId = null) {
@@ -1243,6 +1602,92 @@ const SupabaseDB = {
     const { count, error } = await this._sb().from('wt_projects').select('*', { count: 'exact', head: true });
     if (error) throw error;
     return (count || 0) === 0;
+  },
+
+  async getProjectAccessRequests({ projectId = null, requesterId = null, status = null } = {}) {
+    let q = this._sb().from('wt_project_access_requests').select('*').order('created_at', { ascending: false });
+    if (projectId != null) q = q.eq('project_id', Number(projectId));
+    if (requesterId != null) q = q.eq('requester_id', Number(requesterId));
+    if (status != null) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) {
+      const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
+      if (msg.includes('does not exist') || msg.includes('schema cache')) return [];
+      throw error;
+    }
+    return (data || []).map(r => this._mapProjectAccessRequest(r));
+  },
+
+  async requestProjectAccess({ projectId, requesterId, message = '' }) {
+    const payload = {
+      project_id: Number(projectId),
+      requester_id: Number(requesterId),
+      message: message || '',
+      status: 'pending',
+      decided_by: null,
+      decided_at: null,
+      updated_at: new Date().toISOString()
+    };
+    const { data: existing, error: findError } = await this._sb()
+      .from('wt_project_access_requests')
+      .select('id')
+      .eq('project_id', payload.project_id)
+      .eq('requester_id', payload.requester_id)
+      .maybeSingle();
+    if (findError) throw findError;
+    const query = existing
+      ? this._sb().from('wt_project_access_requests').update(payload).eq('id', existing.id).select().single()
+      : this._sb().from('wt_project_access_requests').insert(payload).select().single();
+    const { data, error } = await query;
+    if (error) throw error;
+    return data?.id;
+  },
+
+  async respondProjectAccess(requestId, { status, decidedBy }) {
+    const { data: req, error: getError } = await this._sb().from('wt_project_access_requests').select('*').eq('id', Number(requestId)).maybeSingle();
+    if (getError) throw getError;
+    if (!req) throw new Error('Request not found');
+    const now = new Date().toISOString();
+    const { error } = await this._sb().from('wt_project_access_requests').update({
+      status, decided_by: decidedBy || null, decided_at: now, updated_at: now
+    }).eq('id', req.id);
+    if (error) throw error;
+    if (status === 'approved') {
+      const project = await this.getProject(req.project_id);
+      const editorIds = new Set((project?.editorIds || []).map(Number));
+      editorIds.add(Number(req.requester_id));
+      await this.updateProject(req.project_id, { editorIds: [...editorIds] }, decidedBy);
+    }
+    return this._mapProjectAccessRequest(req);
+  },
+
+  async createBugReport({ userId, title, description, severity = 'normal', appVersion = '', githubIssueUrl = '', screenshots = [] }) {
+    const payload = {
+      user_id: Number(userId),
+      title: title || '',
+      description: description || '',
+      severity: severity || 'normal',
+      app_version: appVersion || '',
+      screenshots: Array.isArray(screenshots) ? screenshots.slice(0, 3) : [],
+      status: githubIssueUrl ? 'sent' : 'open',
+      github_issue_url: githubIssueUrl || ''
+    };
+    const { data, error } = await this._sb().from('wt_bug_reports').insert(payload).select().single();
+    if (error) throw error;
+    try {
+      await this._sb().functions.invoke('report-bug', { body: { bugReportId: data.id } });
+    } catch (_) { /* Optional edge function; admins still receive the in-app report. */ }
+    return data?.id;
+  },
+
+  async getBugReports({ limit = 100 } = {}) {
+    const { data, error } = await this._sb().from('wt_bug_reports').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (error) {
+      const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
+      if (msg.includes('does not exist') || msg.includes('schema cache')) return [];
+      throw error;
+    }
+    return (data || []).map(r => this._mapBugReport(r));
   },
 
   /* Notifications */
@@ -1386,7 +1831,8 @@ const SupabaseDB = {
   async exportAll() {
     const sb = this._sb();
     const [
-      projects, tasks, milestones, updates, users, activityLog, notifications, webhooks, sessions,
+      projects, tasks, milestones, updates, users, activityLog, notifications, webhooks, sessions, projectAccessRequests, bugReports, classrooms,
+      { data: userClassroomsRows, error: ucErr }, { data: directMessageRows, error: dmErr },
       { data: attRows, error: attErr }, { data: settingsRows, error: sErr }
     ] = await Promise.all([
       this.getProjects(), this.getTasks(),
@@ -1396,15 +1842,22 @@ const SupabaseDB = {
       sb.from('wt_notifications').select('*').then(({ data, error }) => { if (error) throw error; return (data || []).map(r => this._mapNotification(r)); }),
       this.getWebhooks(),
       this.getUserSessions(),
+      this.getProjectAccessRequests(),
+      this.getBugReports({ limit: 1000 }),
+      this.getClassrooms(),
+      sb.from('wt_user_classrooms').select('*'),
+      sb.from('wt_direct_messages').select('*'),
       sb.from('wt_attachments').select('*'),
       sb.from('wt_settings').select('*')
     ]);
     if (attErr) throw attErr;
     if (sErr) throw sErr;
+    if (ucErr) throw ucErr;
+    if (dmErr) throw dmErr;
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
       role: u.role, department: u.department || '', createdAt: u.createdAt,
-      discordId: u.discordId || '', color: u.color || '',
+      discordId: u.discordId || '', color: u.color || '', bio: u.bio || '', avatarBase64: u.avatarBase64 || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = (settingsRows || []).map(s => ({
@@ -1416,15 +1869,23 @@ const SupabaseDB = {
       const full = await this.getAttachment(a.id);
       if (!full?.blob) continue;
       attOut.push({
-        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+        id: a.id, projectId: a.projectId, taskId: a.taskId || null, uploadedBy: a.uploadedBy, fileName: a.fileName,
         mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt,
         dataBase64: await this.blobToBase64(full.blob)
       });
     }
+    const userClassrooms = (userClassroomsRows || []).map(r => ({
+      id: r.id, userId: r.user_id, classroomId: r.classroom_id, createdAt: r.created_at
+    }));
+    const directMessages = (directMessageRows || []).map(r => ({
+      id: r.id, fromUserId: r.from_user_id, toUserId: r.to_user_id,
+      content: r.content || '', createdAt: r.created_at, syncedAt: r.synced_at || ''
+    }));
     return {
-      version: 8, exportedAt: new Date().toISOString(),
+      version: 12, exportedAt: new Date().toISOString(),
       projects, tasks, milestones, updates, users: safeUsers, settings, attachments: attOut,
-      activityLog, notifications, webhooks, sessions
+      activityLog, notifications, webhooks, sessions, projectAccessRequests, bugReports,
+      classrooms, userClassrooms, directMessages
     };
   },
 
@@ -1461,6 +1922,8 @@ const SupabaseDB = {
         department: u.department || '',
         discord_id: u.discordId || '',
         color: u.color || '',
+        bio: u.bio || '',
+        avatar_base64: u.avatarBase64 || '',
         created_at: u.createdAt || new Date().toISOString()
       };
       if (u.id != null) row.id = u.id;
@@ -1487,24 +1950,41 @@ const SupabaseDB = {
     const validProjectIds = new Set((data.projects || []).map(p => p.id));
 
     const tables = [
-      'wt_sessions', 'wt_webhooks', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
-      'wt_updates', 'wt_tasks', 'wt_milestones', 'wt_projects'
+      'wt_sessions', 'wt_webhooks', 'wt_direct_messages', 'wt_user_classrooms', 'wt_bug_reports', 'wt_project_access_requests', 'wt_notifications', 'wt_activity_log', 'wt_attachments',
+      'wt_updates', 'wt_tasks', 'wt_milestones', 'wt_projects', 'wt_classrooms'
     ];
     for (const table of tables) await this._clearTable(table);
 
     const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
     if (replaceSettings) await this._clearSettings();
 
+    if (data.classrooms?.length) {
+      const { error } = await sb.from('wt_classrooms').insert(data.classrooms.map(c => ({
+        id: c.id,
+        name: c.name || 'Classroom',
+        description: c.description || '',
+        color: c.color || '#4f46e5',
+        created_at: c.createdAt || new Date().toISOString(),
+        updated_at: c.updatedAt || new Date().toISOString()
+      })));
+      if (error) throw error;
+    } else {
+      await this.ensureDefaultClassroom();
+    }
+    const validClassroomIds = new Set((await this.getClassrooms()).map(c => c.id));
+
     if (data.projects?.length) {
       const { error } = await sb.from('wt_projects').insert(data.projects.map(p => ({
         id: p.id, name: p.name || '', notes: p.notes || '', type: p.type || 'project',
         status: p.status || 'active', priority: p.priority || 'medium',
         owner_id: mapUid(p.ownerId) ?? p.ownerId,
+        classroom_id: validClassroomIds.has(Number(p.classroomId)) ? Number(p.classroomId) : null,
         department: p.department || '',
         workflow_template: p.workflowTemplate || '',
         completed_at: p.completedAt || null,
         is_ongoing: !!p.isOngoing,
         cadence: p.cadence || '',
+        editor_ids: Array.isArray(p.editorIds) ? p.editorIds.map(mapUid).filter(Boolean) : [],
         created_at: p.createdAt, updated_at: p.updatedAt
       })));
       if (error) throw error;
@@ -1595,6 +2075,76 @@ const SupabaseDB = {
         if (error) throw error;
       }
     }
+    if (data.projectAccessRequests?.length) {
+      const rows = data.projectAccessRequests
+        .map(r => ({
+          id: r.id,
+          project_id: r.projectId,
+          requester_id: mapUid(r.requesterId),
+          message: r.message || '',
+          status: r.status || 'pending',
+          decided_by: r.decidedBy != null ? mapUid(r.decidedBy) : null,
+          decided_at: r.decidedAt || null,
+          created_at: r.createdAt || new Date().toISOString(),
+          updated_at: r.updatedAt || new Date().toISOString()
+        }))
+        .filter(r => validProjectIds.has(r.project_id) && validUserIds.has(r.requester_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_project_access_requests').insert(rows);
+        if (error) throw error;
+      }
+    }
+    if (data.bugReports?.length) {
+      const rows = data.bugReports
+        .map(r => ({
+          id: r.id,
+          user_id: r.userId != null ? mapUid(r.userId) : null,
+          title: r.title || '',
+          description: r.description || '',
+          severity: r.severity || 'normal',
+          app_version: r.appVersion || '',
+          screenshots: Array.isArray(r.screenshots) ? r.screenshots : [],
+          status: r.status || 'open',
+          github_issue_url: r.githubIssueUrl || '',
+          created_at: r.createdAt || new Date().toISOString(),
+          updated_at: r.updatedAt || new Date().toISOString()
+        }))
+        .filter(r => r.user_id == null || validUserIds.has(r.user_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_bug_reports').insert(rows);
+        if (error) throw error;
+      }
+    }
+    if (data.userClassrooms?.length) {
+      const rows = data.userClassrooms
+        .map(r => ({
+          id: r.id,
+          user_id: mapUid(r.userId),
+          classroom_id: Number(r.classroomId),
+          created_at: r.createdAt || new Date().toISOString()
+        }))
+        .filter(r => validUserIds.has(r.user_id) && validClassroomIds.has(r.classroom_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_user_classrooms').insert(rows);
+        if (error) throw error;
+      }
+    }
+    if (data.directMessages?.length) {
+      const rows = data.directMessages
+        .map(m => ({
+          id: m.id,
+          from_user_id: mapUid(m.fromUserId),
+          to_user_id: mapUid(m.toUserId),
+          content: m.content || '',
+          created_at: m.createdAt || new Date().toISOString(),
+          synced_at: m.syncedAt || new Date().toISOString()
+        }))
+        .filter(m => validUserIds.has(m.from_user_id) && validUserIds.has(m.to_user_id));
+      if (rows.length) {
+        const { error } = await sb.from('wt_direct_messages').insert(rows);
+        if (error) throw error;
+      }
+    }
     if (replaceSettings && data.settings?.length) {
       for (const s of data.settings) {
         if (s.key === 'masterKey' && s.passwordHash && s.salt) {
@@ -1614,7 +2164,7 @@ const SupabaseDB = {
         if (!validUserIds.has(uploadedBy)) continue;
         await this.addAttachment({
           projectId: a.projectId, uploadedBy, fileName: a.fileName,
-          mimeType: a.mimeType, documentType: a.documentType || '', blob
+          mimeType: a.mimeType, documentType: a.documentType || '', taskId: a.taskId || null, blob
         });
         attachmentsImported++;
       }
