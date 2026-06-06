@@ -54,7 +54,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.8'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.9'; }
 
 /* ──── Config ──── */
 
@@ -343,8 +343,57 @@ function isCloudMode() {
   return window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
 }
 
+function isCloudConfigured() {
+  const cfg = window.WT_CONFIG || {};
+  return isCloudMode() || !!(cfg.storage === 'supabase' && cfg.supabaseUrl && cfg.supabaseAnonKey);
+}
+
+function mapRestUser(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    username: row.username,
+    displayName: row.display_name || row.username,
+    email: row.email || '',
+    passwordHash: row.password_hash,
+    salt: row.salt,
+    role: row.role || 'user',
+    department: row.department || '',
+    discordId: row.discord_id || '',
+    color: row.color || '',
+    bio: row.bio || '',
+    avatarBase64: row.avatar_base64 || '',
+    lastSeenAt: row.last_seen_at || null,
+    lastSeenIp: row.last_seen_ip || null,
+    createdAt: row.created_at || new Date().toISOString()
+  };
+}
+
+async function hydrateCloudUsersViaRest() {
+  const cfg = window.WT_CONFIG || {};
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.LocalDB?.db?.users) return false;
+  try {
+    const endpoint = `${String(cfg.supabaseUrl).replace(/\/$/, '')}/rest/v1/wt_users?select=*&order=id.asc`;
+    const res = await fetch(endpoint, {
+      headers: {
+        apikey: cfg.supabaseAnonKey,
+        Authorization: `Bearer ${cfg.supabaseAnonKey}`
+      }
+    });
+    if (!res.ok) throw new Error(`wt_users returned ${res.status}`);
+    const rows = await res.json();
+    const users = (Array.isArray(rows) ? rows : []).map(mapRestUser).filter(u => u?.id && u.username && u.passwordHash && u.salt);
+    if (!users.length) return false;
+    await window.LocalDB.db.users.bulkPut(users);
+    return true;
+  } catch (err) {
+    console.warn('[auth] Direct wt_users bootstrap failed:', err);
+    return false;
+  }
+}
+
 async function waitForInitialCloudUsers() {
-  if (initialCloudSyncChecked || !isCloudMode() || isOffline()) return;
+  if (initialCloudSyncChecked || !isCloudConfigured() || isOffline()) return;
   initialCloudSyncChecked = true;
   try {
     await Promise.race([
@@ -352,6 +401,9 @@ async function waitForInitialCloudUsers() {
       new Promise(resolve => setTimeout(resolve, 8000))
     ]);
   } catch (_) {}
+  if (!(await DB.hasUsers().catch(() => false))) {
+    await hydrateCloudUsersViaRest();
+  }
 }
 
 function persistWorkspaceCache(data) {

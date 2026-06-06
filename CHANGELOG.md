@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0-beta.9
+
+- Added a direct Supabase REST bootstrap for existing users so fresh installs show sign-in instead of admin setup even if the wider sync engine cannot hydrate yet.
+
 ## 2.1.0-beta.8
 
 - Fixed fresh desktop installs showing the Create administrator screen before the initial Supabase sync completed.
