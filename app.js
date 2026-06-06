@@ -55,7 +55,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.12'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.13'; }
 
 /* ──── Config ──── */
 
@@ -1122,6 +1122,7 @@ async function showApp() {
   updateSidebarUser();
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
+  if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
   if (await DB.isEmpty() && !isCloudMode()) await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
   startSidebarClock();

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0-beta.13
+
+- Moves existing built-in sample projects into Sample Classroom on startup, not only newly generated sample data.
+
 ## 2.1.0-beta.12
 
 - Fixed the Supabase schema order so first-time SQL runs no longer stop before creating project, task, milestone, and classroom tables.

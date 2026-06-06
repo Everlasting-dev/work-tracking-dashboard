@@ -477,6 +477,26 @@ const LocalDB = {
     return db.classrooms.add({ name: name || 'Classroom', description, color, createdAt: now, updatedAt: now });
   },
 
+  async ensureSampleClassroom(ownerId) {
+    const sampleNames = new Set(['Job Search', 'ML Research Paper', 'Side Project – Budget App']);
+    let sampleRoom = await db.classrooms.where('name').equals('Sample Classroom').first();
+    const classroomId = sampleRoom?.id || await this.createClassroom({
+      name: 'Sample Classroom',
+      description: 'Demo workspace for sample projects',
+      color: '#7c3aed'
+    });
+    if (ownerId) {
+      await this.setUserClassrooms(ownerId, [...new Set([...(await this.getUserClassroomIds(ownerId)), classroomId])]);
+    }
+    const projects = await db.projects.toArray();
+    for (const p of projects) {
+      if (sampleNames.has(p.name) && p.classroomId !== classroomId) {
+        await this.updateProject(p.id, { classroomId }, ownerId || p.ownerId || null);
+      }
+    }
+    return classroomId;
+  },
+
   async updateClassroom(id, changes = {}) {
     return db.classrooms.update(Number(id), { ...changes, updatedAt: new Date().toISOString() });
   },
