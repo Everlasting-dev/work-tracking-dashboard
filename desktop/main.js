@@ -21,6 +21,11 @@ function userUpdateError(error, manual = false) {
   if (/net::|network|fetch|timeout|ENOTFOUND|ECONN/i.test(raw)) {
     return 'Could not check for updates. Check your internet connection and try again.';
   }
+  if (/not digitally signed|not signed|SignerCertificate|publisherNames|signature|code signing/i.test(raw)) {
+    return manual
+      ? 'This update is available, but this installed build cannot install unsigned updates automatically. Download and run the latest installer from GitHub Releases.'
+      : 'An update is available, but it needs to be installed manually from GitHub Releases.';
+  }
   return 'Could not check for updates right now.';
 }
 
@@ -150,6 +155,7 @@ function configureAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = true;
+  autoUpdater.verifyUpdateCodeSignature = false;
 
   autoUpdater.on('checking-for-update', () => {
     sendUpdateStatus({ state: 'checking', message: 'Checking for updates...' });

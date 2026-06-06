@@ -93,6 +93,9 @@
     if (/404|latest\.ya?ml|HttpError|github\.com|electron-updater|builder-util-runtime|app\.asar/i.test(raw)) {
       return fallback || 'No new updates available.';
     }
+    if (/not digitally signed|not signed|SignerCertificate|publisherNames|signature|code signing/i.test(raw)) {
+      return 'This update needs a manual install from GitHub Releases.';
+    }
     return raw || fallback || 'Could not check for updates right now.';
   }
 

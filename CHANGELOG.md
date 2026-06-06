@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0-beta.4
+
+- Disabled update code-signature enforcement for unsigned beta installers.
+- Removed publisher-name verification from the unsigned Windows beta package.
+- Replaced updater signature failures with a short manual-install message.
+
 ## 2.1.0-beta.3
 
 - Added classroom workspaces with admin assignment and project filtering.
