@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0-beta.6
+
+- Added board view to the global Tasks page — projects appear as scrollable columns, read-only, clicking navigates to the project.
+- Project cards now show editor member avatars stacked next to the owner name.
+- Attachment indicator on project cards changed to a paperclip icon only (count shown in tooltip).
+- In-progress task title on project cards is now clickable and opens the task detail modal.
+- Classroom admin list now displays name and description stacked cleanly instead of concatenated.
+- Classroom add form description field given proper width.
+- Removed duplicate Add User button from the Team Members section header.
+- User avatars and display names in the Admin panel are now clickable to open the profile modal.
+
 ## 2.1.0-beta.5
 
 - Corrected legacy Windows package owner metadata to Everlasting.
