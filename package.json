@@ -1,0 +1,85 @@
+{
+  "name": "worktracker-desktop",
+  "version": "2.1.0-beta.3",
+  "description": "WorkTracker desktop app for project, task, file, and team activity tracking.",
+  "author": "SubZero Motors",
+  "private": true,
+  "main": "desktop/main.js",
+  "homepage": "https://github.com/Everlasting-dev/work-tracking-dashboard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Everlasting-dev/work-tracking-dashboard.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "desktop": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis",
+    "dist:win": "electron-builder --win nsis",
+    "publish:win": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.subzeromotors.worktracker",
+    "productName": "WorkTracker",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "copyright": "Copyright (c) 2026 SubZero Motors",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "app.js",
+      "styles.css",
+      "db.js",
+      "db-supabase.js",
+      "db-bridge.js",
+      "config.js",
+      "favicon.svg",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signtoolOptions": {
+        "publisherName": "SubZero Motors"
+      },
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "WorkTracker",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Everlasting-dev",
+        "repo": "work-tracking-dashboard"
+      }
+    ]
+  }
+}

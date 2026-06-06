@@ -53,6 +53,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.3'; }
 
 /* ──── Config ──── */
 
@@ -260,11 +261,63 @@ function emptyState(opts) {
 
 /* ──── Session ──── */
 
+const TRUSTED_SESSION_KEY = 'wt-trusted-session-v1';
+const TRUSTED_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+
+function sessionPayload(u) {
+  return {
+    userId: u.id ?? u.userId,
+    username: u.username,
+    displayName: u.displayName,
+    role: u.role,
+    department: u.department || '',
+    color: u.color || '',
+    bio: u.bio || '',
+    avatarBase64: u.avatarBase64 || ''
+  };
+}
 function getSession() { try { return JSON.parse(sessionStorage.getItem('wt-session')); } catch { return null; } }
-function setSession(u) { sessionStorage.setItem('wt-session', JSON.stringify({ userId: u.id, username: u.username, displayName: u.displayName, role: u.role, department: u.department || '', color: u.color || '' })); }
-function clearSession() { sessionStorage.removeItem('wt-session'); }
+function getTrustedSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRUSTED_SESSION_KEY));
+    if (!saved?.userId || !saved?.savedAt || Date.now() - saved.savedAt > TRUSTED_SESSION_TTL_MS) {
+      localStorage.removeItem(TRUSTED_SESSION_KEY);
+      return null;
+    }
+    return saved;
+  } catch {
+    return null;
+  }
+}
+function restoreTrustedSession() {
+  const saved = getTrustedSession();
+  if (!saved) return null;
+  const payload = sessionPayload(saved);
+  sessionStorage.setItem('wt-session', JSON.stringify(payload));
+  return payload;
+}
+function setSession(u, opts = {}) {
+  const payload = sessionPayload(u);
+  sessionStorage.setItem('wt-session', JSON.stringify(payload));
+  if (opts.remember) localStorage.setItem(TRUSTED_SESSION_KEY, JSON.stringify({ ...payload, savedAt: Date.now() }));
+}
+function clearSession(opts = {}) {
+  sessionStorage.removeItem('wt-session');
+  if (opts.trusted) localStorage.removeItem(TRUSTED_SESSION_KEY);
+}
+function isOffline() { return typeof navigator !== 'undefined' && navigator.onLine === false; }
 function isAdmin() { return getSession()?.role === 'admin'; }
-function canEdit(project) { const s = getSession(); if (!s) return false; return s.role === 'admin' || project.ownerId === s.userId; }
+function canEdit(project) {
+  const s = getSession();
+  if (!s || !project) return false;
+  return s.role === 'admin' || project.ownerId === s.userId || (project.editorIds || []).map(Number).includes(Number(s.userId));
+}
+function canManageProjectAccess(project) {
+  const s = getSession();
+  if (!s || !project) return false;
+  return s.role === 'admin' || project.ownerId === s.userId;
+}
+function isProjectOwner(project) { const s = getSession(); return !!s && !!project && project.ownerId === s.userId; }
 function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
@@ -286,18 +339,19 @@ let _workspaceFetchPromise = null;
 
 function persistWorkspaceCache(data) {
   try {
-    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
+    localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({
       at: Date.now(),
       projects: data.projects,
       tasks: data.tasks,
-      users: data.users
+      users: data.users,
+      classrooms: data.classrooms || []
     }));
   } catch (_) { /* quota / private mode */ }
 }
 
 function loadPersistedWorkspaceCache() {
   try {
-    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    const raw = localStorage.getItem(SESSION_CACHE_KEY) || sessionStorage.getItem(SESSION_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.projects || Date.now() - parsed.at > SESSION_CACHE_MS) return null;
@@ -315,7 +369,25 @@ function bustWorkspaceCache() {
   _webhooksCache = null;
   _webhooksCacheAt = 0;
   _workspaceFetchPromise = null;
-  try { sessionStorage.removeItem(SESSION_CACHE_KEY); } catch (_) {}
+  try {
+    sessionStorage.removeItem(SESSION_CACHE_KEY);
+    if (!isOffline()) localStorage.removeItem(SESSION_CACHE_KEY);
+  } catch (_) {}
+  // Also bust the Supabase shadow cache so tasks are re-fetched with fresh data
+  if (window.WT_STORAGE_MODE === 'supabase' && window.SupabaseDB?._shadowState) {
+    window.SupabaseDB._shadowState.at = { projects: 0, tasks: 0, departments: 0, users: 0, updates: 0 };
+    window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false, users: false, updates: false };
+    try { window.SupabaseDB._persistShadowState(); } catch(_) {}
+  }
+}
+
+// On startup, clear the Supabase shadow cache if schema version changed
+const _SCHEMA_VER = 'wt-schema-v12';
+if (localStorage.getItem('wt-schema-version') !== _SCHEMA_VER) {
+  try {
+    localStorage.removeItem('wt-supabase-shadow-v1');
+    localStorage.setItem('wt-schema-version', _SCHEMA_VER);
+  } catch(_) {}
 }
 
 async function getUsersCached(force = false) {
@@ -337,15 +409,25 @@ async function getWebhooksCached(force = false) {
 async function fetchWorkspaceData() {
   if (_workspaceFetchPromise) return _workspaceFetchPromise;
   _workspaceFetchPromise = (async () => {
-    const [projects, tasks, users] = await Promise.all([
-      DB.getProjects(),
-      DB.getTasks(),
-      getUsersCached(true)
-    ]);
-    const data = { projects, tasks, users };
+    let data;
+    try {
+      const [projects, tasks, users, classrooms] = await Promise.all([
+        DB.getProjects(),
+        DB.getTasks(),
+        getUsersCached(true),
+        DB.getClassrooms ? DB.getClassrooms().catch(() => []) : Promise.resolve([])
+      ]);
+      data = { projects, tasks, users, classrooms };
+    } catch (err) {
+      if (!isOffline()) throw err;
+      const persisted = loadPersistedWorkspaceCache();
+      data = persisted
+        ? { projects: persisted.projects || [], tasks: persisted.tasks || [], users: persisted.users || [], classrooms: persisted.classrooms || [] }
+        : { projects: [], tasks: [], users: getSession() ? [getSession()] : [], classrooms: [] };
+    }
     _workspaceCache = data;
     _workspaceCacheAt = Date.now();
-    persistWorkspaceCache(data);
+    if (!isOffline()) persistWorkspaceCache(data);
     return data;
   })().finally(() => { _workspaceFetchPromise = null; });
   return _workspaceFetchPromise;
@@ -360,11 +442,11 @@ async function getWorkspaceData(force = false) {
   if (!force && !_workspaceCache) {
     const persisted = loadPersistedWorkspaceCache();
     if (persisted) {
-      _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+      _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users, classrooms: persisted.classrooms || [] };
       _workspaceCacheAt = persisted.at;
       _usersCache = persisted.users;
       _usersCacheAt = persisted.at;
-      if (now - persisted.at < WORKSPACE_CACHE_MS) return _workspaceCache;
+      if (isOffline() || now - persisted.at < WORKSPACE_CACHE_MS) return _workspaceCache;
     }
   }
 
@@ -375,7 +457,7 @@ function prewarmWorkspaceCache() {
   if (_workspaceCache || _workspaceFetchPromise) return;
   const persisted = loadPersistedWorkspaceCache();
   if (persisted && Date.now() - persisted.at < WORKSPACE_CACHE_MS) {
-    _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users };
+    _workspaceCache = { projects: persisted.projects, tasks: persisted.tasks, users: persisted.users, classrooms: persisted.classrooms || [] };
     _workspaceCacheAt = persisted.at;
     _usersCache = persisted.users;
     _usersCacheAt = persisted.at;
@@ -569,7 +651,7 @@ async function captureLastSeen(userId) {
 
 function effectiveWorkspaceScope() {
   if (isAdmin()) return state.workspaceScope ?? 'everyone';
-  return state.workspaceScope ?? 'mine';
+  return state.workspaceScope ?? 'everyone';
 }
 
 function filterProjectsByWorkspace(projects) {
@@ -579,12 +661,42 @@ function filterProjectsByWorkspace(projects) {
   return projects.filter(p => p.ownerId === s.userId);
 }
 
+async function userClassroomIds() {
+  const s = getSession();
+  if (!s) return [];
+  if (isAdmin()) return null;
+  return DB.getUserClassroomIds ? await DB.getUserClassroomIds(s.userId).catch(() => []) : [];
+}
+
+function filterProjectsByClassroom(projects, allowedIds = null) {
+  const selected = state.classroomFilter || 'all';
+  const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
+  let rows = projects;
+  if (allowedSet) rows = rows.filter(p => p.classroomId == null || allowedSet.has(Number(p.classroomId)));
+  if (selected !== 'all') rows = rows.filter(p => Number(p.classroomId) === Number(selected));
+  return rows;
+}
+
+function classroomFilterHtml(classrooms = [], allowedIds = null) {
+  const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
+  const visible = allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms;
+  if (!visible.length) return '';
+  return `<div class="classroom-switcher">
+    <span class="text-muted" style="font-size:0.75rem">Classroom:</span>
+    <select class="projects-filter-select classroom-select" data-project-filter-input="classroom">
+      <option value="all" ${state.classroomFilter === 'all' ? 'selected' : ''}>All classrooms</option>
+      ${visible.map(c => `<option value="${c.id}" ${String(state.classroomFilter) === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
 function workspaceScopeBarHtml() {
   const sc = effectiveWorkspaceScope();
-  return `<div class="workspace-scope-bar filter-bar" style="margin-bottom:4px">
-    <span class="text-muted text-sm" style="margin-right:10px">Workspace</span>
-    <button type="button" class="filter-tab ${sc === 'mine' ? 'active' : ''}" data-action="set-workspace-scope" data-scope="mine">Mine</button>
-    <button type="button" class="filter-tab ${sc === 'everyone' ? 'active' : ''}" data-action="set-workspace-scope" data-scope="everyone">Everyone</button>
+  return `<div class="workspace-scope-micro">
+    <span class="text-muted" style="font-size:0.75rem">View:</span>
+    <button type="button" class="scope-micro-btn${sc === 'mine' ? ' active' : ''}" data-action="set-workspace-scope" data-scope="mine">My Projects</button>
+    <span class="text-muted" style="font-size:0.75rem">/</span>
+    <button type="button" class="scope-micro-btn${sc === 'everyone' ? ' active' : ''}" data-action="set-workspace-scope" data-scope="everyone">Everyone</button>
   </div>`;
 }
 
@@ -722,14 +834,16 @@ function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
 /* ──── State ──── */
 
 const state = {
-  projectFilter: 'all',
+  projectFilter: 'active',
   projectSearch: '',
   projectOwnerFilter: 'all',
   projectDepartmentFilter: 'all',
+  classroomFilter: 'all',
   taskFilter: 'all',
+  taskViewMode: 'list',
   projectTab: 'tasks',
   currentProjectId: null,
-  workspaceScope: null,
+  workspaceScope: 'everyone',
   docPanelOpen: true,
   userMenuOpen: false,
   notifOpen: false,
@@ -765,6 +879,7 @@ function renderLogin() {
     <form data-form="login">
       <div class="form-group"><label for="l-user">Username</label><input id="l-user" name="username" type="text" required autocomplete="username"></div>
       <div class="form-group"><label for="l-pw">Password</label><input id="l-pw" name="password" type="password" required autocomplete="current-password"></div>
+      <label class="auth-remember"><input name="rememberDevice" type="checkbox" checked> Keep me signed in on this device</label>
       <div class="form-actions" style="justify-content:stretch"><button type="submit" class="btn btn-primary" style="flex:1;justify-content:center">Sign In</button></div>
     </form>
     <p class="auth-forgot"><a href="#/recovery">Forgot password?</a></p>`;
@@ -854,7 +969,7 @@ async function handleAuth(e) {
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
-    setSession(user);
+    setSession(user, { remember: fd.get('rememberDevice') === 'on' });
     // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
     captureLastSeen(user.id).then(async () => {
       const fresh = await DB.getUser(user.id);
@@ -881,7 +996,7 @@ async function handleAuth(e) {
     if (existing) { showAuthError('Username already taken'); return; }
     const id = await DB.createUser({ username, displayName, email, password, role: 'admin' });
     await DB.setMasterKey(masterKey);
-    setSession({ id, username, displayName, role: 'admin' });
+    setSession({ id, username, displayName, role: 'admin' }, { remember: true });
     showToast('Admin created. Use Import Data in the user menu to restore projects from a JSON backup.', 'success');
     await showApp();
   } else if (type === 'recovery-verify') {
@@ -923,10 +1038,69 @@ async function showApp() {
   prewarmWorkspaceCache();
   startSidebarClock();
   DB.flushPendingSync?.().catch(() => {});
+  updateOfflineSyncBanner();
   await router();
   wtAppBootstrapped = true;
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+}
+
+function updateOfflineSyncBanner() {
+  const el = document.getElementById('offline-sync-banner');
+  if (!el) return;
+  const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+  const cloudMode = window.WT_STORAGE_MODE === 'supabase' && status?.enabled;
+  const offline = isOffline();
+  const pending = Number(status?.pending || 0);
+  const failed = Number(status?.failed || 0);
+  const syncing = !!status?.syncing;
+  if (!cloudMode || (!offline && !pending && !failed && !syncing)) {
+    el.className = 'offline-sync-banner hidden';
+    el.innerHTML = '';
+    return;
+  }
+  let tone = 'info';
+  let text = 'Cloud sync is up to date.';
+  if (offline) {
+    tone = 'offline';
+    text = pending
+      ? `Offline. ${pending} change${pending === 1 ? '' : 's'} saved locally and waiting for internet.`
+      : 'Offline. You can keep working; changes will be saved locally and synced when internet returns.';
+  } else if (failed) {
+    tone = 'warning';
+    text = `${failed} cloud sync issue${failed === 1 ? '' : 's'} need attention.`;
+  } else if (syncing) {
+    text = 'Syncing saved changes to Supabase...';
+  } else if (pending) {
+    text = `${pending} change${pending === 1 ? '' : 's'} waiting to sync.`;
+  }
+  el.className = `offline-sync-banner offline-sync-banner--${tone}`;
+  el.innerHTML = `
+    <span>${esc(text)}</span>
+    ${(pending || failed) ? '<button type="button" class="offline-sync-link" data-action="show-sync-diagnostics">Details</button>' : ''}
+  `;
+}
+
+async function handleNetworkOnline() {
+  updateOfflineSyncBanner();
+  if (window.WT_STORAGE_MODE !== 'supabase') return;
+  showToast('Back online. Syncing saved changes...', 'info');
+  try {
+    await DB.retrySyncNow?.();
+    bustWorkspaceCache();
+    await getWorkspaceData(true);
+    updateSidebarUser();
+    updateOfflineSyncBanner();
+    await router();
+  } catch (err) {
+    updateOfflineSyncBanner();
+    showToast('Cloud sync retry failed: ' + (err?.message || 'Unknown error'), 'error');
+  }
+}
+
+function handleNetworkOffline() {
+  updateOfflineSyncBanner();
+  if (window.WT_STORAGE_MODE === 'supabase') showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
 }
 
 function startSidebarClock() {
@@ -956,8 +1130,11 @@ function startSidebarClock() {
 
 function formatSyncJobType(type) {
   return ({
+    createProject: 'Create project',
     updateProject: 'Update project',
+    createTask: 'Create task',
     updateTask: 'Update task',
+    createUpdate: 'Add project note',
     upsertDepartment: 'Save department',
     deleteDepartment: 'Delete department'
   })[type] || type || 'Sync job';
@@ -1005,6 +1182,7 @@ async function showSyncDiagnosticsModal() {
     <div class="sync-diag-list">${rowsHtml}</div>
     <div class="form-actions sync-diag-actions">
       <button type="button" class="btn btn-primary" data-action="sync-retry-now">Retry now</button>
+      <button type="button" class="btn btn-ghost" data-action="sync-force-reload" title="Clear local cache and re-fetch everything from Supabase">Force reload from Supabase</button>
       <button type="button" class="btn btn-ghost" data-action="sync-copy-errors"${jobs.some(j => j.lastError) ? '' : ' disabled'}>Copy errors</button>
       ${status.failed ? '<button type="button" class="btn btn-ghost btn-danger-text" data-action="sync-clear-failed">Clear failed</button>' : ''}
     </div>`);
@@ -1014,7 +1192,8 @@ function renderSyncStatusIndicator() {
   const el = document.getElementById('sync-status-indicator');
   if (!el) return;
   const status = DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
-  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (status.pending || status.failed || status.syncing);
+  const offline = isOffline();
+  const visible = window.WT_STORAGE_MODE === 'supabase' && status?.enabled && (offline || status.pending || status.failed || status.syncing);
   if (!visible) {
     el.textContent = '';
     el.className = 'sync-status-label hidden';
@@ -1030,6 +1209,13 @@ function renderSyncStatusIndicator() {
     const errorHint = status.lastError ? `\n${status.lastError.slice(0, 160)}` : '';
     el.title = `Cloud sync failed — click for details.${errorHint}`;
     el.setAttribute('aria-label', `${n} failed cloud sync job${n > 1 ? 's' : ''}. Click for details.`);
+    return;
+  }
+  if (offline) {
+    el.textContent = status.pending ? ` · Offline (${status.pending})` : ' · Offline';
+    el.className = 'sync-status-label is-pending is-clickable';
+    el.title = 'Offline. Changes are saved locally and will sync when internet returns.';
+    el.setAttribute('aria-label', 'Offline. Click for cloud sync details.');
     return;
   }
   if (status.syncing) {
@@ -1051,8 +1237,11 @@ function updateSidebarUser() {
   const init = display.charAt(0).toUpperCase();
   const isAdm = s.role === 'admin';
   const el = document.getElementById('sidebar-user');
+  const avatarHtml = s.avatarBase64
+    ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img" alt="${esc(display)}">`
+    : `<div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>`;
   el.innerHTML = `
-    <div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>
+    ${avatarHtml}
     <div class="user-details">
       <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
       <span class="user-role">@${esc(s.username)}${window.WT_STORAGE_MODE === 'supabase' ? ' · Cloud' : ''}</span>
@@ -1095,8 +1284,11 @@ function renderUserMenu() {
   menu.innerHTML = `
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="user-edit-profile">${ICONS.userCog} Edit Profile</button>
+    <button type="button" class="user-menu-item" data-action="report-bug">${ICONS.alertTriangle} Report Bug</button>
     <button type="button" class="user-menu-item" data-action="user-show-howto">${ICONS.sparkles} Show How-to</button>
+    <button type="button" class="user-menu-item" data-action="show-about">${ICONS.target} About WorkTracker</button>
     ${adminItems}
+    <hr class="user-menu-divider">
     <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
 }
 
@@ -1145,8 +1337,9 @@ function formatActivityMessage(entry, uMap) {
 async function renderProjects() {
   const content = document.getElementById('content');
   const s = getSession();
-  const { projects: allRaw, tasks: allTasks, users } = await getWorkspaceData();
-  const all = filterProjectsByWorkspace(allRaw);
+  const { projects: allRaw, tasks: allTasks, users, classrooms = [] } = await getWorkspaceData();
+  const allowedClassroomIds = await userClassroomIds();
+  const all = filterProjectsByClassroom(filterProjectsByWorkspace(allRaw), allowedClassroomIds);
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const query = normalizeSearchText(state.projectSearch);
   const ownerFilter = state.projectOwnerFilter;
@@ -1158,7 +1351,6 @@ async function renderProjects() {
   if (query) baseList = baseList.filter(p => projectMatchesSearch(p, uMap[p.ownerId], query));
   const f = state.projectFilter;
   const list = f === 'all' ? baseList : baseList.filter(p => p.status === f);
-
   const pData = list.map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
 
   const cnt = {
@@ -1173,45 +1365,64 @@ async function renderProjects() {
     .filter(u => all.some(p => p.ownerId === u.id))
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
   const deptOptions = [...new Set(all.map(p => projectDepartmentValue(p, uMap)).filter(Boolean))].sort();
+  const attachmentCounts = {};
+  await Promise.all(all.map(async p => {
+    try { attachmentCounts[p.id] = (await DB.getAttachments(p.id)).length; } catch (_) { attachmentCounts[p.id] = 0; }
+  }));
+
+  // Current in-progress task per project (first doing task found)
+  const doingTask = {};
+  for (const t of allTasks) {
+    if (t.status === 'doing' && !doingTask[t.projectId]) doingTask[t.projectId] = t;
+  }
+  const visibleFieldsByProject = {};
+  for (const t of allTasks) {
+    const fields = projectVisibleCustomFields([t]);
+    if (fields.length) visibleFieldsByProject[t.projectId] = [...(visibleFieldsByProject[t.projectId] || []), ...fields];
+  }
+
+  // Status → card accent color
+  const STATUS_ACCENT = { active: '#3b82f6', completed: '#10b981', 'on-hold': '#f59e0b', archived: '#9ca3af' };
 
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
-    ? `<p class="text-muted text-sm workspace-hint">Use <strong>Everyone</strong> to browse teammates&apos; projects (read-only).</p>` : '';
+    ? `<p class="text-muted text-sm workspace-hint" style="margin-bottom:12px">Use <strong>Everyone</strong> to browse teammates' projects (read-only).</p>` : '';
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Projects</h1><p class="view-subtitle">${list.length} matching &middot; ${all.length} visible &middot; ${allRaw.length} total</p></div>
-      <div class="view-actions">
-        <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} New Task</button>
+    <div class="projects-page-header">
+      <div class="projects-page-title">
+        <h1>Projects</h1>
+        <span class="projects-page-count">${allRaw.length} total</span>
+      </div>
+      <div class="projects-page-actions">
+        <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} Task</button>
         <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
       </div>
     </div>
     ${teamHint}
     ${workspaceScopeBarHtml()}
-    <div class="project-toolbar">
-      <div class="project-toolbar-search">
-        <label class="text-muted text-sm" for="project-search">Search projects</label>
-        <input id="project-search" type="search" placeholder="Name, owner, notes, workflow..." value="${esc(state.projectSearch)}" data-project-filter-input="search">
+    ${classroomFilterHtml(classrooms, allowedClassroomIds)}
+    <div class="projects-controls">
+      <div class="projects-search-wrap">
+        <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="projects-search-input" type="search" placeholder="Search projects…" value="${esc(state.projectSearch)}" data-project-filter-input="search">
       </div>
-      <div class="project-toolbar-filters">
-        <label class="project-filter-field">
-          <span class="text-muted text-sm">Owner</span>
-          <select data-project-filter-input="owner">
-            <option value="all" ${ownerFilter === 'all' ? 'selected' : ''}>All owners</option>
-            <option value="me" ${ownerFilter === 'me' ? 'selected' : ''}>My projects</option>
-            ${ownerOptions.map(u => `<option value="${u.id}" ${ownerFilter === String(u.id) ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="project-filter-field">
-          <span class="text-muted text-sm">Department</span>
-          <select data-project-filter-input="department">
-            <option value="all" ${deptFilter === 'all' ? 'selected' : ''}>All departments</option>
-            ${deptOptions.map(dept => `<option value="${dept}" ${deptFilter === dept ? 'selected' : ''}>${esc(departmentLabel(dept))}</option>`).join('')}
-          </select>
-        </label>
+      <div class="projects-filters-row">
+        <select class="projects-filter-select" data-project-filter-input="owner">
+          <option value="all" ${ownerFilter === 'all' ? 'selected' : ''}>All owners</option>
+          <option value="me" ${ownerFilter === 'me' ? 'selected' : ''}>My projects</option>
+          ${ownerOptions.map(u => `<option value="${u.id}" ${ownerFilter === String(u.id) ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
+        </select>
+        <select class="projects-filter-select" data-project-filter-input="department">
+          <option value="all" ${deptFilter === 'all' ? 'selected' : ''}>All departments</option>
+          ${deptOptions.map(dept => `<option value="${dept}" ${deptFilter === dept ? 'selected' : ''}>${esc(departmentLabel(dept))}</option>`).join('')}
+        </select>
       </div>
     </div>
-    <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
-      <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
+    <div class="projects-status-pills">
+      ${Object.entries(fLabels).map(([k, l]) => `
+        <button class="status-pill ${f === k ? 'active' : ''}" data-action="filter-projects" data-filter="${k}">
+          ${l} <span class="status-pill-count">${cnt[k]}</span>
+        </button>`).join('')}
     </div>
     ${pData.length === 0 ? emptyState(f === 'all' ? {
       icon: 'folder',
@@ -1224,24 +1435,382 @@ async function renderProjects() {
       title: `No ${fLabels[f].toLowerCase()} projects`,
       description: 'Try another filter or create a new project.'
     }) :
-    `<div class="projects-grid">${pData.map(p => { const owner = uMap[p.ownerId]; const mine = p.ownerId === s.userId; const dept = projectDepartmentValue(p, uMap); return `
-      <a href="#/projects/${p.id}" class="project-card">
-        <div class="project-card-top">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!mine ? badge('View Only', 'muted') : ''}</div>
-        <h3 class="project-card-title" title="${esc(p.name)}"><span class="title-text">${esc(p.name)}</span></h3>
-        <p class="project-card-notes">${esc(p.notes || 'No description')}</p>
-        <div class="project-card-progress">${progressBar(p.progress)}<span class="text-muted text-sm">${p.progress}% &middot; ${p.doneCount}/${p.taskCount} tasks</span></div>
-        <div class="project-card-footer">
-          <span class="text-muted text-sm">${ICONS.clock} ${timeAgo(p.updatedAt)}</span>
-          <span class="text-muted text-sm">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+    `<div class="projects-grid-v2">${pData.map(p => {
+      const owner = uMap[p.ownerId];
+      const mine = p.ownerId === s.userId;
+      const editable = canEdit(p);
+      const dept = projectDepartmentValue(p, uMap);
+      const accent = STATUS_ACCENT[p.status] || '#9ca3af';
+      const ct = doingTask[p.id];
+      const ctAssignee = ct ? uMap[ct.assigneeId] : null;
+      const pinnedFields = visibleFieldsByProject[p.id] || [];
+      const attachmentCount = attachmentCounts[p.id] || 0;
+      const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
+      return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
+        <div class="project-card-v2-accent-bar"></div>
+        <div class="project-card-v2-body">
+          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!editable ? badge('View Only', 'muted') : (!mine ? badge('Editor', 'blue') : '')}</div>
+          <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}${attachmentCount ? `<span class="project-attach-indicator" title="${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}">${ICONS.file} ${attachmentCount}</span>` : ''}</h3>
+          <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
+          ${renderProjectCardVisibleFields(pinnedFields)}
+          <div class="project-card-v2-progress">
+            ${progressBar(p.progress)}
+            <div class="project-card-v2-progress-meta">
+              <span class="project-card-v2-progress-pct">${p.progress}%</span>
+              <span class="text-muted text-sm">${p.doneCount}/${p.taskCount} tasks</span>
+            </div>
+          </div>
+          ${ct ? `<div class="project-card-v2-current-task">
+            <span class="project-card-v2-ct-pulse"></span>
+            <div class="project-card-v2-ct-info">
+              <span class="project-card-v2-ct-label">In Progress</span>
+              <span class="project-card-v2-ct-title">${esc(ct.title)}</span>
+            </div>
+            ${ctAssignee ? `<span class="project-card-v2-ct-assignee" ${userColorStyle(ctAssignee)} title="${esc(ctAssignee.displayName || ctAssignee.username)}">${(ctAssignee.displayName || ctAssignee.username).charAt(0).toUpperCase()}</span>` : ''}
+          </div>` : ''}
         </div>
-      </a>`; }).join('')}</div>`}`;
+        <div class="project-card-v2-footer">
+          <span class="project-card-v2-owner">
+            <span class="project-card-v2-owner-avatar" ${userColorStyle(owner)}>${ownerInit}</span>
+            <span class="project-card-v2-owner-name">${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+          </span>
+          <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
+        </div>
+      </div>`;
+    }).join('')}</div>`}`;
+}
 
-  // Tag overflowing card titles so CSS can animate them on hover.
-  requestAnimationFrame(() => {
-    document.querySelectorAll('.project-card-title > .title-text').forEach(el => {
-      if (el.scrollWidth - el.clientWidth > 2) el.classList.add('is-overflowing');
+/* ──── Task order helpers (localStorage) ──── */
+
+function getTaskOrder(projectId) {
+  try { return JSON.parse(localStorage.getItem(`wt_task_order_${projectId}`)) || null; }
+  catch(_) { return null; }
+}
+function setTaskOrder(projectId, ids) {
+  try { localStorage.setItem(`wt_task_order_${projectId}`, JSON.stringify(ids.map(Number))); }
+  catch(_) {}
+}
+function applyTaskOrder(tasks, projectId) {
+  const order = getTaskOrder(projectId);
+  if (!order?.length) return tasks;
+  const map = new Map(order.map((id, i) => [Number(id), i]));
+  return [...tasks].sort((a, b) => (map.has(a.id) ? map.get(a.id) : 9e9) - (map.has(b.id) ? map.get(b.id) : 9e9));
+}
+
+/* ──── Task view renderers ──── */
+
+function _insertZoneHtml(afterId, status, projectId) {
+  return `<div class="task-insert-zone" data-after="${afterId}" data-status="${esc(status)}" data-project-id="${projectId}">
+    <div class="task-insert-line"></div>
+    <button class="task-insert-btn" data-action="quick-add-task" data-after="${afterId}" data-status="${esc(status)}" data-project-id="${projectId}" title="Add task here">+</button>
+  </div>`;
+}
+
+function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = []) {
+  if (!tasks.length) return emptyState({
+    icon: 'tasks', title: 'No tasks in this project',
+    description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
+    cta: editable ? 'Add a task' : '', ctaAction: editable ? 'add-task' : '',
+    ctaData: editable ? { 'project-id': projectId } : {}
+  });
+
+  const sorted = applyTaskOrder(tasks, projectId);
+  const statusGroups = [
+    { key: 'doing', label: 'In Progress', color: 'var(--blue)' },
+    { key: 'todo',  label: 'To Do',       color: 'var(--amber)' },
+    { key: 'done',  label: 'Done',        color: 'var(--green)' },
+  ];
+
+  const renderCard = (t) => {
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const assignee = uMap[t.assigneeId];
+    const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
+    const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+    const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
+    return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}"
+        draggable="${editable ? 'true' : 'false'}" data-task-id="${t.id}">
+      ${editable ? `<div class="task-card-drag-handle" title="Drag to reorder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="7" r="1.5"/><circle cx="15" cy="7" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="17" r="1.5"/><circle cx="15" cy="17" r="1.5"/></svg>
+      </div>` : ''}
+      <div class="task-card-status-stripe"></div>
+      <div class="task-card-body">
+        <div class="task-card-top">
+          ${editable
+            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
+            : `<span class="status-dot status-dot-${t.status}"></span>`}
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details · notes, tracking info, files">${esc(t.title)}</button>
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
+          ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete task">${ICONS.trash}</button>` : ''}
+        </div>
+        <div class="task-card-bottom">
+          ${editable
+            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
+            : assigneeChipHtml(assignee)}
+          <div class="task-card-tags">
+            ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
+            ${prioBadge(t.priority)}
+            ${fileBadge}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  for (const sg of statusGroups) {
+    const grpTasks = sorted.filter(t => t.status === sg.key);
+    if (!grpTasks.length && sg.key === 'done') continue;
+    html += `<div class="task-group-v2" data-status="${sg.key}">
+      <div class="task-group-header-v2" style="--group-color:${sg.color}">
+        <span class="task-group-dot-v2"></span>
+        <span class="task-group-label-v2">${sg.label}</span>
+        <span class="task-group-count-v2">${grpTasks.length}</span>
+      </div>
+      <div class="task-group-body-v2" data-project-id="${projectId}">
+        ${editable ? _insertZoneHtml('top-' + sg.key, sg.key, projectId) : ''}
+        ${grpTasks.map(t => renderCard(t) + (editable ? _insertZoneHtml(t.id, sg.key, projectId) : '')).join('')}
+        ${!grpTasks.length ? `<p class="task-group-empty-v2">No ${sg.label.toLowerCase()} tasks. Click + to add one.</p>` : ''}
+      </div>
+    </div>`;
+  }
+  return html;
+}
+
+function projectVisibleCustomFields(tasks = []) {
+  return tasks.flatMap(task => (task.customFields || [])
+    .filter(field => field && field.showInProject && (field.label || field.value))
+    .map(field => ({
+      taskId: task.id,
+      taskTitle: task.title || 'Task',
+      label: field.label || 'Custom field',
+      value: field.value || ''
+    })));
+}
+
+function renderProjectVisibleFields(fields = []) {
+  if (!fields.length) return '';
+  return `<div class="project-visible-fields" aria-label="Pinned task details">
+    ${fields.map(field => `<button type="button" class="project-visible-field" data-action="copy-pinned-field" data-copy="${esc(field.value)}" title="Copy ${esc(field.label)}">
+      <span class="project-visible-field-task">${esc(field.taskTitle)}</span>
+      <span class="project-visible-field-main"><span>${esc(field.label)}</span><strong>${esc(field.value)}</strong></span>
+    </button>`).join('')}
+  </div>`;
+}
+
+function renderProjectCardVisibleFields(fields = []) {
+  if (!fields.length) return '';
+  return `<div class="project-card-v2-fields" aria-label="Pinned project fields">
+    ${fields.slice(0, 3).map(field => `<button type="button" class="project-card-v2-field" data-action="copy-pinned-field" data-copy="${esc(field.value)}" title="Copy ${esc(field.label)}">
+      <span class="project-card-v2-field-label">${esc(field.label)}</span>
+      <strong>${esc(field.value)}</strong>
+    </button>`).join('')}
+    ${fields.length > 3 ? `<span class="project-card-v2-field-more">+${fields.length - 3} more</span>` : ''}
+  </div>`;
+}
+
+function customFieldActivitySummary(before = [], after = []) {
+  const keyFor = (f) => `${(f.label || '').trim().toLowerCase()}::${(f.value || '').trim()}`;
+  const beforeMap = new Map((before || []).filter(f => f?.label || f?.value).map(f => [keyFor(f), f]));
+  const afterFields = (after || []).filter(f => f?.label || f?.value);
+  const added = afterFields.find(f => !beforeMap.has(keyFor(f)));
+  const pinned = afterFields.find(f => f.showInProject && !beforeMap.get(keyFor(f))?.showInProject);
+  const changed = added || pinned;
+  if (!changed) return afterFields.length !== (before || []).filter(f => f?.label || f?.value).length ? 'custom fields updated' : '';
+  const label = changed.label || 'custom field';
+  const value = changed.value ? `: ${changed.value}` : '';
+  return `${changed.showInProject ? 'pinned to project description - ' : 'custom field added - '}${label}${value}`;
+}
+
+function renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments = []) {
+  const cols = [
+    { key: 'todo',  label: 'To Do',      color: '#f59e0b', bg: 'rgba(245,158,11,0.05)' },
+    { key: 'doing', label: 'In Progress', color: '#3b82f6', bg: 'rgba(59,130,246,0.05)' },
+    { key: 'done',  label: 'Done',        color: '#10b981', bg: 'rgba(16,185,129,0.05)' },
+  ];
+  return `<div class="task-board-v2">
+    ${cols.map(col => {
+      const colTasks = applyTaskOrder(tasks, projectId).filter(t => t.status === col.key);
+      return `<div class="task-board-col-v2" data-status="${col.key}" style="--col-color:${col.color};--col-bg:${col.bg}">
+        <div class="task-board-col-head-v2">
+          <div class="task-board-col-name-v2"><span class="task-board-col-dot-v2"></span>${col.label}</div>
+          <span class="task-board-col-cnt-v2">${colTasks.length}</span>
+        </div>
+        <div class="task-board-cards-v2">
+          ${colTasks.map(t => {
+            const od = isOverdue(t.dueDate) && t.status !== 'done';
+            const assignee = uMap[t.assigneeId];
+            const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
+            const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+            const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
+            return `<div class="task-board-card-v2${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}" style="--card-color:${col.color}">
+              <button type="button" class="task-board-card-title-v2" data-action="open-task-detail" data-id="${t.id}" title="Open details">${esc(t.title)}</button>
+              <div class="task-board-card-footer-v2">
+                ${assigneeChipHtml(assignee)}
+                <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+                  ${t.dueDate ? `<span style="display:flex;align-items:center;gap:3px;font-size:0.78rem" class="${od ? 'overdue' : 'text-muted'}">${ICONS.calendar}${formatDateShort(t.dueDate)}</span>` : ''}
+                  ${prioBadge(t.priority)}
+                  ${fileBadge}
+                </div>
+              </div>
+              ${editable ? `<div class="task-board-card-actions-v2">
+                <button class="status-dot status-dot-${t.status}" style="width:18px;height:18px" data-action="cycle-task-status" data-id="${t.id}" title="Next status"></button>
+                <button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>
+              </div>` : ''}
+            </div>`;
+          }).join('') || `<div class="task-board-col-empty-v2">No tasks here</div>`}
+        </div>
+        ${editable ? `<button class="task-board-add-v2" data-action="add-task" data-project-id="${projectId}" data-default-status="${col.key}">${ICONS.plus} Add ${col.label} task</button>` : ''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderTaskTimelineViewHtml(tasks, uMap, projectId) {
+  const datedTasks = tasks.filter(t => t.dueDate);
+  const undatedCount = tasks.length - datedTasks.length;
+  if (!datedTasks.length) return `<div class="timeline-empty-v2">
+    ${ICONS.calendar}
+    <p style="font-size:0.95rem;font-weight:600;margin-top:8px">No due dates set</p>
+    <p class="text-muted text-sm">Add due dates to tasks to see them on the timeline.</p>
+  </div>`;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dueDates = datedTasks.map(t => new Date(t.dueDate + 'T00:00:00'));
+  let minDate = new Date(Math.min(...dueDates, today));
+  let maxDate = new Date(Math.max(...dueDates, today));
+  minDate.setDate(1); minDate.setMonth(minDate.getMonth() - 1);
+  maxDate.setDate(1); maxDate.setMonth(maxDate.getMonth() + 2);
+  const totalMs = maxDate - minDate;
+
+  const pct = (dateStr) => ((new Date(dateStr + 'T00:00:00') - minDate) / totalMs * 100).toFixed(3);
+  const todayPct = ((today - minDate) / totalMs * 100).toFixed(3);
+
+  const months = [];
+  let cur = new Date(minDate);
+  while (cur < maxDate) {
+    months.push({ label: cur.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }), left: ((cur - minDate) / totalMs * 100).toFixed(2) });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  const STATUS_COLOR = { todo: 'var(--amber)', doing: 'var(--blue)', done: 'var(--green)' };
+
+  const rows = datedTasks.map(t => {
+    const assignee = uMap[t.assigneeId];
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const dueP = Number(pct(t.dueDate));
+    const barW = Math.max(2, Math.min(12, dueP * 0.12));
+    const barLeft = Math.max(0, dueP - barW);
+    const color = od ? 'var(--red)' : (STATUS_COLOR[t.status] || 'var(--border)');
+    const init = assignee ? (assignee.displayName || assignee.username || '?').charAt(0).toUpperCase() : '?';
+    return `<div class="timeline-row-v2" data-task-id="${t.id}">
+      <div class="timeline-row-label-v2" title="${esc(t.title)}">
+        <span class="status-dot status-dot-${t.status}" style="width:10px;height:10px;flex-shrink:0;min-width:10px"></span>
+        <span class="timeline-label-text-v2">${esc(t.title)}</span>
+        <span class="timeline-assignee-v2" title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init}</span>
+      </div>
+      <div class="timeline-row-track-v2">
+        <div class="timeline-today-track" style="left:${todayPct}%"></div>
+        <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} — Due ${formatDateShort(t.dueDate)}">
+          <span class="timeline-bar-label-v2">${formatDateShort(t.dueDate)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="task-timeline-v2">
+    <div class="timeline-header-v2">
+      <div class="timeline-label-col-v2"></div>
+      <div class="timeline-track-col-v2">
+        ${months.map(m => `<div class="timeline-month-v2" style="left:${m.left}%">${m.label}</div>`).join('')}
+        <div class="timeline-today-v2" style="left:${todayPct}%">
+          <span class="timeline-today-label-v2">Today</span>
+          <div class="timeline-today-line-v2"></div>
+        </div>
+      </div>
+    </div>
+    <div class="timeline-rows-v2">${rows}</div>
+    ${undatedCount ? `<p class="text-muted text-sm" style="margin-top:14px;padding-left:180px">${undatedCount} task${undatedCount !== 1 ? 's' : ''} without due dates not shown.</p>` : ''}
+  </div>`;
+}
+
+function setupTaskDragDropList(projectId) {
+  const container = document.getElementById('tab-content');
+  if (!container) return;
+  let draggedId = null;
+
+  container.querySelectorAll('.task-card-v2[draggable=true]').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      draggedId = Number(card.dataset.taskId);
+      card.classList.add('task-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(draggedId));
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('task-dragging');
+      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
     });
   });
+
+  container.querySelectorAll('.task-insert-zone').forEach(zone => {
+    zone.addEventListener('dragover', e => {
+      if (!draggedId) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
+      zone.classList.add('drop-active');
+    });
+    zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-active'); });
+    zone.addEventListener('drop', async e => {
+      e.preventDefault(); zone.classList.remove('drop-active');
+      if (!draggedId) return;
+      const afterId = zone.dataset.after;
+      const allCards = [...container.querySelectorAll('.task-card-v2')];
+      const orderedIds = allCards.map(c => Number(c.dataset.taskId));
+      const withoutDragged = orderedIds.filter(id => id !== draggedId);
+      let newOrder;
+      if (afterId && afterId.startsWith('top-')) {
+        newOrder = [draggedId, ...withoutDragged];
+      } else {
+        const idx = withoutDragged.indexOf(Number(afterId));
+        if (idx === -1) newOrder = [...withoutDragged, draggedId];
+        else { newOrder = [...withoutDragged]; newOrder.splice(idx + 1, 0, draggedId); }
+      }
+      setTaskOrder(projectId, newOrder);
+      draggedId = null;
+      const p = await DB.getProject(projectId);
+      if (p) await renderTab('tasks', projectId, canEdit(p));
+    });
+  });
+}
+
+async function createQuickTask(projectId, afterId, status) {
+  const qaf = document.querySelector('.task-qaf');
+  const titleInput = qaf?.querySelector('.task-qaf-input');
+  const title = titleInput?.value?.trim();
+  if (!title) { titleInput?.focus(); return; }
+  const uid = actorId();
+  const s = getSession();
+  try {
+    const newId = await DB.createTask({ projectId, title, status: status || 'todo', priority: 'medium', assigneeId: s?.userId || uid, actorUserId: uid });
+    const allTasks = await DB.getTasks({ projectId });
+    const currentOrder = getTaskOrder(projectId) || allTasks.map(t => t.id);
+    const withoutNew = currentOrder.filter(id => Number(id) !== Number(newId));
+    let newOrder;
+    if (!afterId || afterId.startsWith('top-')) newOrder = [newId, ...withoutNew];
+    else {
+      const idx = withoutNew.indexOf(Number(afterId));
+      if (idx === -1) newOrder = [...withoutNew, newId];
+      else { newOrder = [...withoutNew]; newOrder.splice(idx + 1, 0, newId); }
+    }
+    setTaskOrder(projectId, newOrder);
+    bustWorkspaceCache();
+    const project = await DB.getProject(projectId);
+    if (project) await renderTab('tasks', projectId, canEdit(project));
+    showToast('Task added', 'success');
+  } catch(err) {
+    showToast('Failed to add task', 'error');
+  }
 }
 
 async function renderProjectDetail(projectId) {
@@ -1261,21 +1830,21 @@ async function renderProjectDetail(projectId) {
 
   const s = getSession();
   const editable = canEdit(project);
-  // Owner/admin sees everything; non-owners see only tasks assigned to them.
+  const manageAccess = canManageProjectAccess(project);
   const [allProjectTasks, milestones, users, attList] = await Promise.all([
     DB.getTasks({ projectId }),
     DB.getMilestones(projectId),
     getUsersCached(),
     DB.getAttachments(projectId)
   ]);
-  const visibleTasks = editable ? allProjectTasks : allProjectTasks.filter(t => t.assigneeId === s.userId);
-  const canSeeTasks = editable || visibleTasks.length > 0;
-  const progress = editable ? projectProgressFromTaskList(allProjectTasks) : null;
+  const visibleTasks = allProjectTasks;
+  const canSeeTasks = true;
+  const progress = projectProgressFromTaskList(allProjectTasks);
   const tasks = visibleTasks;
   const owner = users.find(u => u.id === project.ownerId);
   const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
   let tab = state.projectTab;
-  if (!canSeeTasks && tab === 'tasks') tab = 'milestones';
+  if (!canSeeTasks && (tab === 'tasks' || tab === 'timeline')) tab = 'milestones';
   state.projectTab = tab;
   const attCount = attList.length;
   state._detailCache = { projectId, allProjectTasks, milestones, users, attList };
@@ -1283,9 +1852,25 @@ async function renderProjectDetail(projectId) {
   if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
   await renderDocumentPanel(projectId, editable);
 
+  const currentTask = canSeeTasks ? allProjectTasks.find(t => t.status === 'doing') : null;
+  const currentTaskAssignee = currentTask ? users.find(u => u.id === currentTask.assigneeId) : null;
+  const visibleCustomFields = canSeeTasks ? projectVisibleCustomFields(allProjectTasks) : [];
+  const currentTaskBanner = currentTask ? `
+    <div class="current-task-banner">
+      <span class="current-task-pulse"></span>
+      <div class="current-task-info">
+        <span class="current-task-meta">In Progress</span>
+        <strong class="current-task-title">${esc(currentTask.title)}</strong>
+      </div>
+      ${currentTaskAssignee ? assigneeChipHtml(currentTaskAssignee) : ''}
+      ${currentTask.dueDate ? `<span class="current-task-due ${isOverdue(currentTask.dueDate) ? 'overdue' : isDueSoon(currentTask.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(currentTask.dueDate)}</span>` : ''}
+    </div>` : '';
+
   const progressLine = canSeeTasks
-    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>`
-    : `<p class="text-muted text-sm" style="margin-top:14px">${ICONS.target} Task details are visible only to the project owner.</p>`;
+    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>${currentTaskBanner}`
+    : '';
+  const requestAccessBtn = !editable && s?.userId !== project.ownerId
+    ? `<button class="btn btn-ghost" data-action="request-project-access" data-project-id="${project.id}">${ICONS.userCog} Request edit access</button>` : '';
 
   content.innerHTML = `
     <div class="view-header">
@@ -1295,6 +1880,8 @@ async function renderProjectDetail(projectId) {
       </div>
       <div class="view-actions">
         <button type="button" class="btn btn-ghost ${state.docPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" title="Documents panel">${ICONS.file} Files (${attCount})</button>
+        ${requestAccessBtn}
+        ${manageAccess ? `<button class="btn btn-ghost" data-action="manage-project-access" data-project-id="${project.id}">${ICONS.userCog} Access</button>` : ''}
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
         ${canDeleteProject() ? `<button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` : ''}
         ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
@@ -1304,12 +1891,14 @@ async function renderProjectDetail(projectId) {
       <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
+      ${renderProjectVisibleFields(visibleCustomFields)}
       <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
       ${progressLine}
     </div>
     ${isLogisticsWorkflow(project) ? renderLogisticsWorkflowCard(project, allProjectTasks, attList, editable) : ''}
     <div class="tab-bar">
       ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
+      ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
       <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
       <button class="tab-btn ${tab === 'library' ? 'active' : ''}" data-action="switch-tab" data-tab="library" data-project-id="${projectId}">Library (${attCount})</button>
       <button class="tab-btn ${tab === 'updates' ? 'active' : ''}" data-action="switch-tab" data-tab="updates" data-project-id="${projectId}">Activity</button>
@@ -1332,7 +1921,12 @@ async function renderDocumentPanel(projectId, editable) {
     if (main) main.classList.remove('with-doc-panel');
     return;
   }
+  // Revoke any previous panel blob URLs
+  if (state._docPanelUrls?.length) { state._docPanelUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} }); }
+  state._docPanelUrls = [];
+
   const items = await DB.getAttachments(projectId);
+  const projectItems = items.filter(a => !a.taskId); // project-level files only in panel
   const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   panel.classList.remove('hidden');
@@ -1343,19 +1937,35 @@ async function renderDocumentPanel(projectId, editable) {
     : items.map(item => {
       const who = uMap[item.uploadedBy];
       const isImg = item.mimeType?.startsWith('image/');
-      const icon = isImg ? '🖼' : (item.mimeType === 'application/pdf' ? '📄' : '📎');
-      return `<button type="button" class="doc-panel-item" data-action="preview-attachment" data-id="${item.id}">
-        <span class="doc-panel-icon">${icon}</span>
-        <span class="doc-panel-info">
+      const isPdf = item.mimeType === 'application/pdf';
+      const isTaskFile = !!item.taskId;
+      let thumbHtml = '';
+      if (isImg) {
+        let url = '';
+        if (item.blob) { url = URL.createObjectURL(item.blob); state._docPanelUrls.push(url); }
+        else if (item.storagePath && DB.getAttachmentUrl) { url = DB.getAttachmentUrl(item.storagePath); }
+        thumbHtml = url ? `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">` : `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
+      } else if (isPdf) {
+        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--pdf"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12h1v4h1"/><path d="M8 12h4"/></svg>PDF</div>`;
+      } else {
+        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
+      }
+      return `<button type="button" class="doc-panel-item-v2" data-action="preview-attachment" data-id="${item.id}">
+        <div class="doc-panel-thumb-wrap">${thumbHtml}</div>
+        <div class="doc-panel-info">
           <span class="doc-panel-name">${esc(item.fileName)}</span>
-          <span class="doc-panel-meta">${who ? esc(who.displayName) : 'Unknown'} · ${timeAgo(item.createdAt)}${item.documentType ? ` · ${esc(documentTypeLabel(item.documentType))}` : ''}</span>
-        </span>
+          <span class="doc-panel-meta">
+            ${who ? esc((who.displayName || who.username).split(' ')[0]) : '?'} · ${timeAgo(item.createdAt)}
+            ${isTaskFile ? `<span class="doc-panel-task-tag">task</span>` : ''}
+            ${item.documentType ? ` · <em>${esc(documentTypeLabel(item.documentType))}</em>` : ''}
+          </span>
+        </div>
       </button>`;
     }).join('');
 
   panel.innerHTML = `
     <div class="doc-panel-header">
-      <h3>Documents</h3>
+      <h3>Documents <span class="projects-page-count" style="font-size:0.72rem">${items.length}</span></h3>
       <button type="button" class="btn-icon" data-action="toggle-doc-panel" title="Close panel">${ICONS.x}</button>
     </div>
     ${editable ? `<button type="button" class="btn btn-sm btn-primary doc-panel-upload" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.upload} Upload</button>` : ''}
@@ -1411,39 +2021,40 @@ async function renderTab(tab, projectId, editable) {
     const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
     const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
     const users = cache?.users ?? await getUsersCached();
+    const attachments = cache?.attList ?? await DB.getAttachments(projectId);
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-    el.innerHTML = `
-      ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button></div>` : ''}
-      ${tasks.length === 0 ? emptyState({
-        icon: 'tasks',
-        title: 'No tasks in this project',
-        description: editable ? 'Break work into trackable tasks with due dates and assignees.' : 'Tasks assigned to you will appear here.',
-        cta: editable ? 'Add a task' : '',
-        ctaAction: editable ? 'add-task' : '',
-        ctaData: editable ? { 'project-id': projectId } : {}
-      }) :
-      `<div class="task-list">${tasks.map(t => { const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
-        <div class="task-item ${t.status === 'done' ? 'task-done' : ''}">
-          <div class="task-item-left">
-            ${editable
-              ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Change status"></button>`
-              : `<span class="status-dot status-dot-${t.status}"></span>`}
-            <div class="task-item-info">
-              <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
-              <div class="task-item-meta">
-                ${editable
-                  ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
-                  : assigneeChipHtml(assignee)}
-                ${t.dueDate ? `<span class="${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
-                ${t.priority !== 'medium' ? prioBadge(t.priority) : ''}
-              </div>
-            </div>
-          </div>
-          <div class="task-item-right">
-            ${taskBadge(t.status)}
-            ${editable ? `<button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
-          </div>
-        </div>`; }).join('')}</div>`}`;
+    const view = state.taskViewMode || 'list';
+
+    const viewToggle = `<div class="task-view-toggle">
+      <button class="tvt-btn${view === 'list' ? ' active' : ''}" data-action="task-view" data-view="list" data-project-id="${projectId}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        List
+      </button>
+      <button class="tvt-btn${view === 'board' ? ' active' : ''}" data-action="task-view" data-view="board" data-project-id="${projectId}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+        Board
+      </button>
+    </div>`;
+
+    el.innerHTML = `<div class="task-view-header">
+      ${viewToggle}
+      ${editable ? `<button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>` : ''}
+    </div>
+    <div id="task-view-body">
+      ${view === 'board' ? renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments) : renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments)}
+    </div>`;
+
+    if (view === 'list' && editable) {
+      setupTaskDragDropList(projectId);
+    }
+  } else if (tab === 'timeline') {
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
+    const s = getSession();
+    const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
+    const users = cache?.users ?? await getUsersCached();
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+    el.innerHTML = `<div style="padding-top:4px">${renderTaskChainTimelineHtml(tasks, uMap)}</div>`;
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -1547,64 +2158,111 @@ async function renderTab(tab, projectId, editable) {
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
-  const { projects: allProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
-  // Tasks are private per project owner. Non-admin members ALSO see tasks assigned to them.
-  const myProjectIds = new Set(allProjects.filter(p => p.ownerId === s.userId).map(p => p.id));
+  const { projects: rawProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
+  const attachmentRows = await Promise.all((rawProjects || []).map(p => DB.getAttachments(p.id).catch(() => [])));
+  const taskAttachmentMap = new Map();
+  attachmentRows.flat().forEach(a => {
+    if (a.taskId == null) return;
+    const key = Number(a.taskId);
+    if (!taskAttachmentMap.has(key)) taskAttachmentMap.set(key, []);
+    taskAttachmentMap.get(key).push(a);
+  });
+  const allowedClassroomIds = await userClassroomIds();
+  const allProjects = filterProjectsByClassroom(rawProjects, allowedClassroomIds);
+  const visibleProjectIds = new Set(allProjects.map(p => p.id));
+  const editableProjectIds = new Set(allProjects.filter(p => canEdit(p)).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
-  let all = allTasks;
-  if (!isAdmin()) {
-    all = all.filter(t => myProjectIds.has(t.projectId) || t.assigneeId === s.userId);
-  }
+  let all = allTasks.filter(t => visibleProjectIds.has(t.projectId));
+  if (!isAdmin()) all = all.filter(t => editableProjectIds.has(t.projectId) || t.assigneeId === s.userId);
   const f = state.taskFilter;
-  const tasks = f === 'all' ? all : all.filter(t => t.status === f);
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
-  const fLabels = { all: 'All', todo: 'To Do', doing: 'In Progress', done: 'Done' };
+  const PRIO = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const sortPrio = ts => [...ts].sort((a,b) => (PRIO[a.priority]??2)-(PRIO[b.priority]??2));
 
-  const privacyHint = !isAdmin()
-    ? `<p class="text-muted text-sm workspace-hint">You see tasks from projects you own plus any task assigned to you.</p>`
-    : '';
-
-  content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Tasks</h1><p class="view-subtitle">${all.length} ${isAdmin() ? 'tasks in this workspace' : 'tasks visible to you'}</p></div>
-      <div class="view-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
-    </div>
-    ${privacyHint}
-    <div class="filter-bar">${Object.entries(fLabels).map(([k, l]) => `
-      <button class="filter-tab ${f === k ? 'active' : ''}" data-action="filter-tasks" data-filter="${k}">${l} (${cnt[k]})</button>`).join('')}
-    </div>
-    ${tasks.length === 0 ? emptyState(f === 'all' ? {
-      icon: 'tasks',
-      title: 'No tasks yet',
-      description: 'Add tasks from a project or use New Task to pick a project.',
-      cta: 'New Task',
-      ctaAction: 'add-task'
-    } : {
-      icon: 'tasks',
-      title: `No ${fLabels[f].toLowerCase()} tasks`,
-      description: 'Try another status filter or create a new task.'
-    }) :
-    `<div class="task-table">${tasks.map(t => { const proj = pMap[t.projectId]; const editable = proj && canEdit(proj); const od = isOverdue(t.dueDate) && t.status !== 'done'; const assignee = uMap[t.assigneeId]; return `
-      <div class="task-table-row ${t.status === 'done' ? 'task-done' : ''}">
-        <div class="task-table-left">
+  const renderCard = (t, showProject = true) => {
+    const proj = pMap[t.projectId];
+    const editable = proj && canEdit(proj);
+    const od = isOverdue(t.dueDate) && t.status !== 'done';
+    const assignee = uMap[t.assigneeId];
+    const hasNotes = !!(t.notes?.trim());
+    const taskAtts = taskAttachmentMap.get(Number(t.id)) || [];
+    const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+    const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
+    return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}">
+      <div class="task-card-status-stripe"></div>
+      <div class="task-card-body">
+        <div class="task-card-top">
           ${editable
-            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Change status"></button>`
+            ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <div>
-            <strong class="${t.status === 'done' ? 'text-strikethrough' : ''}">${esc(t.title)}</strong>
-            ${proj ? `<a href="#/projects/${proj.id}" class="text-muted text-sm task-project-link">${esc(proj.name)}</a>` : ''}
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Click to open details, add notes &amp; tracking info">${esc(t.title)}</button>
+          ${showProject && proj ? `<a href="#/projects/${proj.id}" class="task-card-proj-badge">${esc(proj.name)}</a>` : ''}
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details · add notes, tracking number, files">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
+          ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
+        </div>
+        <div class="task-card-bottom">
+          ${editable
+            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}">${assigneeChipHtml(assignee)}</button>`
+            : assigneeChipHtml(assignee)}
+          <div class="task-card-tags">
+            ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
+            ${prioBadge(t.priority)}
+            ${hasNotes ? `<span class="task-note-dot" title="Has notes">📝</span>` : ''}
           </div>
         </div>
-        <div class="task-table-right">
-          ${editable
-            ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
-            : assigneeChipHtml(assignee)}
-          ${t.dueDate ? `<span class="due-date ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : ''}">${formatDateShort(t.dueDate)}</span>` : '<span class="text-muted text-sm">No date</span>'}
-          ${prioBadge(t.priority)} ${taskBadge(t.status)}
-          ${editable ? `<button class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
+        ${fileBadge ? `<div class="task-card-fields">${fileBadge}</div>` : ''}
+        ${t.customFields?.length ? `<div class="task-card-fields">${t.customFields.slice(0,2).map(f => `<span class="task-cf-chip" data-action="open-task-detail" data-id="${t.id}" title="Click to edit"><span class="task-cf-label">${esc(f.label)}</span><span class="task-cf-value">${esc(f.value)}</span></span>`).join('')}${t.customFields.length > 2 ? `<span class="task-cf-more">+${t.customFields.length-2} more</span>` : ''}</div>` : ''}
+      </div>
+    </div>`;
+  };
+
+  let body = '';
+  if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
+  if (f === 'all') {
+    const projIds = [...new Set(all.map(t => t.projectId))].sort((a,b) => (pMap[a]?.name||'').localeCompare(pMap[b]?.name||''));
+    body = projIds.map(pid => {
+      const proj = pMap[pid]; if (!proj) return '';
+      const pt = all.filter(t => t.projectId === pid);
+      const ordered = [...sortPrio(pt.filter(t=>t.status==='todo')), ...sortPrio(pt.filter(t=>t.status==='doing')), ...sortPrio(pt.filter(t=>t.status==='done'))];
+      const todoCnt = pt.filter(t=>t.status==='todo').length;
+      const doingCnt = pt.filter(t=>t.status==='doing').length;
+      const isCollapsed = !!state.collapsedTaskGroups[pid];
+      return `<div class="task-proj-group${isCollapsed ? ' tpg-collapsed' : ''}" data-pid="${pid}">
+        <div class="task-proj-group-header">
+          <button class="tpg-toggle" data-action="toggle-task-group" data-pid="${pid}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
+            <svg class="tpg-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <a href="#/projects/${proj.id}" class="task-proj-group-name">${ICONS.folder} ${esc(proj.name)}</a>
+          <div class="task-proj-group-badges">
+            ${doingCnt ? `<span class="badge badge-blue">${doingCnt} in progress</span>` : ''}
+            ${todoCnt ? `<span class="badge badge-amber">${todoCnt} to do</span>` : ''}
+            <span class="text-muted text-sm">${pt.length} tasks</span>
+          </div>
         </div>
-      </div>`; }).join('')}</div>`}`;
+        <div class="tpg-body task-group-body-v2">${ordered.map(t => renderCard(t, false)).join('')}</div>
+      </div>`;
+    }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
+  } else {
+    const filtered = f === 'done' ? all.filter(t=>t.status==='done') : sortPrio(all.filter(t=>t.status===f));
+    body = filtered.length ? `<div class="task-group-body-v2">${filtered.map(t=>renderCard(t,true)).join('')}</div>`
+      : emptyState({ icon:'tasks', title:`No ${f==='todo'?'to-do':f==='doing'?'in-progress':'done'} tasks`, description:'Try another filter.' });
+  }
+
+  content.innerHTML = `
+    <div class="projects-page-header">
+      <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${all.length} visible</span></div>
+      <div class="projects-page-actions"><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
+    </div>
+    <div class="projects-status-pills">
+      <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
+      <button class="status-pill ${f==='doing'?'active':''}" data-action="filter-tasks" data-filter="doing">In Progress <span class="status-pill-count">${cnt.doing}</span></button>
+      <button class="status-pill ${f==='todo'?'active':''}" data-action="filter-tasks" data-filter="todo">To Do <span class="status-pill-count">${cnt.todo}</span></button>
+      <button class="status-pill ${f==='done'?'active':''}" data-action="filter-tasks" data-filter="done">Done <span class="status-pill-count">${cnt.done}</span></button>
+    </div>
+    ${body}`;
 }
 
 async function renderAdmin() {
@@ -1612,14 +2270,40 @@ async function renderAdmin() {
   const content = document.getElementById('content');
   const s = getSession();
   await ensureDepartmentCfg();
-  const [{ users, projects }, hasMk, projectHooksAll, departments] = await Promise.all([
+  const [{ users, projects }, hasMk, projectHooksAll, departments, bugReports, classrooms] = await Promise.all([
     getWorkspaceData(),
     DB.hasMasterKey(),
     getWebhooksCached(),
-    DB.getDepartments()
+    DB.getDepartments(),
+    DB.getBugReports ? DB.getBugReports({ limit: 25 }) : [],
+    DB.getClassrooms ? DB.getClassrooms() : []
   ]);
+  const userRoomMap = {};
+  if (DB.getUserClassroomIds) {
+    await Promise.all(users.map(async u => { userRoomMap[u.id] = await DB.getUserClassroomIds(u.id).catch(() => []); }));
+  }
   const generalHook = projectHooksAll.find(h => h.scope === 'general');
   const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const bugSection = `
+    <section class="section-card" style="margin-bottom:24px">
+      <div class="section-header"><h2>${ICONS.alertTriangle} Bug Reports</h2></div>
+      <div class="section-body bug-report-list">
+        ${bugReports.length ? bugReports.map(r => {
+          const who = uMap[r.userId];
+          return `<div class="bug-report-row">
+            <div>
+              <strong>${esc(r.title)}</strong>
+              <span>${esc(r.description)}</span>
+              ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
+              <small>${esc(who?.displayName || who?.username || 'Unknown')} · ${esc(r.severity)} · v${esc(r.appVersion || '?')} · ${timeAgo(r.createdAt)}</small>
+              ${r.githubIssueUrl ? `<a href="${esc(r.githubIssueUrl)}" target="_blank" rel="noreferrer">Open GitHub issue</a>` : ''}
+            </div>
+            ${badge(r.status || 'open', r.status === 'sent' ? 'green' : 'amber')}
+          </div>`;
+        }).join('') : '<p class="text-muted text-sm" style="padding:16px 20px">No bug reports yet.</p>'}
+      </div>
+    </section>`;
   const masterKeySection = !hasMk ? `
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header"><h2>Master recovery key</h2></div>
@@ -1639,24 +2323,63 @@ async function renderAdmin() {
       <div class="view-actions"><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
     </div>
     ${masterKeySection}
+    ${bugSection}
     <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Users (${users.length})</h2></div>
-      <div class="section-body">${users.map(u => `
-        <div class="user-row">
-          <div class="user-row-info">
-            <div class="user-avatar-sm">${(u.displayName || u.username).charAt(0).toUpperCase()}</div>
-            <div><strong>${esc(u.displayName || u.username)}</strong><br><span class="text-muted text-sm">@${esc(u.username)}${u.email ? ` &middot; ${esc(u.email)}` : ''}</span></div>
-            ${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')}
-            ${departmentBadge(u.department || '')}
-          </div>
-          <div class="user-row-actions">
-            <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
-            <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
-            ${u.id !== s.userId ? `<button class="btn-icon" data-action="delete-user" data-id="${u.id}" title="Delete user">${ICONS.trash}</button>` : ''}
-          </div>
-        </div>`).join('')}
+      <div class="section-header">
+        <div>
+          <h2>Classrooms</h2>
+          <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Separate project canvases for different teams.</p>
+        </div>
+      </div>
+      <div class="section-body classroom-admin">
+        <div class="classroom-list">
+          ${classrooms.map(c => `<div class="classroom-admin-row">
+            <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
+            <div><strong>${esc(c.name)}</strong>${c.description ? `<span>${esc(c.description)}</span>` : ''}</div>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
+          </div>`).join('') || '<p class="text-muted text-sm">No classrooms yet.</p>'}
+        </div>
+        <form data-form="add-classroom" class="classroom-add-form">
+          <input name="name" type="text" placeholder="Classroom name" required>
+          <input name="description" type="text" placeholder="Short description">
+          <input name="color" type="color" value="#4f46e5" title="Color">
+          <button type="submit" class="btn btn-sm btn-primary">Add Classroom</button>
+        </form>
       </div>
     </section>
+    <div class="admin-section-head">
+      <h2>Team Members <span class="projects-page-count">${users.length}</span></h2>
+      <button class="btn btn-primary btn-sm" data-action="add-user">${ICONS.plus} Add User</button>
+    </div>
+    <div class="admin-user-board">
+      ${users.map(u => {
+        const init = (u.displayName || u.username).charAt(0).toUpperCase();
+        const avatarHtml = u.avatarBase64
+          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img" alt="${esc(init)}">`
+          : `<div class="admin-ucard-avatar" ${userColorStyle(u)}>${init}</div>`;
+        return `<div class="admin-ucard">
+          <div class="admin-ucard-header">
+            ${avatarHtml}
+            <div class="admin-ucard-meta">
+              <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
+              <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+              <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
+              <div class="admin-ucard-badges">${(userRoomMap[u.id] || []).map(id => {
+                const room = classrooms.find(c => Number(c.id) === Number(id));
+                return room ? badge(room.name, 'accent') : '';
+              }).join('')}</div>
+            </div>
+          </div>
+          ${u.bio ? `<p class="admin-ucard-bio">${esc(u.bio)}</p>` : ''}
+          <div class="admin-ucard-actions">
+            <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
+            <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
+            <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
+            ${u.id !== s.userId ? `<button class="btn-icon btn-danger-text" data-action="delete-user" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header">
         <div>
@@ -1759,6 +2482,17 @@ async function renderAdmin() {
 /* ──── Chat (Discord bridge) ──── */
 
 async function getChatMessagesForChannel(channelId) {
+  if (channelId?.startsWith('dm-')) {
+    const otherId = Number(channelId.slice(3));
+    const rows = DB.getDirectMessages ? await DB.getDirectMessages(actorId(), otherId, { limit: 150 }) : [];
+    return rows.map(m => ({
+      id: `dm-${m.id}`,
+      userId: m.fromUserId,
+      details: m.content,
+      source: 'direct',
+      createdAt: m.createdAt
+    }));
+  }
   const [appMsgs, discordMsgs] = await Promise.all([
     DB.getChatActivityLog ? DB.getChatActivityLog(channelId, { limit: 100 }) : (async () => {
       const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
@@ -1781,10 +2515,10 @@ function appendChatMessageToPane(message, uMap) {
   const empty = pane.querySelector('.chat-empty');
   if (empty) pane.innerHTML = renderChatMessagesHtml([message], uMap);
   else {
-    let container = pane.querySelector('.chat-messages');
+    let container = pane.querySelector('.chat-msgs-wrap');
     if (!container) {
       pane.innerHTML = renderChatMessagesHtml([message], uMap);
-      container = pane.querySelector('.chat-messages');
+      container = pane.querySelector('.chat-msgs-wrap');
     }
     if (container) {
       const wrap = document.createElement('div');
@@ -1809,107 +2543,108 @@ async function refreshChatPane() {
 function renderChatMessagesHtml(messages, uMap) {
   const meId = actorId();
   if (!messages.length) {
-    return `<div class="chat-empty">
-      <div class="chat-empty-icon">${ICONS.chat}</div>
-      <p><strong>No messages yet</strong></p>
-      <p class="text-sm">Send a message below — it will show here and post to Discord.</p>
+    return `<div class="chat-empty-v2">
+      <div class="chat-empty-orb">${ICONS.chat}</div>
+      <strong>No messages yet</strong>
+      <span>Messages posted here are sent to the Discord channel.</span>
     </div>`;
   }
-  return `<div class="chat-messages">${messages.map(m => {
+  let html = '';
+  let lastDate = '';
+  messages.forEach(m => {
     const isDiscord = m.source === 'discord';
     const who = isDiscord ? null : uMap[m.userId];
-    const name = isDiscord
-      ? (m.discordDisplayName || m.discordAuthorName || 'Discord')
-      : (who ? (who.displayName || who.username) : 'Someone');
+    const name = isDiscord ? (m.discordDisplayName || m.discordAuthorName || 'Discord') : (who ? (who.displayName || who.username) : 'Someone');
     const init = name.charAt(0).toUpperCase();
     const mine = !isDiscord && m.userId === meId;
-    const avatarStyle = isDiscord ? 'style="background:#5865f2"' : userColorStyle(who);
+    const avatarBg = isDiscord ? 'background:#5865f2' : (who ? `background:${userColor(who)}` : '');
     const avatarContent = isDiscord && m.discordAvatar
-      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
-      : init;
-    const sourceBadge = isDiscord
-      ? `<span class="chat-source-discord" title="From Discord">${ICONS.discordMark} Discord</span>`
-      : '';
-    return `<div class="chat-bubble-row ${mine ? 'chat-bubble-row-mine' : ''} ${isDiscord ? 'chat-bubble-row-discord' : ''}">
-      <div class="chat-bubble-avatar" ${avatarStyle} title="${esc(name)}">${avatarContent}</div>
-      <div class="chat-bubble-wrap">
-        <div class="chat-bubble-meta"><strong>${esc(name)}</strong>${sourceBadge}<span>${timeAgo(m.createdAt)}</span></div>
-        <div class="chat-bubble ${mine ? 'chat-bubble-mine' : ''} ${isDiscord ? 'chat-bubble-discord' : ''}">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : init;
+    const msgDate = new Date(m.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    if (msgDate !== lastDate) {
+      html += `<div class="chat-date-divider"><span>${msgDate}</span></div>`;
+      lastDate = msgDate;
+    }
+    html += `<div class="chat-msg-row ${mine ? 'chat-msg-mine' : ''} ${isDiscord ? 'chat-msg-discord' : ''}">
+      ${!mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
+      <div class="chat-msg-body">
+        ${!mine ? `<div class="chat-msg-name">${esc(name)} ${isDiscord ? `<span class="chat-discord-badge">${ICONS.discordMark}</span>` : ''}</div>` : ''}
+        <div class="chat-msg-bubble">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
+        <div class="chat-msg-time">${timeAgo(m.createdAt)}</div>
       </div>
+      ${mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
     </div>`;
-  }).join('')}</div>`;
+  });
+  return `<div class="chat-msgs-wrap">${html}</div>`;
 }
 
 async function renderChat() {
   const content = document.getElementById('content');
-  const { projects, users } = await getWorkspaceData();
-  const visibleProjects = filterProjectsByWorkspace(projects);
+  const { users } = await getWorkspaceData();
   const allHooks = await getWebhooksCached();
   const generalHook = allHooks.find(h => h.scope === 'general');
-  const projectHookMap = Object.fromEntries(allHooks.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   state.chatUsersMap = uMap;
-
-  const channels = [
-    { id: 'general', name: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null }
+  const s = getSession();
+  const people = users.filter(u => u.id !== s?.userId).sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
+  const allChannels = [
+    { id: 'general', name: 'general', type: 'general', webhook: generalHook, channelUrl: generalHook?.channelUrl || '', projectId: null, live: !!generalHook?.url },
+    ...people.map(u => ({ id: `dm-${u.id}`, name: u.displayName || u.username, type: 'direct', user: u, live: false }))
   ];
-  for (const p of visibleProjects) {
-    const h = projectHookMap[p.id];
-    channels.push({
-      id: `project-${p.id}`, name: p.name, webhook: h, channelUrl: h?.channelUrl || '',
-      projectId: p.id, configured: !!h?.url
-    });
-  }
+  const channels = allChannels;
 
-  if (!state.chatChannel) state.chatChannel = channels[0]?.id || 'general';
+  if (!state.chatChannel || !channels.find(c => c.id === state.chatChannel)) {
+    state.chatChannel = channels[0]?.id || 'general';
+  }
   const active = channels.find(c => c.id === state.chatChannel) || channels[0];
   const messages = active ? await getChatMessagesForChannel(active.id) : [];
   const messagesHtml = renderChatMessagesHtml(messages, uMap);
-  const hasWebhook = !!active?.webhook?.url;
-
-  const channelList = `
-    <div class="chat-channels">
-      <h3>Channels</h3>
-      ${channels.map(c => `
-        <button type="button" class="chat-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
-          <span class="channel-hash">#</span>
-          <span class="chat-channel-name">${esc(c.name)}</span>
-          ${c.configured === false && c.id !== 'general' ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
-          ${c.id === 'general' && !c.webhook?.url ? '<span class="chat-channel-dot" title="Webhook not configured"></span>' : ''}
-        </button>`).join('')}
-      ${isAdmin() ? `<button type="button" class="chat-channel-btn" data-action="configure-chat" style="margin-top:8px;color:var(--accent-text)">${ICONS.plus} Configure channels</button>` : ''}
-    </div>`;
-
-  const composeHtml = hasWebhook ? `
-      <form class="chat-compose" data-form="chat-send" data-channel-id="${active.id}">
-        <textarea name="content" rows="1" placeholder="Type a message — sent as ${esc(getSession()?.displayName || 'you')} · Enter to send" required></textarea>
-        <button type="submit" class="btn btn-primary" title="Send">${ICONS.send}</button>
-      </form>` : `
-      <div class="chat-compose chat-compose-disabled">
-        <p class="text-muted text-sm">${isAdmin() ? 'Configure a webhook in Admin → Discord Integrations to send messages.' : 'Ask an admin to configure a Discord webhook for this channel.'}</p>
-        ${isAdmin() ? `<button type="button" class="btn btn-sm btn-primary" data-action="configure-chat">Open Integrations</button>` : ''}
-      </div>`;
-
-  const chatMain = `
-    <div class="chat-main">
-      <div class="chat-header">
-        <h2>${ICONS.chat} ${esc(active?.name || 'Chat')}</h2>
-        <div class="chat-header-actions">
-          ${active?.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Open in Discord</a>` : ''}
-          ${!hasWebhook && isAdmin() ? `<button type="button" class="btn btn-sm btn-ghost" data-action="configure-chat">Set up webhook</button>` : ''}
-        </div>
-      </div>
-      <div class="chat-body" id="chat-messages-pane">${messagesHtml}</div>
-      ${composeHtml}
-    </div>`;
+  const titlePrefix = active?.type === 'direct' ? '@' : '#';
+  const placeholder = active?.type === 'direct' ? `Message ${active.name}` : `Message #${active?.name || 'general'}`;
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Chat</h1><p class="view-subtitle">Messages from WorkTracker and Discord, merged in real time</p></div>
-    </div>
-    <div class="chat-layout">
-      ${channelList}
-      ${chatMain}
+    <div class="chat-v2-layout">
+      <aside class="chat-v2-sidebar">
+        <div class="chat-v2-sidebar-header">
+          <span class="chat-v2-sidebar-title">Channels</span>
+          ${isAdmin() ? `<a href="#/admin" class="chat-v2-cfg-btn" title="Configure webhooks in Admin">${ICONS.edit}</a>` : ''}
+        </div>
+        <div class="chat-v2-channels">
+          ${channels.map(c => `
+            <button type="button" class="chat-v2-channel-btn ${c.id === active?.id ? 'active' : ''}" data-action="select-chat-channel" data-channel-id="${c.id}">
+              <span class="chat-v2-hash">${c.type === 'direct' ? '@' : '#'}</span>
+              <span class="chat-v2-channel-name">${esc(c.name)}</span>
+              ${c.type === 'general' && c.live ? `<span class="chat-v2-live-dot" title="Discord connected"></span>` : ''}
+            </button>`).join('')}
+        </div>
+        <div class="chat-v2-sidebar-footer">
+          <div class="chat-v2-me-chip" ${userColorStyle(s)}>
+            <span class="chat-v2-me-init">${(s?.displayName || s?.username || '?').charAt(0).toUpperCase()}</span>
+            <span class="chat-v2-me-name">${esc(s?.displayName || s?.username || '')}</span>
+          </div>
+        </div>
+      </aside>
+      <div class="chat-v2-main">
+        <div class="chat-v2-header">
+          <div>
+            <span class="chat-v2-channel-title">${titlePrefix} ${esc(active?.name || 'chat')}</span>
+            ${active?.live ? `<span class="chat-v2-live-badge">Live · Discord</span>` : ''}
+          </div>
+          <div class="chat-v2-header-actions">
+            ${active?.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost">${ICONS.externalLink} Discord</a>` : ''}
+          </div>
+        </div>
+        <div class="chat-v2-body" id="chat-messages-pane">${messagesHtml}</div>
+        
+        ${true ? `
+        <form class="chat-v2-compose" data-form="chat-send" data-channel-id="${active.id}">
+          <textarea class="chat-v2-input" name="content" rows="1" placeholder="Message #${esc(active?.name || 'chat')}… (Enter to send, Shift+Enter for newline)" required></textarea>
+          <button type="submit" class="chat-v2-send-btn" title="Send">${ICONS.send}</button>
+        </form>
+        <div hidden>
+          <span class="text-muted text-sm">${isAdmin() ? 'Add a Discord webhook in Admin → Integrations to enable messaging.' : 'Messaging not configured for this channel yet.'}</span>
+        </div>` : ''}
+      </div>
     </div>`;
 
   requestAnimationFrame(() => {
@@ -1924,112 +2659,114 @@ async function renderAdminDashboard() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   const { users, projects, tasks } = await getWorkspaceData();
-  const log = await DB.getActivityLog({ limit: 30 });
+  const log = await DB.getActivityLog({ limit: 25 });
   let sessions = [];
   try { sessions = DB.getUserSessions ? await DB.getUserSessions() : []; } catch (_) { sessions = []; }
   const now = Date.now();
   const sevenDays = 7 * 24 * 60 * 60 * 1000;
   const activeUsers = users.filter(u => u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays));
   const recentLogins = log.filter(l => l.action === 'logged_in').slice(0, 10);
-  const taskByProject = tasks.reduce((m, t) => { m[t.projectId] = (m[t.projectId] || 0) + 1; return m; }, {});
   const projectByOwner = projects.reduce((m, p) => { m[p.ownerId] = (m[p.ownerId] || 0) + 1; return m; }, {});
   const tasksByAssignee = tasks.reduce((m, t) => { if (t.assigneeId != null) m[t.assigneeId] = (m[t.assigneeId] || 0) + 1; return m; }, {});
-
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  const sessionsByUser = sessions.reduce((m, row) => {
-    (m[row.userId] ||= []).push(row);
-    return m;
-  }, {});
+  const sessionsByUser = sessions.reduce((m, row) => { (m[row.userId] ||= []).push(row); return m; }, {});
+
+  const sp = (icon, val, label, sub, color) => `
+    <div class="dash-stat">
+      <div class="dash-stat-icon dash-stat-icon--${color}">${icon}</div>
+      <div class="dash-stat-body">
+        <span class="dash-stat-value">${val}</span>
+        <span class="dash-stat-label">${label}</span>
+        ${sub ? `<span class="dash-stat-sub">${sub}</span>` : ''}
+      </div>
+    </div>`;
+
+  const userRow = u => {
+    const pCnt = projectByOwner[u.id] || 0;
+    const tCnt = tasksByAssignee[u.id] || 0;
+    const devCnt = (sessionsByUser[u.id] || []).length;
+    const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
+    const online = u.lastSeenAt && (now - new Date(u.lastSeenAt).getTime() < sevenDays);
+    return `<div class="dash-user-row">
+      <div class="dash-user-avatar-wrap">
+        <span class="dash-user-av" ${userColorStyle(u)}>${init}</span>
+        <span class="dash-online-dot ${online ? 'dash-online-dot--on' : ''}"></span>
+      </div>
+      <div class="dash-user-details">
+        <div class="dash-user-name-row">
+          <strong>${esc(u.displayName || u.username)}</strong>
+          ${u.role === 'admin' ? `<span class="dash-crown">${ICONS.crown}</span>` : ''}
+          ${departmentBadge(u.department || '')}
+        </div>
+        <div class="dash-user-stats">
+          <span>${pCnt}p</span><span class="dash-sep">·</span>
+          <span>${tCnt} tasks</span>
+          ${devCnt ? `<span class="dash-sep">·</span><span>${devCnt} devices</span>` : ''}
+          ${u.lastSeenAt ? `<span class="dash-sep">·</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
+          ${u.lastSeenIp ? `<span class="dash-sep">·</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  const actRow = entry => {
+    const who = uMap[entry.userId];
+    const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
+    return `<div class="dash-act-row">
+      <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
+      <div class="dash-act-body">
+        <span class="dash-act-text">${formatActivityMessage(entry, uMap)}</span>
+        <span class="dash-act-time">${timeAgo(entry.createdAt)}</span>
+      </div>
+    </div>`;
+  };
 
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>${ICONS.gauge} Dashboard</h1><p class="view-subtitle">Admin telemetry · ${users.length} users · ${projects.length} projects</p></div>
+    <div class="projects-page-header" style="margin-bottom:18px">
+      <div class="projects-page-title"><h1>Dashboard</h1><span class="projects-page-count">Admin</span></div>
     </div>
-    <div class="stats-grid">
-      <div class="stat-card">
-        <span class="stat-value">${users.length}</span>
-        <span class="stat-label">Total users</span>
-        <span class="stat-sub">${activeUsers.length} active in last 7 days</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${projects.length}</span>
-        <span class="stat-label">Projects</span>
-        <span class="stat-sub">${projects.filter(p => p.status === 'active').length} active · ${projects.filter(p => p.status === 'on-hold').length} on hold</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${tasks.length}</span>
-        <span class="stat-label">Tasks</span>
-        <span class="stat-sub">${tasks.filter(t => t.status === 'done').length} done · ${tasks.filter(t => t.status === 'doing').length} in progress</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">${recentLogins.length}</span>
-        <span class="stat-label">Recent logins</span>
-        <span class="stat-sub">Last 30 audit entries</span>
-      </div>
+    <div class="dash-stats-row">
+      ${sp(ICONS.user, users.length, 'Team', `${activeUsers.length} active this week`, 'purple')}
+      ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active · ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
+      ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done · ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
+      ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
     </div>
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Users</h2></div>
-      <div class="section-body" style="padding:0">
-        <div class="admin-user-row admin-user-head">
-          <span>Member</span>
-          <span>Role</span>
-          <span>Department</span>
-          <span>Discord ID</span>
-          <span>Last seen</span>
-          <span>Last IP</span>
-          <span style="text-align:right">Workload</span>
+    <div class="dash-two-col">
+      <div>
+        <div class="dash-panel">
+          <div class="dash-panel-head"><h3>Team</h3><span class="projects-page-count">${users.length} members</span></div>
+          ${users.map(u => userRow(u)).join('')}
+          <p class="dash-ip-note">IPs via <code>api.ipify.org</code>. Device IDs are privacy-safe browser fingerprints.</p>
         </div>
-        ${users.map(u => {
-          const pCount = projectByOwner[u.id] || 0;
-          const tCount = tasksByAssignee[u.id] || 0;
-          const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
-          return `<div class="admin-user-row">
-            <span class="admin-user-name">
-              <span class="user-avatar-sm ${u.role === 'admin' ? 'user-avatar-admin' : ''}" ${userColorStyle(u)}>${init}</span>
-              <strong>${esc(u.displayName || u.username)}</strong>
-            </span>
-            <span>${u.role === 'admin' ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : 'Member'}</span>
-            <span>${departmentBadge(u.department || '')}</span>
-            <span>${u.discordId ? `<code>${esc(u.discordId)}</code>` : '<span class="text-muted">—</span>'}</span>
-            <span class="text-muted">${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Never signed in'}</span>
-            <span class="text-muted">${u.lastSeenIp ? `<code>${esc(u.lastSeenIp)}</code>` : '<span class="text-muted">—</span>'}</span>
-            <span class="text-muted" style="text-align:right">${pCount}p · ${tCount}t · ${(sessionsByUser[u.id] || []).length} devices</span>
-          </div>`;
-        }).join('')}
       </div>
-      <div class="section-body" style="padding:12px 20px;border-top:1px solid var(--border-light)">
-        <p class="text-muted text-sm">IP addresses are reported by the user's browser via <code>api.ipify.org</code>. Device identity is a privacy-safe browser fingerprint (browser, platform, screen, timezone, and network hints), not a MAC address or hostname.</p>
+      <div class="dash-right-col">
+        <div class="dash-panel">
+          <div class="dash-panel-head">
+            <h3>Recent Activity</h3>
+            <a href="#/activity" class="btn btn-ghost" style="font-size:0.75rem;padding:4px 10px">View all</a>
+          </div>
+          <div class="dash-act-scroll">
+            ${log.length === 0
+              ? `<p class="text-muted text-sm" style="padding:14px 16px">No activity yet.</p>`
+              : log.map(e => actRow(e)).join('')}
+          </div>
+        </div>
+        ${sessions.length ? `
+        <div class="dash-panel" style="margin-top:14px">
+          <div class="dash-panel-head"><h3>Devices</h3><span class="projects-page-count">${sessions.length}</span></div>
+          ${sessions.slice(0, 6).map(row => {
+            const u = uMap[row.userId];
+            return `<div class="dash-device-row">
+              <div>
+                <strong class="text-sm">${esc(u?.displayName || u?.username || 'Unknown')}</strong>
+                <span class="text-muted" style="font-size:0.75rem"> · ${esc(row.deviceLabel || 'Unknown device')}</span>
+              </div>
+              <span class="text-muted" style="font-size:0.75rem;white-space:nowrap">${row.loginCount || 1}× · ${timeAgo(row.lastSeenAt)}</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
       </div>
-    </section>
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>Known devices</h2></div>
-      <div class="section-body" style="padding:0">${
-        sessions.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No device logins recorded yet.</p>` :
-        `<div class="device-list">${sessions.slice(0, 20).map(row => {
-          const u = uMap[row.userId];
-          return `<div class="device-row">
-            <span><strong>${esc(u?.displayName || u?.username || 'Unknown')}</strong><small>${esc(row.deviceLabel || 'Unknown device')}</small></span>
-            <span class="text-muted">${row.ip ? `<code>${esc(row.ip)}</code>` : 'No IP'}</span>
-            <span class="text-muted">${esc(row.deviceId || '').slice(0, 12)}</span>
-            <span class="text-muted">${row.loginCount || 1} logins · ${timeAgo(row.lastSeenAt)}</span>
-          </div>`;
-        }).join('')}</div>`
-      }</div>
-    </section>
-    <section class="section-card">
-      <div class="section-header"><h2>Recent activity</h2></div>
-      <div class="section-body">${
-        log.length === 0 ? `<p class="text-muted text-sm" style="padding:20px">No activity recorded yet.</p>` :
-        `<div class="activity-log">${log.map(entry => `
-          <div class="activity-log-row">
-            <span class="activity-dot"></span>
-            <div class="activity-text">
-              ${formatActivityMessage(entry, uMap)}
-              <span class="text-muted text-sm">${timeAgo(entry.createdAt)}</span>
-            </div>
-          </div>`).join('')}</div>`
-      }</div>
-    </section>`;
+    </div>`;
 }
 
 /* ──── Notifications dropdown ──── */
@@ -2296,10 +3033,13 @@ async function refreshNotificationBadge() {
   if (!uid) return;
   try {
     const count = await DB.getUnreadNotificationCount(uid);
-    const badge = document.getElementById('notif-badge');
-    if (!badge) return;
-    if (count > 0) { badge.textContent = String(count > 99 ? '99+' : count); badge.classList.remove('hidden'); }
-    else { badge.classList.add('hidden'); }
+    const label = count > 0 ? String(count > 99 ? '99+' : count) : '';
+    for (const id of ['notif-badge', 'mobile-notif-badge']) {
+      const badge = document.getElementById(id);
+      if (!badge) continue;
+      if (count > 0) { badge.textContent = label; badge.classList.remove('hidden'); }
+      else { badge.classList.add('hidden'); }
+    }
   } catch (_) {}
 }
 
@@ -2344,28 +3084,28 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
+  // Auto-mark all as read when page is visited
+  if (uid && unread > 0) { await DB.markAllNotificationsRead(uid); refreshNotificationBadge(); }
+  const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋', access_request: '🔐', access_approved: '✅', access_declined: '⛔', bug_report: '⚠️' };
   content.innerHTML = `
-    <div class="view-header">
-      <div><h1>${ICONS.bell} Notifications</h1><p class="view-subtitle">${rows.length} recent updates · ${unread} unread</p></div>
-      <div class="view-actions">
-        ${unread ? `<button type="button" class="btn btn-primary" data-action="notif-mark-all">${ICONS.checkCircle} Mark all read</button>` : ''}
-      </div>
+    <div class="projects-page-header">
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total</span></div>
     </div>
-    <section class="section-card">
-      <div class="section-body" style="padding:0">
-        ${rows.length === 0 ? emptyState({
-          icon: 'activity',
-          title: 'No notifications yet',
-          description: 'Assignments, updates, and mentions will show up here.'
-        }) : `<div class="notification-page-list">${rows.map(n => {
-          const projectHref = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
-          return `<button type="button" class="notification-page-item ${n.readAt ? '' : 'unread'}" data-action="notif-open" data-id="${n.id}" data-href="${projectHref}">
-            <span class="notif-dot"></span>
-            <span><strong>${esc(n.message)}</strong><small>${timeAgo(n.createdAt)}</small></span>
+    <div class="notif-page-list">
+      ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
+        : rows.map(n => {
+          const href = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+          const icon = TYPE_ICON[n.type] || '🔔';
+          return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" data-action="notif-open" data-id="${n.id}" data-href="${href}">
+            <span class="notif-page-icon">${icon}</span>
+            <div class="notif-page-body">
+              <span class="notif-page-msg">${esc(n.message)}</span>
+              <span class="notif-page-time">${timeAgo(n.createdAt)}</span>
+            </div>
+            ${!n.readAt ? '<span class="notif-unread-dot"></span>' : ''}
           </button>`;
-        }).join('')}</div>`}
-      </div>
-    </section>`;
+        }).join('')}
+    </div>`;
 }
 
 /* ──── Modal System ──── */
@@ -2382,44 +3122,144 @@ function hideModal() { const ov = document.getElementById('modal-overlay'); ov.c
 async function showProjectModal(editId = null) {
   const p = editId ? await DB.getProject(editId) : null;
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
+  const users = await DB.getUsers();
+  const classrooms = DB.getClassrooms ? await DB.getClassrooms().catch(() => []) : [];
+  const allowedRooms = await userClassroomIds();
+  const allowedRoomSet = Array.isArray(allowedRooms) ? new Set(allowedRooms.map(Number)) : null;
+  const roomOptions = allowedRoomSet ? classrooms.filter(c => allowedRoomSet.has(Number(c.id))) : classrooms;
+  const defaultClassroomId = p?.classroomId || roomOptions[0]?.id || '';
   const defaultDepartment = p?.department || currentUser?.department || '';
   const isE = !!p;
+  const editorSet = new Set((p?.editorIds || []).map(Number));
+  const editorOptions = users
+    .filter(u => u.id !== p?.ownerId)
+    .map(u => `<label class="project-editor-option">
+      <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+    </label>`).join('');
+
   showModal(isE ? 'Edit Project' : 'New Project', `
-    <form data-form="project" data-edit-id="${editId || ''}">
-      <div class="form-group"><label>Project Name</label><input name="name" type="text" value="${esc(p?.name || '')}" placeholder="e.g. Job Search" required></div>
-      <div class="form-group"><label>Description</label><textarea name="notes" rows="3" placeholder="Brief description...">${esc(p?.notes || '')}</textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label>Type</label><select name="type">${Object.entries(TYPE_CFG).map(([v, c]) => `<option value="${v}" ${(p?.type || 'project') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
-        <div class="form-group"><label>Priority</label><select name="priority">${Object.entries(PRIO_CFG).map(([v, c]) => `<option value="${v}" ${(p?.priority || 'medium') === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>
+    <form data-form="project" data-edit-id="${editId || ''}" class="project-form-v2">
+      <div class="pf-name-block">
+        <input class="pf-name-input" name="name" type="text" value="${esc(p?.name || '')}" placeholder="Project name *" required autofocus>
+        <textarea class="pf-desc-input" name="notes" placeholder="Short description (optional)…" rows="2">${esc(p?.notes || '')}</textarea>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>Department</label><select name="department">
-          <option value="" ${defaultDepartment === '' ? 'selected' : ''}>Unassigned</option>
-          ${departmentOptionsHtml(defaultDepartment)}
-        </select></div>
-        <div class="form-group"><label>Workflow</label><select name="workflowTemplate">
-          ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([key, cfg]) => `<option value="${key}" ${(p?.workflowTemplate || '') === key ? 'selected' : ''}>${cfg.l}</option>`).join('')}
-        </select></div>
-      </div>
-      <div class="form-row">
-        <label class="check-card">
-          <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing ? 'checked' : ''}>
-          <span><strong>Ongoing / recurring project</strong><small>Use for maintenance, stock counting, upgrades, and timeless work.</small></span>
+      <div class="pf-meta-strip">
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Type</span>
+          <select name="type" class="pf-meta-select">${Object.entries(TYPE_CFG).map(([v,c]) => `<option value="${v}" ${(p?.type||'project')===v?'selected':''}>${c.l}</option>`).join('')}</select>
         </label>
-        <div class="form-group"><label>Cadence</label><select name="cadence">
-          <option value="" ${!p?.cadence ? 'selected' : ''}>No fixed repeat</option>
-          <option value="daily" ${p?.cadence === 'daily' ? 'selected' : ''}>Daily</option>
-          <option value="weekly" ${p?.cadence === 'weekly' ? 'selected' : ''}>Weekly</option>
-          <option value="monthly" ${p?.cadence === 'monthly' ? 'selected' : ''}>Monthly</option>
-          <option value="quarterly" ${p?.cadence === 'quarterly' ? 'selected' : ''}>Quarterly</option>
-        </select></div>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Priority</span>
+          <select name="priority" class="pf-meta-select">${Object.entries(PRIO_CFG).map(([v,c]) => `<option value="${v}" ${(p?.priority||'medium')===v?'selected':''}>${c.l}</option>`).join('')}</select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Classroom</span>
+          <select name="classroomId" class="pf-meta-select">
+            ${roomOptions.map(c => `<option value="${c.id}" ${Number(defaultClassroomId) === Number(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Department</span>
+          <select name="department" class="pf-meta-select">
+            <option value="" ${defaultDepartment===''?'selected':''}>Unassigned</option>
+            ${departmentOptionsHtml(defaultDepartment)}
+          </select>
+        </label>
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Workflow</span>
+          <select name="workflowTemplate" class="pf-meta-select">
+            ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([k,c]) => `<option value="${k}" ${(p?.workflowTemplate||'')===k?'selected':''}>${c.l}</option>`).join('')}
+          </select>
+        </label>
+        ${isE ? `<label class="pf-meta-item">
+          <span class="pf-meta-label">Status</span>
+          <select name="status" class="pf-meta-select">${Object.entries(STAT_CFG).map(([v,c]) => `<option value="${v}" ${p.status===v?'selected':''}>${c.l}</option>`).join('')}</select>
+        </label>` : ''}
       </div>
-      ${isE ? `<div class="form-group"><label>Status</label><select name="status">${Object.entries(STAT_CFG).map(([v, c]) => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${c.l}</option>`).join('')}</select></div>` : ''}
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${isE ? 'Save' : 'Create Project'}</button></div>
+      <label class="pf-ongoing-row">
+        <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing?'checked':''}>
+        <div class="pf-ongoing-text">
+          <strong>Ongoing / recurring</strong>
+          <span>Maintenance, stock counts, upgrades — work without a fixed end date</span>
+        </div>
+        <select name="cadence" class="pf-meta-select" style="margin-left:auto;min-width:130px">
+          <option value="" ${!p?.cadence?'selected':''}>No repeat</option>
+          <option value="daily" ${p?.cadence==='daily'?'selected':''}>Daily</option>
+          <option value="weekly" ${p?.cadence==='weekly'?'selected':''}>Weekly</option>
+          <option value="monthly" ${p?.cadence==='monthly'?'selected':''}>Monthly</option>
+          <option value="quarterly" ${p?.cadence==='quarterly'?'selected':''}>Quarterly</option>
+        </select>
+      </label>
+      ${!isE ? `
+      <div class="pf-tasks-block">
+        <div class="pf-tasks-header">
+          <span class="pf-tasks-title">Starting tasks</span>
+          <span class="pf-tasks-hint">Press ↵ to add next</span>
+        </div>
+        <div id="bulk-task-list" class="bulk-task-list"></div>
+        <button type="button" id="bulk-add-task-btn" class="pf-add-task-btn">
+          ${ICONS.plus} Add task
+        </button>
+      </div>` : ''}
+      ${isE && canManageProjectAccess(p) ? `
+      <div class="pf-editors-block">
+        <div class="pf-tasks-header">
+          <span class="pf-tasks-title">Editors</span>
+          <span class="pf-tasks-hint">Can update this project</span>
+        </div>
+        <div class="project-editor-list">${editorOptions || '<p class="text-muted text-sm">No other users yet.</p>'}</div>
+      </div>` : ''}
+      <div class="form-actions pf-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">${isE ? 'Save changes' : 'Create Project'}</button>
+      </div>
     </form>`);
+
+  if (!isE) {
+    const list = document.getElementById('bulk-task-list');
+    const addBtn = document.getElementById('bulk-add-task-btn');
+
+    function addBulkRow(focus = true) {
+      const n = list.children.length + 1;
+      const row = document.createElement('div');
+      row.className = 'bulk-task-row';
+      row.innerHTML = `<span class="bulk-task-num">${n}</span><input type="text" name="bulk_task[]" class="bulk-task-input" placeholder="Task title…" autocomplete="off"><button type="button" class="btn-icon bulk-task-remove" title="Remove"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
+      list.appendChild(row);
+      if (focus) {
+        const inp = row.querySelector('input');
+        inp.focus();
+        setTimeout(() => inp.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+      }
+    }
+
+    function renumber() {
+      [...list.children].forEach((r, i) => r.querySelector('.bulk-task-num').textContent = i + 1);
+    }
+
+    addBtn.addEventListener('click', () => addBulkRow(true));
+
+    list.addEventListener('click', e => {
+      if (e.target.closest('.bulk-task-remove')) {
+        e.target.closest('.bulk-task-row').remove();
+        renumber();
+      }
+    });
+
+    list.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || !e.target.classList.contains('bulk-task-input')) return;
+      e.preventDefault();
+      const inputs = [...list.querySelectorAll('.bulk-task-input')];
+      const idx = inputs.indexOf(e.target);
+      if (idx === inputs.length - 1) addBulkRow(true);
+      else inputs[idx + 1].focus();
+    });
+
+    addBulkRow(false);
+  }
 }
 
-async function showTaskModal(preId = null) {
+async function showTaskModal(preId = null, defaultStatus = 'todo') {
   const projects = await DB.getProjects();
   const editable = projects.filter(p => canEdit(p));
   if (editable.length === 0) { showToast('No projects you can add tasks to', 'warning'); return; }
@@ -2446,7 +3286,7 @@ async function showTaskModal(preId = null) {
       </div>
       <div class="form-row">
         <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
-        <div class="form-group"><label>Status</label><select name="status"><option value="todo" selected>To Do</option><option value="doing">In Progress</option><option value="done">Done</option></select></div>
+        <div class="form-group"><label>Status</label><select name="status"><option value="todo" ${defaultStatus === 'todo' ? 'selected' : ''}>To Do</option><option value="doing" ${defaultStatus === 'doing' ? 'selected' : ''}>In Progress</option><option value="done" ${defaultStatus === 'done' ? 'selected' : ''}>Done</option></select></div>
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Add Task</button></div>
     </form>`);
@@ -2456,6 +3296,122 @@ async function showTaskModal(preId = null) {
   projectSelect?.addEventListener('change', () => {
     const ownerId = projectSelect.selectedOptions[0]?.dataset.ownerId;
     if (ownerId && assigneeSelect?.querySelector(`option[value="${ownerId}"]`)) assigneeSelect.value = ownerId;
+  });
+}
+
+function renderTaskChainTimelineHtml(tasks, uMap) {
+  if (!tasks.length) return `<div class="timeline-empty-v2">
+    ${ICONS.calendar}
+    <p style="font-size:0.95rem;font-weight:600;margin-top:8px">No tasks yet</p>
+    <p class="text-muted text-sm">Add tasks to see the project chain.</p>
+  </div>`;
+  const statusWeight = { done: 0, doing: 1, todo: 2 };
+  const ordered = [...tasks].sort((a, b) => {
+    const sw = (statusWeight[a.status] ?? 3) - (statusWeight[b.status] ?? 3);
+    if (sw) return sw;
+    return (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31');
+  });
+  return `<div class="task-timeline-v2 task-timeline-chain">
+    ${ordered.map((t, index) => {
+      const assignee = uMap[t.assigneeId];
+      const od = t.dueDate && isOverdue(t.dueDate) && t.status !== 'done';
+      const init = assignee ? (assignee.displayName || assignee.username || '?').charAt(0).toUpperCase() : '?';
+      return `<div class="timeline-chain-step timeline-chain-step--${t.status}" data-task-id="${t.id}">
+        <div class="timeline-chain-node"><span>${index + 1}</span></div>
+        <button type="button" class="timeline-chain-card" data-action="open-task-detail" data-id="${t.id}">
+          <strong>${esc(t.title)}</strong>
+          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` · ${formatDateShort(t.dueDate)}` : ''}${od ? ' · overdue' : ''}</span>
+          <small title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init} ${esc(assignee?.displayName || assignee?.username || 'Unassigned')}</small>
+        </button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+async function showRequestProjectAccessModal(projectId) {
+  const project = await DB.getProject(projectId);
+  if (!project) { showToast('Project not found', 'error'); return; }
+  if (canEdit(project)) { showToast('You already have edit access', 'info'); return; }
+  const pending = DB.getProjectAccessRequests
+    ? (await DB.getProjectAccessRequests({ projectId, requesterId: actorId(), status: 'pending' }))[0]
+    : null;
+  showModal('Request Edit Access', `
+    <form data-form="project-access-request" data-project-id="${project.id}">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Ask the project owner for permission to edit <strong>${esc(project.name)}</strong>.</p>
+      ${pending ? `<p class="text-muted text-sm" style="margin-bottom:12px">${ICONS.bell} You already have a pending request.</p>` : ''}
+      <div class="form-group"><label>Message</label><textarea name="message" rows="3" class="fixed-textarea" placeholder="Why do you need access?">${esc(pending?.message || '')}</textarea></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${pending ? 'Update Request' : 'Send Request'}</button></div>
+    </form>`);
+}
+
+async function showProjectAccessModal(projectId) {
+  const project = await DB.getProject(projectId);
+  if (!project || !canManageProjectAccess(project)) { showToast('Permission denied', 'error'); return; }
+  const [users, requests] = await Promise.all([
+    DB.getUsers(),
+    DB.getProjectAccessRequests ? DB.getProjectAccessRequests({ projectId }) : []
+  ]);
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const editorSet = new Set((project.editorIds || []).map(Number));
+  const editorRows = users
+    .filter(u => u.id !== project.ownerId)
+    .map(u => `<label class="project-editor-option">
+      <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+    </label>`).join('');
+  const pendingRows = requests.filter(r => r.status === 'pending').map(r => {
+    const user = uMap[r.requesterId];
+    return `<div class="access-request-row">
+      <div><strong>${esc(user?.displayName || user?.username || 'Unknown user')}</strong><span>${esc(r.message || 'No message')} · ${timeAgo(r.createdAt)}</span></div>
+      <div class="access-request-actions">
+        <button type="button" class="btn btn-sm btn-primary" data-action="approve-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Approve</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="decline-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Decline</button>
+      </div>
+    </div>`;
+  }).join('');
+  showModal('Project Access', `
+    <form data-form="project-editors" data-project-id="${project.id}">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Editors can add tasks, update status, upload files, and change project details.</p>
+      <div class="project-editor-list">${editorRows || '<p class="text-muted text-sm">No other users yet.</p>'}</div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save Access</button></div>
+    </form>
+    <div class="access-request-block">
+      <div class="pf-tasks-header"><span class="pf-tasks-title">Pending requests</span></div>
+      ${pendingRows || '<p class="text-muted text-sm">No pending requests.</p>'}
+    </div>`);
+}
+
+function showBugReportModal() {
+  const version = getAppVersion();
+  showModal('Report Bug', `
+    <form data-form="bug-report">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Send a bug report to the admins. In cloud mode, this can also be forwarded to GitHub Issues by the Supabase function.</p>
+      <div class="form-group"><label>Title</label><input name="title" type="text" placeholder="Short summary" maxlength="140" required autofocus></div>
+      <div class="form-group"><label>Severity</label><select name="severity"><option value="normal" selected>Normal</option><option value="high">High</option><option value="critical">Critical</option><option value="low">Low</option></select></div>
+      <div class="form-group"><label>What happened?</label><textarea name="description" rows="5" class="fixed-textarea" placeholder="What were you doing, what did you expect, and what happened instead?" required></textarea></div>
+      <div class="form-group"><label>Images</label><input id="bug-report-images" type="file" accept="image/*" multiple><p class="text-muted text-sm" style="margin-top:4px">Optional. Up to 3 screenshots, 2 MB each.</p><div id="bug-report-preview" class="bug-report-preview"></div></div>
+      <input type="hidden" name="screenshots" id="bug-report-screenshots" value="[]">
+      <input type="hidden" name="appVersion" value="${esc(version)}">
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Send Report</button></div>
+    </form>`);
+  const input = document.getElementById('bug-report-images');
+  const hidden = document.getElementById('bug-report-screenshots');
+  const preview = document.getElementById('bug-report-preview');
+  input?.addEventListener('change', async () => {
+    const files = Array.from(input.files || []).slice(0, 3).filter(f => f.size <= 2 * 1024 * 1024);
+    const images = [];
+    for (const file of files) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      images.push({ name: file.name, mimeType: file.type || 'image/png', dataUrl });
+    }
+    hidden.value = JSON.stringify(images);
+    preview.innerHTML = images.map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name)}">`).join('');
+    if ((input.files || []).length > images.length) showToast('Some screenshots were skipped. Max 3 images, 2 MB each.', 'warning');
   });
 }
 
@@ -2480,7 +3436,30 @@ async function showAssignTaskModal(taskId) {
 function assigneeChipHtml(user) {
   if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
-  return `<span class="assignee-chip" ${userColorStyle(user)} title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${initials}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+  const avatarInner = user.avatarBase64
+    ? `<img src="${esc(user.avatarBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
+    : initials;
+  return `<span class="assignee-chip" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
+}
+
+async function showUserProfileModal(userId) {
+  const user = await DB.getUser(Number(userId));
+  if (!user) { showToast('User not found', 'error'); return; }
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  const avatar = user.avatarBase64
+    ? `<img src="${esc(user.avatarBase64)}" class="profile-avatar-img" alt="${esc(initials)}">`
+    : `<div class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
+  showModal(esc(user.displayName || user.username), `
+    <div class="profile-view-card">
+      <div class="profile-avatar-wrap">${avatar}</div>
+      <div class="profile-view-main">
+        <strong>@${esc(user.username)}</strong>
+        <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
+        ${user.bio ? `<p>${esc(user.bio)}</p>` : '<p class="text-muted text-sm">No bio added yet.</p>'}
+        ${user.email ? `<span class="text-muted text-sm">${esc(user.email)}</span>` : ''}
+      </div>
+    </div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Close</button><button type="button" class="btn btn-primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button></div>`);
 }
 
 function showMilestoneModal(pid) {
@@ -2553,6 +3532,28 @@ async function showEditUserModal(uid) {
     </form>`);
 }
 
+async function showUserClassroomsModal(uid) {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const [user, classrooms, selected] = await Promise.all([
+    DB.getUser(uid),
+    DB.getClassrooms ? DB.getClassrooms() : [],
+    DB.getUserClassroomIds ? DB.getUserClassroomIds(uid) : []
+  ]);
+  if (!user) { showToast('User not found', 'error'); return; }
+  const selectedSet = new Set((selected || []).map(Number));
+  showModal('User Classrooms', `
+    <form data-form="user-classrooms" data-user-id="${uid}">
+      <p class="text-muted text-sm" style="margin-bottom:12px">Choose which project canvases ${esc(user.displayName || user.username)} can access.</p>
+      <div class="project-editor-list">
+        ${classrooms.map(c => `<label class="project-editor-option">
+          <input type="checkbox" name="classroomIds" value="${c.id}" ${selectedSet.has(Number(c.id)) ? 'checked' : ''}>
+          <span>${esc(c.name)}</span>
+        </label>`).join('') || '<p class="text-muted text-sm">Create a classroom first.</p>'}
+      </div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save Classrooms</button></div>
+    </form>`);
+}
+
 function showResetPwModal(uid) {
   showModal('Reset Password', `
     <form data-form="reset-pw" data-user-id="${uid}">
@@ -2567,18 +3568,57 @@ async function showProfileModal() {
   const user = await DB.getUser(s.userId);
   if (!user) { showToast('Could not load profile', 'error'); return; }
   const isAdm = s.role === 'admin';
-  showModal('Edit Profile', `
-    <form data-form="edit-profile">
-      <p class="text-muted text-sm" style="margin-bottom:12px">This is how your name appears across WorkTracker. Your username (<strong>@${esc(user.username)}</strong>) stays the same.</p>
+  const avatarUrl = user.avatarBase64 || '';
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  showModal('My Profile', `
+    <form data-form="edit-profile" class="profile-form-v2">
+      <div class="profile-avatar-section">
+        <div class="profile-avatar-wrap">
+          ${avatarUrl
+            ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar">`
+            : `<div id="profile-avatar-preview" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`}
+          <label class="profile-avatar-edit-btn" title="Change photo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
+          </label>
+        </div>
+        <div class="profile-identity">
+          <strong class="profile-username">@${esc(user.username)}</strong>
+          ${isAdm ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : ''}
+          ${departmentBadge(user.department || '')}
+        </div>
+      </div>
+      <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
+      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Procurement lead at SubZero Motors">${esc(user.bio || '')}</textarea></div>
       <div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
       </select></div>
-      ${isAdm ? `<p class="text-muted text-sm" style="margin:6px 0 12px"><span class="admin-tag">${ICONS.crown} Admin</span> badge is shown automatically.</p>` : ''}
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+      <div class="form-group"><label>Accent Color</label><div style="display:flex;gap:8px;align-items:center"><input name="color" type="color" value="${esc(user.color||'#4f46e5')}" style="height:36px;width:60px;border-radius:6px;border:1px solid var(--border);cursor:pointer"><span class="text-muted text-sm">Used for your avatar and highlights</span></div></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
     </form>`);
+  // Avatar preview
+  const avatarInput = document.getElementById('profile-avatar-input');
+  const avatarPreview = document.getElementById('profile-avatar-preview');
+  const avatarB64 = document.getElementById('profile-avatar-b64');
+  if (avatarInput) {
+    avatarInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { showToast('Image too large (max 2 MB)', 'warning'); return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const b64 = ev.target.result;
+        avatarB64.value = b64;
+        if (avatarPreview) {
+          avatarPreview.outerHTML = `<img id="profile-avatar-preview" src="${esc(b64)}" class="profile-avatar-img" alt="avatar">`;
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 }
 
 function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
@@ -2635,6 +3675,242 @@ function showOnboardingModal(force = false) {
 }
 
 
+async function renderActivityPage() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  const log = await DB.getActivityLog({ limit: 200 });
+  const users = await DB.getUsers();
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const ACTION_ICON = { created:'🟢', updated:'✏️', deleted:'🗑️', uploaded:'📎', logged_in:'🔑', logged_out:'🚪', noted:'📝', completed:'✅', assigned:'👤', task_done:'✅' };
+  content.innerHTML = `
+    <div class="projects-page-header" style="margin-bottom:20px">
+      <div class="projects-page-title"><h1>Activity Log</h1><span class="projects-page-count">${log.length} entries</span></div>
+      <a href="#/dashboard" class="btn btn-ghost">${ICONS.arrowLeft} Back to Dashboard</a>
+    </div>
+    <div class="activity-log-page">
+      ${log.length === 0 ? emptyState({ icon:'activity', title:'No activity yet', description:'Actions taken in the app appear here.' })
+        : log.map(entry => {
+          const who = uMap[entry.userId];
+          const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
+          const icon = ACTION_ICON[entry.action] || '●';
+          return `<div class="activity-page-row">
+            <span class="activity-page-icon">${icon}</span>
+            <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
+            <div class="activity-page-body">
+              <span class="activity-page-text">${formatActivityMessage(entry, uMap)}</span>
+              <span class="activity-page-time">${new Date(entry.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+            </div>
+          </div>`;
+        }).join('')}
+    </div>`;
+}
+
+function showAboutModal() {
+  showModal('About WorkTracker', `
+    <div class="about-modal">
+      <div class="about-logo-row">
+        <div class="about-logo-mark">
+          <svg width="36" height="36" viewBox="0 0 100 100">
+            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="white" opacity="0.95"/>
+            <path d="M74 30 L80 36 L90 23" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="white" opacity="0.65"/>
+            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="white" opacity="0.4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="about-app-name">WorkTracker</div>
+          <div class="about-version">Version ${esc(getAppVersion())} · Built for SubZero Motors</div>
+        </div>
+      </div>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, attach files to tasks, and collaborate — all in one place.</p>
+      <div class="about-features">
+        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Status tracking, milestones, progress bars, and department filters.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📝</span><div><strong>Task Details</strong><span> — Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>Files</strong><span> — Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Timeline</strong><span> — Visual Gantt-style timeline by due date with today marker.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team channels with Discord webhook integration.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell.</span></div></div>
+      </div>
+      <div class="about-footer">
+        <span class="text-muted text-sm">Powered by Supabase + IndexedDB · Built with ❤️</span>
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" data-action="close-modal">Close</button></div>
+    </div>`);
+}
+
+async function showTaskDetailModal(taskId) {
+  const task = await DB.getTask(taskId);
+  if (!task) { showToast('Task not found', 'error'); return; }
+  const project = await DB.getProject(task.projectId);
+  const editable = project && canEdit(project);
+  const users = await DB.getUsers();
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const assignee = uMap[task.assigneeId];
+  const attachments = await DB.getAttachments(task.projectId);
+  const taskAtts = attachments.filter(a => Number(a.taskId) === Number(taskId));
+
+  const blobUrls = [];
+  const filesHtml = taskAtts.map(a => {
+    const isImg = a.mimeType?.startsWith('image/');
+    const url = a.blob ? URL.createObjectURL(a.blob) : (DB.getAttachmentUrl ? DB.getAttachmentUrl(a.storagePath) : '');
+    if (a.blob && url) blobUrls.push(url);
+    return `<div class="td-file-card">
+      <button type="button" class="td-file-preview" data-action="preview-attachment" data-id="${a.id}">
+        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span style="font-size:1.6rem">${a.mimeType === 'application/pdf' ? '📄' : '📎'}</span>`}
+      </button>
+      <span class="td-file-name">${esc(a.fileName)}</span>
+      ${editable ? `<button class="btn-icon td-file-del" data-action="delete-attachment" data-id="${a.id}" title="Remove">${ICONS.trash}</button>` : ''}
+    </div>`;
+  }).join('');
+
+  showModal(`Task: ${esc(task.title)}`, `
+    <div class="task-detail-modal" data-task-id="${taskId}">
+      ${project ? `<div style="margin-bottom:14px"><a href="#/projects/${project.id}" class="badge badge-blue" data-action="close-modal" style="cursor:pointer">${ICONS.folder} ${esc(project.name)}</a></div>` : ''}
+      <div class="td-meta-row">
+        ${editable ? `
+          <label class="td-field"><span class="td-field-label">Status</span>
+            <select class="td-select" data-td="status">
+              <option value="todo" ${task.status === 'todo' ? 'selected' : ''}>To Do</option>
+              <option value="doing" ${task.status === 'doing' ? 'selected' : ''}>In Progress</option>
+              <option value="done" ${task.status === 'done' ? 'selected' : ''}>Done</option>
+            </select></label>
+          <label class="td-field"><span class="td-field-label">Priority</span>
+            <select class="td-select" data-td="priority">
+              <option value="low" ${task.priority === 'low' ? 'selected' : ''}>Low</option>
+              <option value="medium" ${task.priority === 'medium' ? 'selected' : ''}>Medium</option>
+              <option value="high" ${task.priority === 'high' ? 'selected' : ''}>High</option>
+              <option value="urgent" ${task.priority === 'urgent' ? 'selected' : ''}>Urgent</option>
+            </select></label>
+          <label class="td-field"><span class="td-field-label">Due Date</span>
+            <input type="date" class="td-select" data-td="dueDate" value="${esc(task.dueDate || '')}"></label>
+          <label class="td-field" style="flex:1.5"><span class="td-field-label">Assignee</span>
+            <select class="td-select" data-td="assigneeId">
+              ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}</option>`).join('')}
+            </select></label>
+        ` : `<span>${taskBadge(task.status)}</span><span>${prioBadge(task.priority)}</span>
+          ${task.dueDate ? `<span class="text-muted text-sm">${ICONS.calendar} ${formatDateShort(task.dueDate)}</span>` : ''}
+          ${assignee ? `<span>${assigneeChipHtml(assignee)}</span>` : ''}`}
+      </div>
+      <div class="td-section">
+        <span class="td-section-label">Notes</span>
+        ${editable
+          ? `<textarea class="td-notes" data-td="notes" placeholder="Add notes, context, or any details…" rows="2">${esc(task.notes || '')}</textarea>`
+          : `<p class="td-notes-view">${task.notes ? esc(task.notes) : '<span class="text-muted">No notes.</span>'}</p>`}
+      </div>
+      ${editable ? `
+      <div class="td-section" id="td-custom-fields-section">
+        <div class="td-section-header">
+          <span class="td-section-label">Custom Fields</span>
+          <button type="button" class="btn btn-sm btn-ghost" id="td-add-field-btn">${ICONS.plus} Add field</button>
+        </div>
+        <div id="td-custom-fields" class="td-custom-fields">
+          ${(task.customFields||[]).map((f,i) => `
+            <div class="td-cf-row" data-cf-index="${i}">
+              <input class="td-cf-label" type="text" value="${esc(f.label)}" placeholder="Field name" data-cf="label" data-idx="${i}">
+              <input class="td-cf-value" type="text" value="${esc(f.value)}" placeholder="Value" data-cf="value" data-idx="${i}">
+              <label class="td-cf-pin" title="Show this field in the main project description">
+                <input type="checkbox" data-cf="showInProject" data-idx="${i}" ${f.showInProject ? 'checked' : ''}>
+                <span class="td-cf-pin-box">${ICONS.checkCircle}</span>
+                <span class="td-cf-pin-text">Show in project</span>
+              </label>
+              <button type="button" class="btn-icon td-cf-del" data-cf-del="${i}" title="Remove field">${ICONS.trash}</button>
+            </div>`).join('')}
+        </div>
+        <p class="text-muted text-sm" style="padding:0 0 4px;font-size:0.72rem">Use for tracking numbers, reference IDs, shipping details, or any custom info.</p>
+      </div>` : (task.customFields?.length ? `
+      <div class="td-section">
+        <span class="td-section-label">Custom Fields</span>
+        ${task.customFields.map(f => `<div class="td-cf-readonly"><span class="td-cf-readonly-label">${esc(f.label)}</span><span class="td-cf-readonly-value">${esc(f.value)}</span></div>`).join('')}
+      </div>` : '')}
+      ${editable ? `
+      <div class="td-section">
+        <div class="td-section-header">
+          <span class="td-section-label">Attachments (${taskAtts.length})</span>
+          <label class="btn btn-sm btn-ghost td-attach-btn">
+            ${ICONS.upload} Add file
+            <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style="display:none" class="td-file-input" data-task-id="${taskId}" data-project-id="${task.projectId}">
+          </label>
+        </div>
+        <div class="td-drop-zone" data-task-id="${taskId}" data-project-id="${task.projectId}">
+          ${filesHtml || `<p class="td-drop-hint">Drag &amp; drop files here, or click <strong>Add file</strong></p>`}
+        </div>
+      </div>` : taskAtts.length ? `<div class="td-section"><span class="td-section-label">Attachments</span><div class="td-files-grid">${filesHtml}</div></div>` : ''}
+      <div class="form-actions" style="margin-top:20px">
+        ${editable ? `<button class="btn btn-primary" data-action="save-task-detail" data-id="${taskId}">Save Changes</button>` : ''}
+        <button class="btn btn-ghost" data-action="close-modal">Close</button>
+      </div>
+    </div>`);
+
+  // Custom fields: add new field
+  const addFieldBtn = document.getElementById('td-add-field-btn');
+  const cfContainer = document.getElementById('td-custom-fields');
+  if (addFieldBtn && cfContainer) {
+    addFieldBtn.addEventListener('click', () => {
+      const idx = cfContainer.querySelectorAll('.td-cf-row').length;
+      const row = document.createElement('div');
+      row.className = 'td-cf-row';
+      row.dataset.cfIndex = idx;
+      row.innerHTML = `<input class="td-cf-label" type="text" placeholder="Field name (e.g. Tracking #)" data-cf="label" data-idx="${idx}">
+        <input class="td-cf-value" type="text" placeholder="Value" data-cf="value" data-idx="${idx}">
+        <label class="td-cf-pin" title="Show this field in the main project description">
+          <input type="checkbox" data-cf="showInProject" data-idx="${idx}">
+          <span class="td-cf-pin-box">${ICONS.checkCircle}</span>
+          <span class="td-cf-pin-text">Show in project</span>
+        </label>
+        <button type="button" class="btn-icon td-cf-del" data-cf-del="${idx}" title="Remove">${ICONS.trash}</button>`;
+      cfContainer.appendChild(row);
+      row.querySelector('.td-cf-label')?.focus();
+    });
+    cfContainer.addEventListener('click', e => {
+      const delBtn = e.target.closest('[data-cf-del]');
+      if (delBtn) { delBtn.closest('.td-cf-row')?.remove(); }
+    });
+  }
+
+  // File input handler inside modal
+  const fileInput = document.querySelector('.td-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      const pid = Number(fileInput.dataset.projectId);
+      const tid = Number(fileInput.dataset.taskId);
+      const s = getSession();
+      const max = 10 * 1024 * 1024;
+      for (const file of files) {
+        if (file.size > max) { showToast(`${file.name} too large (max 10 MB)`, 'warning'); continue; }
+        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
+      }
+      bustWorkspaceCache();
+      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+      await showTaskDetailModal(tid);
+    });
+  }
+
+  // Drag-drop on the drop zone
+  const dz = document.querySelector('.td-drop-zone');
+  if (dz && editable) {
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('td-drop-zone--active'); });
+    dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('td-drop-zone--active'); });
+    dz.addEventListener('drop', async e => {
+      e.preventDefault(); dz.classList.remove('td-drop-zone--active');
+      const files = Array.from(e.dataTransfer.files || []);
+      const pid = Number(dz.dataset.projectId);
+      const tid = Number(dz.dataset.taskId);
+      const s = getSession();
+      const max = 10 * 1024 * 1024;
+      for (const file of files) {
+        if (file.size > max) { showToast(`${file.name} too large`, 'warning'); continue; }
+        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
+      }
+      bustWorkspaceCache();
+      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+      await showTaskDetailModal(tid);
+    });
+  }
+}
+
 async function handleFormSubmit(e) {
   e.preventDefault();
   const form = e.target; if (!form.dataset.form) return;
@@ -2648,13 +3924,20 @@ async function handleFormSubmit(e) {
         type: fd.get('type'),
         priority: fd.get('priority'),
         department: fd.get('department') || '',
+        classroomId: fd.get('classroomId') ? Number(fd.get('classroomId')) : null,
         workflowTemplate: fd.get('workflowTemplate') || '',
         isOngoing: fd.get('isOngoing') === '1',
         cadence: fd.get('cadence') || ''
       };
+      if (form.querySelector('[name="editorIds"]')) {
+        data.editorIds = fd.getAll('editorIds').map(Number).filter(Boolean);
+      }
       if (data.workflowTemplate === 'logistics-shipment') data.department = 'logistics';
       if (!data.name) return;
       const editId = form.dataset.editId;
+      const _submitBtn = form.querySelector('[type=submit]');
+      if (_submitBtn?.disabled) return;
+      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving…' : 'Creating…'; }
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
         const existing = await DB.getProject(Number(editId));
@@ -2673,7 +3956,12 @@ async function handleFormSubmit(e) {
         const nid = await DB.createProject(data);
         const created = await DB.getProject(nid);
         await ensureProjectWorkflowTasks(created, uid);
-        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))}).`);
+        const bulkTitles = [...document.querySelectorAll('input[name="bulk_task[]"]')]
+          .map(i => i.value.trim()).filter(Boolean);
+        for (const title of bulkTitles) {
+          await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
+        }
+        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))})${bulkTitles.length ? ` with ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''}` : ''}.`);
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, created);
         if (unsaved.length) showToast(`Project created, but ${unsaved.join(', ')} could not be saved. Run the latest Supabase schema.`, 'warning');
@@ -2682,10 +3970,13 @@ async function handleFormSubmit(e) {
         window.location.hash = `#/projects/${nid}`; return;
       }
     } else if (type === 'task') {
+      const _taskSubmitBtn = form.querySelector('[type=submit]');
+      if (_taskSubmitBtn?.disabled) return;
+      if (_taskSubmitBtn) { _taskSubmitBtn.disabled = true; _taskSubmitBtn.textContent = 'Adding…'; }
       const picked = Number(fd.get('assigneeId'));
       const assigneeId = Number.isFinite(picked) && picked > 0 ? picked : uid;
       const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
-      if (!data.title || !data.projectId) return;
+      if (!data.title || !data.projectId) { if (_taskSubmitBtn) { _taskSubmitBtn.disabled = false; _taskSubmitBtn.textContent = 'Add Task'; } return; }
       const newId = await DB.createTask(data);
       const project = await DB.getProject(data.projectId);
       await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`);
@@ -2698,6 +3989,59 @@ async function handleFormSubmit(e) {
         const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
         await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId: data.projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
       }
+    } else if (type === 'project-access-request') {
+      const projectId = Number(form.dataset.projectId);
+      const project = await DB.getProject(projectId);
+      if (!project) { showToast('Project not found', 'error'); return; }
+      if (!DB.requestProjectAccess) { showToast('Run the latest app database update first', 'warning'); return; }
+      const message = fd.get('message')?.trim() || '';
+      const reqId = await DB.requestProjectAccess({ projectId, requesterId: uid, message });
+      const requester = await DB.getUser(uid);
+      await notifyUser({
+        userId: project.ownerId,
+        type: 'access_request',
+        message: `${requester?.displayName || requester?.username || 'Someone'} requested edit access to "${project.name}".`,
+        projectId,
+        entityType: 'project_access_request',
+        entityId: reqId,
+        actorUserId: uid
+      });
+      hideModal();
+      showToast('Access request sent', 'success');
+    } else if (type === 'project-editors') {
+      const projectId = Number(form.dataset.projectId);
+      const project = await DB.getProject(projectId);
+      if (!project || !canManageProjectAccess(project)) { showToast('Permission denied', 'error'); return; }
+      const editorIds = fd.getAll('editorIds').map(Number).filter(Boolean);
+      await DB.updateProject(projectId, { editorIds }, uid);
+      bustWorkspaceCache();
+      hideModal();
+      await router();
+      showToast('Project access updated', 'success');
+    } else if (type === 'bug-report') {
+      if (!DB.createBugReport) { showToast('Bug reporting needs the latest database update', 'warning'); return; }
+      const title = fd.get('title')?.trim();
+      const description = fd.get('description')?.trim();
+      const severity = fd.get('severity') || 'normal';
+      const appVersion = fd.get('appVersion') || getAppVersion();
+      let screenshots = [];
+      try { screenshots = JSON.parse(fd.get('screenshots') || '[]'); } catch (_) { screenshots = []; }
+      if (!title || !description) { showToast('Title and description are required', 'warning'); return; }
+      const reportId = await DB.createBugReport({ userId: uid, title, description, severity, appVersion, screenshots });
+      const admins = (await DB.getUsers()).filter(u => u.role === 'admin');
+      const reporter = await DB.getUser(uid);
+      for (const admin of admins) {
+        await notifyUser({
+          userId: admin.id,
+          type: 'bug_report',
+          message: `${reporter?.displayName || reporter?.username || 'Someone'} reported a ${severity} bug: ${title}`,
+          entityType: 'bug_report',
+          entityId: reportId,
+          actorUserId: uid
+        });
+      }
+      hideModal();
+      showToast('Bug report sent', 'success');
     } else if (type === 'reassign-task') {
       const taskId = Number(form.dataset.taskId);
       const task = await DB.getTask(taskId); if (!task) return;
@@ -2754,17 +4098,22 @@ async function handleFormSubmit(e) {
       const content = fd.get('content')?.trim();
       if (!content) return;
       const session = getSession();
+      if (channelId?.startsWith('dm-')) {
+        const toUserId = Number(channelId.slice(3));
+        await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
+        form.reset();
+        await refreshChatPane();
+        return;
+      }
       let hook = null;
       if (channelId === 'general') hook = await DB.getGeneralWebhook();
       else if (channelId?.startsWith('project-')) hook = await DB.getProjectWebhook(Number(channelId.split('-')[1]));
-      if (!hook?.url) { showToast('No webhook configured for this channel', 'error'); return; }
-      const result = await postToDiscordWebhook(hook.url, {
-        username: discordWebhookUsername(session),
-        content
-      });
-      if (!result.ok) {
-        showToast(discordFailToast(result), 'error');
-        return;
+      if (hook?.url) {
+        const result = await postToDiscordWebhook(hook.url, {
+          username: discordWebhookUsername(session),
+          content
+        });
+        if (!result.ok) showToast(discordFailToast(result), 'warning');
       }
       form.reset();
       const projectId = hook.projectId ?? null;
@@ -2857,8 +4206,12 @@ async function handleFormSubmit(e) {
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
       const department = fd.get('department') || '';
+      const bio = fd.get('bio')?.trim() || '';
+      const color = fd.get('color') || '';
+      const avatarBase64 = fd.get('avatarBase64') || '';
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      await DB.updateUser(s.userId, { displayName, email, department }, s.userId);
+      const profileData = { displayName, email, department, bio, avatarBase64, ...(color && { color }) };
+      await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
       updateSidebarUser();
@@ -2889,6 +4242,28 @@ async function handleFormSubmit(e) {
       showToast('Department updated', 'success');
       await renderAdmin();
       return;
+    } else if (type === 'add-classroom') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const name = fd.get('name')?.trim();
+      if (!name) return;
+      await DB.createClassroom({
+        name,
+        description: fd.get('description')?.trim() || '',
+        color: fd.get('color') || '#4f46e5'
+      });
+      bustWorkspaceCache();
+      showToast('Classroom added', 'success');
+      await renderAdmin();
+      return;
+    } else if (type === 'user-classrooms') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const targetId = Number(form.dataset.userId);
+      await DB.setUserClassrooms(targetId, fd.getAll('classroomIds').map(Number).filter(Boolean));
+      hideModal();
+      bustWorkspaceCache();
+      showToast('Classrooms updated', 'success');
+      await renderAdmin();
+      return;
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
       const mk = fd.get('masterKey')?.trim();
@@ -2902,6 +4277,8 @@ async function handleFormSubmit(e) {
     bustWorkspaceCache();
     hideModal(); await router();
   } catch (err) {
+    const ds = document.querySelector('[data-form] [type=submit]:disabled');
+    if (ds) { ds.disabled = false; ds.textContent = ds.closest('[data-form]')?.dataset.editId ? 'Save' : 'Create Project'; }
     console.error(err);
     const msg = err?.message || err?.details || 'Something went wrong';
     showToast(msg.includes('duplicate key') ? 'Could not save — try refreshing the page' : msg, 'error');
@@ -2912,7 +4289,7 @@ async function handleFormSubmit(e) {
 
 const actions = {
   'add-project': () => showProjectModal(),
-  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null),
+  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
   'edit-project': (b) => showProjectModal(Number(b.dataset.id)),
@@ -2942,6 +4319,19 @@ const actions = {
     await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} changed task "${t.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`);
     if (workflowProjectStatus) {
       await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} after the logistics workflow changed.`);
+    }
+    // Auto-complete / auto-reactivate regular (non-workflow) projects
+    if (!isLogisticsWorkflow(p) && (p.status === 'active' || p.status === 'completed')) {
+      const tasksAfterUpdate = projectTasks.map(pt => pt.id === t.id ? { ...pt, status: nextStatus } : pt);
+      const allDone = tasksAfterUpdate.length > 0 && tasksAfterUpdate.every(pt => pt.status === 'done');
+      if (allDone && p.status !== 'completed') {
+        await DB.updateProject(p.id, { status: 'completed' }, uid);
+        showToast(`"${p.name}" completed — all tasks done!`, 'success');
+        await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to Completed after all tasks were done.`);
+      } else if (!allDone && p.status === 'completed') {
+        await DB.updateProject(p.id, { status: 'active' }, uid);
+        await mirrorBacklogActivity(`[Backlog] "${p.name}" moved back to Active after a task was reopened.`);
+      }
     }
     // Notify project owner when an assignee completes a task they didn't own.
     if (nextStatus === 'done' && p.ownerId && p.ownerId !== uid) {
@@ -2997,10 +4387,17 @@ const actions = {
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
   'user-edit-profile': async () => { closeUserMenu(); await showProfileModal(); },
+  'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'close-howto': () => hideModal(),
   'open-sync-diagnostics': async () => {
     closeUserMenu();
+    await showSyncDiagnosticsModal();
+  },
+  'show-user-profile': async (b) => {
+    await showUserProfileModal(Number(b.dataset.userId));
+  },
+  'show-sync-diagnostics': async () => {
     await showSyncDiagnosticsModal();
   },
   'sync-retry-now': async () => {
@@ -3009,6 +4406,20 @@ const actions = {
     renderSyncStatusIndicator();
     await showSyncDiagnosticsModal();
     showToast('Retrying cloud sync…', 'info');
+  },
+  'sync-force-reload': async () => {
+    try {
+      localStorage.removeItem('wt-supabase-shadow-v1');
+      localStorage.removeItem('wt-supabase-sync-queue-v1');
+      if (window.SupabaseDB) {
+        window.SupabaseDB._shadowState = window.SupabaseDB._emptyShadowState();
+        window.SupabaseDB._syncQueue = [];
+      }
+    } catch(_) {}
+    bustWorkspaceCache();
+    hideModal();
+    showToast('Cache cleared — reloading fresh data from Supabase…', 'info');
+    await router();
   },
   'sync-copy-errors': async () => {
     const jobs = DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : [];
@@ -3035,10 +4446,103 @@ const actions = {
     closeUserMenu();
     const s = getSession();
     if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username });
-    clearSession();
+    clearSession({ trusted: true });
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();
+  },
+  'toggle-task-group': (b) => {
+    const pid = b.dataset.pid;
+    const grp = document.querySelector(`.task-proj-group[data-pid="${pid}"]`);
+    if (!grp) return;
+    const collapsed = grp.classList.toggle('tpg-collapsed');
+    if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
+    state.collapsedTaskGroups[pid] = collapsed;
+  },
+  'show-about': () => { closeUserMenu(); showAboutModal(); },
+  'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
+  'save-task-detail': async (b) => {
+    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      const taskId = Number(b.dataset.id);
+      const status = document.querySelector('[data-td="status"]')?.value;
+      const priority = document.querySelector('[data-td="priority"]')?.value;
+      const dueDate = document.querySelector('[data-td="dueDate"]')?.value || '';
+      const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
+      const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
+      const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
+      const cfRows = document.querySelectorAll('.td-cf-row');
+      const customFields = [...cfRows].map(row => ({
+        label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
+        value: row.querySelector('[data-cf="value"]')?.value?.trim() || '',
+        showInProject: !!row.querySelector('[data-cf="showInProject"]')?.checked
+      })).filter(f => f.label || f.value);
+      const uid = actorId();
+      const oldTask = await DB.getTask(taskId);
+      const activityDetails = customFieldActivitySummary(oldTask?.customFields || [], customFields);
+      const changes = { dueDate, notes, customFields };
+      if (activityDetails) changes.activityDetails = activityDetails;
+      if (status) changes.status = status;
+      if (priority) changes.priority = priority;
+      if (assigneeId) changes.assigneeId = assigneeId;
+      await DB.updateTask(taskId, changes, uid);
+      bustWorkspaceCache();
+      hideModal();
+      await router();
+      showToast('Task saved', 'success');
+    } catch(err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
+      showToast('Save failed: ' + (err?.message || 'Unknown error'), 'error');
+    }
+  },
+  'clear-all-notifications': async () => {
+    const uid = actorId(); if (!uid) return;
+    await DB.markAllNotificationsRead(uid);
+    refreshNotificationBadge();
+    await renderNotificationsPage();
+    renderNotificationPanel();
+    showToast('All notifications marked as read', 'info');
+  },
+  'task-view': async (b) => {
+    state.taskViewMode = b.dataset.view;
+    const pid = Number(b.dataset.projectId);
+    const p = await DB.getProject(pid);
+    if (p) await renderTab('tasks', pid, canEdit(p));
+  },
+  'quick-add-task': (b) => {
+    const afterId = b.dataset.after;
+    const status = b.dataset.status || 'todo';
+    const projectId = Number(b.dataset.projectId);
+    const zone = b.closest('.task-insert-zone');
+    if (!zone) return;
+    const form = document.createElement('div');
+    form.className = 'task-qaf';
+    form.dataset.projectId = String(projectId);
+    form.dataset.after = afterId || '';
+    form.dataset.status = status;
+    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name…" maxlength="200" autocomplete="off">
+      <div class="task-qaf-btns">
+        <button class="btn btn-sm btn-primary" data-action="confirm-quick-task" data-project-id="${projectId}" data-after="${afterId || ''}" data-status="${status}">Add</button>
+        <button class="btn btn-sm btn-ghost" data-action="cancel-quick-task" data-project-id="${projectId}">Cancel</button>
+      </div>`;
+    zone.replaceWith(form);
+    const inp = form.querySelector('.task-qaf-input');
+    inp?.focus();
+    inp?.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); await createQuickTask(projectId, afterId, status); }
+      else if (e.key === 'Escape') {
+        const p = await DB.getProject(projectId);
+        if (p) await renderTab('tasks', projectId, canEdit(p));
+      }
+    });
+  },
+  'confirm-quick-task': async (b) => {
+    await createQuickTask(Number(b.dataset.projectId), b.dataset.after, b.dataset.status);
+  },
+  'cancel-quick-task': async (b) => {
+    const pid = Number(b.dataset.projectId);
+    const p = await DB.getProject(pid);
+    if (p) await renderTab('tasks', pid, canEdit(p));
   },
   'switch-tab': async (b) => {
     const tab = b.dataset.tab; const pid = Number(b.dataset.projectId);
@@ -3046,6 +4550,70 @@ const actions = {
     document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active')); b.classList.add('active');
     const p = await DB.getProject(pid);
     await renderTab(tab, pid, p ? canEdit(p) : false);
+  },
+  'open-project-card': (b) => {
+    const pid = Number(b.dataset.projectId);
+    if (pid) window.location.hash = `#/projects/${pid}`;
+  },
+  'request-project-access': async (b) => {
+    await showRequestProjectAccessModal(Number(b.dataset.projectId));
+  },
+  'manage-project-access': async (b) => {
+    await showProjectAccessModal(Number(b.dataset.projectId));
+  },
+  'approve-project-access': async (b) => {
+    if (!DB.respondProjectAccess) return;
+    const req = await DB.respondProjectAccess(Number(b.dataset.requestId), { status: 'approved', decidedBy: actorId() });
+    const project = await DB.getProject(Number(b.dataset.projectId));
+    await notifyUser({
+      userId: req.requesterId,
+      type: 'access_approved',
+      message: `Your edit access request for "${project?.name || 'a project'}" was approved.`,
+      projectId: project?.id || null,
+      entityType: 'project',
+      entityId: project?.id || null,
+      actorUserId: actorId()
+    });
+    bustWorkspaceCache();
+    await showProjectAccessModal(Number(b.dataset.projectId));
+    showToast('Access approved', 'success');
+  },
+  'decline-project-access': async (b) => {
+    if (!DB.respondProjectAccess) return;
+    const req = await DB.respondProjectAccess(Number(b.dataset.requestId), { status: 'declined', decidedBy: actorId() });
+    const project = await DB.getProject(Number(b.dataset.projectId));
+    await notifyUser({
+      userId: req.requesterId,
+      type: 'access_declined',
+      message: `Your edit access request for "${project?.name || 'a project'}" was declined.`,
+      projectId: project?.id || null,
+      entityType: 'project',
+      entityId: project?.id || null,
+      actorUserId: actorId()
+    });
+    await showProjectAccessModal(Number(b.dataset.projectId));
+    showToast('Access declined', 'info');
+  },
+  'copy-pinned-field': async (b) => {
+    const value = b.dataset.copy || '';
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      showToast('Copied tracking info', 'success');
+    } catch (_) {
+      showToast('Could not copy automatically', 'warning');
+    }
   },
   'filter-projects': async (b) => { state.projectFilter = b.dataset.filter; await renderProjects(); },
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
@@ -3094,6 +4662,7 @@ const actions = {
   },
   'add-user': () => showAddUserModal(),
   'edit-user': (b) => showEditUserModal(Number(b.dataset.id)),
+  'edit-user-classrooms': (b) => showUserClassroomsModal(Number(b.dataset.id)),
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
@@ -3111,6 +4680,18 @@ const actions = {
     await refreshDepartmentCfg();
     showToast('Department removed', 'success');
     await renderAdmin();
+  },
+  'delete-classroom': async (b) => {
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+    if (!confirm('Remove this classroom? Projects will move to another classroom.')) return;
+    try {
+      await DB.deleteClassroom(Number(b.dataset.id));
+      bustWorkspaceCache();
+      showToast('Classroom removed', 'success');
+      await renderAdmin();
+    } catch (err) {
+      showToast(err?.message || 'Could not remove classroom', 'error');
+    }
   },
   'reset-sample-data': async () => {
     if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
@@ -3139,7 +4720,9 @@ const actions = {
   },
   'select-chat-channel': async (b) => {
     state.chatChannel = b.dataset.channelId;
-    await renderChat();
+    hideModal();
+    if (window.location.hash !== '#/chat') window.location.hash = '#/chat';
+    else await renderChat();
   },
   'export-report-csv': async () => { await exportMonthlyReportCsv(); },
   'generate-ai-report': async () => { await generateAIReport(); },
@@ -3226,6 +4809,7 @@ async function router() {
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/chat') await renderChat();
   else if (hash === '/notifications') await renderNotificationsPage();
+  else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/admin') await renderAdmin();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => content?.classList.remove('content-fade'));
@@ -3286,13 +4870,30 @@ function setupImport() {
 async function applyRoute() {
   const raw = window.location.hash.slice(1) || '';
   const hash = raw.split('?')[0];
+  const savedSession = getSession() || restoreTrustedSession();
 
-  if (!(await DB.hasUsers())) {
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('menu-toggle').style.display = 'none';
-    document.getElementById('auth-screen').style.display = 'flex';
-    renderAdminSetup();
-    return;
+  if (!savedSession || !isOffline()) {
+    let hasUsers = true;
+    try {
+      hasUsers = await DB.hasUsers();
+    } catch (err) {
+      if (!savedSession && isOffline()) {
+        document.getElementById('app').style.display = 'none';
+        document.getElementById('menu-toggle').style.display = 'none';
+        document.getElementById('auth-screen').style.display = 'flex';
+        renderLogin();
+        showAuthError('You are offline. Sign in once while online to keep this device remembered.');
+        return;
+      }
+      if (!savedSession || !isOffline()) throw err;
+    }
+    if (!hasUsers) {
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('menu-toggle').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'flex';
+      renderAdminSetup();
+      return;
+    }
   }
 
   if (hash === '/recovery') {
@@ -3302,11 +4903,11 @@ async function applyRoute() {
     await renderRecovery();
     return;
   }
-  const s = getSession();
+  const s = savedSession;
   if (s) {
-    const user = await DB.getUser(s.userId);
+    const user = isOffline() ? s : await DB.getUser(s.userId);
     if (!user) {
-      clearSession();
+      clearSession({ trusted: true });
       wtAppBootstrapped = false;
       document.getElementById('app').style.display = 'none';
       document.getElementById('menu-toggle').style.display = 'none';
@@ -3314,6 +4915,7 @@ async function applyRoute() {
       renderLogin();
       return;
     }
+    if (!isOffline()) setSession(user, { remember: !!getTrustedSession() });
     if (!wtAppBootstrapped) {
       await showApp();
       return;
@@ -3342,6 +4944,7 @@ async function init() {
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
     window.addEventListener('wt-sync-status', () => {
       renderSyncStatusIndicator();
+      updateOfflineSyncBanner();
       if (state.userMenuOpen) renderUserMenu();
     });
     window.addEventListener('wt-sync-error', (e) => {
@@ -3349,7 +4952,10 @@ async function init() {
       const label = summary ? `"${summary}"` : 'A change';
       const hint = error ? ` — ${error.slice(0, 120)}` : '';
       showToast(`Cloud sync failed: ${label} couldn't be saved${hint}`, 'error');
+      updateOfflineSyncBanner();
     });
+    window.addEventListener('online', () => { handleNetworkOnline(); });
+    window.addEventListener('offline', () => { handleNetworkOffline(); });
     document.addEventListener('click', async (e) => {
       const syncBtn = e.target.closest('#sync-status-indicator');
       if (syncBtn && !syncBtn.classList.contains('hidden')) {
@@ -3371,10 +4977,20 @@ async function init() {
       if (b && actions[b.dataset.action]) {
         // Prevent the nav-item anchor href="#" from changing the route
         if (b.tagName === 'A' && b.getAttribute('href') === '#') e.preventDefault();
+        if (b.dataset.action === 'copy-pinned-field') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         await actions[b.dataset.action](b);
       }
     });
     document.addEventListener('keydown', (e) => {
+      const card = e.target.matches?.('.project-card-v2[data-action="open-project-card"]') ? e.target : null;
+      if (card && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        actions['open-project-card'](card);
+        return;
+      }
       const ta = e.target.closest('.chat-compose textarea');
       if (ta && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -3405,6 +5021,9 @@ async function init() {
       } else if (target?.dataset?.projectFilterInput === 'department') {
         state.projectDepartmentFilter = target.value || 'all';
         await renderProjects();
+      } else if (target?.dataset?.projectFilterInput === 'classroom') {
+        state.classroomFilter = target.value || 'all';
+        await renderProjects();
       } else if (target?.dataset?.reportInput === 'month') {
         state.reportMonth = target.value || formatMonthInput();
         await renderReportsPage();
@@ -3434,22 +5053,41 @@ async function init() {
       if (!project || !canEdit(project)) { showToast('Permission denied', 'error'); return; }
       const s = getSession();
       const max = 10 * 1024 * 1024;
+      const validFiles = fileList.filter(f => f.size <= max);
+      fileList.filter(f => f.size > max).forEach(f => showToast(`${f.name} is over 10 MB`, 'warning'));
+      if (!validFiles.length) return;
+      const _upBar = document.getElementById('upload-progress-bar');
+      const _upFill = document.getElementById('upload-progress-fill');
+      const _upLabel = _upBar?.querySelector('.upload-progress-label');
+      let _hideTimer = null;
+      const hideBar = (delay = 0) => {
+        if (_upBar) { clearTimeout(_hideTimer); _hideTimer = setTimeout(() => _upBar.classList.add('hidden'), delay); }
+      };
+      if (_upBar) { _upBar.classList.remove('hidden'); if (_upFill) _upFill.style.width = '0%'; if (_upLabel) _upLabel.textContent = `Uploading 0 / ${validFiles.length}…`; }
       let uploaded = 0;
-      for (const file of fileList) {
-        if (file.size > max) { showToast(`${file.name} is over 10 MB`, 'warning'); continue; }
-        await DB.addAttachment({
-          projectId: pid,
-          uploadedBy: s.userId,
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          documentType,
-          blob: file
-        });
-        await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
-        uploaded++;
+      try {
+        for (const file of validFiles) {
+          await DB.addAttachment({
+            projectId: pid,
+            uploadedBy: s.userId,
+            fileName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            documentType,
+            blob: file
+          });
+          await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
+          uploaded++;
+          if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
+          if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;
+        }
+        if (_upBar) { if (_upFill) _upFill.style.width = '100%'; if (_upLabel) _upLabel.textContent = `Uploaded ${uploaded} file${uploaded !== 1 ? 's' : ''}`; }
+        if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
+        await router();
+      } catch (err) {
+        showToast('Upload error: ' + (err?.message || 'Unknown error'), 'error');
+      } finally {
+        hideBar(uploaded > 0 ? 1400 : 0);
       }
-      if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
-      await router();
     });
     setupImport();
     const mt = document.getElementById('menu-toggle');

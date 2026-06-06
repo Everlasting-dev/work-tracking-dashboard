@@ -138,6 +138,21 @@ db.version(9).stores({
   webhooks: '++id, scope, projectId, createdAt',
   sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
   departments: '&key, sortOrder'
+});
+
+db.version(10).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder'
 }).upgrade(async tx => {
   const defaults = [
     { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
@@ -148,6 +163,76 @@ db.version(9).stores({
   ];
   const count = await tx.table('departments').count();
   if (count === 0) await tx.table('departments').bulkAdd(defaults);
+});
+
+db.version(11).stores({
+  projects: '++id, name, type, status, priority, ownerId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt'
+}).upgrade(async tx => {
+  await tx.table('users').toCollection().modify(user => {
+    if (user.bio == null) user.bio = '';
+    if (user.avatarBase64 == null) user.avatarBase64 = '';
+  });
+  await tx.table('projects').toCollection().modify(project => {
+    if (!Array.isArray(project.editorIds)) project.editorIds = [];
+  });
+});
+
+db.version(12).stores({
+  projects: '++id, name, type, status, priority, ownerId, classroomId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt',
+  classrooms: '++id, name, createdAt',
+  userClassrooms: '++id, userId, classroomId, &[userId+classroomId]',
+  directMessages: '++id, [fromUserId+toUserId], createdAt'
+}).upgrade(async tx => {
+  const classroomCount = await tx.table('classrooms').count();
+  let defaultId = null;
+  if (!classroomCount) {
+    defaultId = await tx.table('classrooms').add({
+      name: 'Main Classroom',
+      description: 'Default workspace',
+      color: '#4f46e5',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  } else {
+    const first = await tx.table('classrooms').orderBy('id').first();
+    defaultId = first?.id || null;
+  }
+  if (defaultId != null) {
+    await tx.table('projects').toCollection().modify(project => {
+      if (project.classroomId == null) project.classroomId = defaultId;
+    });
+    const users = await tx.table('users').toArray();
+    for (const user of users) {
+      const existing = await tx.table('userClassrooms').where('[userId+classroomId]').equals([user.id, defaultId]).first();
+      if (!existing) await tx.table('userClassrooms').add({ userId: user.id, classroomId: defaultId, createdAt: new Date().toISOString() });
+    }
+  }
 });
 
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
@@ -330,6 +415,26 @@ const LocalDB = {
     return rows.slice(-limit);
   },
 
+  async createDirectMessage({ fromUserId, toUserId, content }) {
+    const now = new Date().toISOString();
+    return db.directMessages.add({
+      fromUserId: Number(fromUserId),
+      toUserId: Number(toUserId),
+      content: String(content || '').slice(0, 2000),
+      createdAt: now,
+      updatedAt: now
+    });
+  },
+
+  async getDirectMessages(userA, userB, { limit = 100 } = {}) {
+    const a = Number(userA);
+    const b = Number(userB);
+    const rows = (await db.directMessages.toArray())
+      .filter(m => (m.fromUserId === a && m.toUserId === b) || (m.fromUserId === b && m.toUserId === a))
+      .sort((x, y) => (x.createdAt || '').localeCompare(y.createdAt || ''));
+    return rows.slice(-limit);
+  },
+
   async getDepartments() {
     const rows = await db.departments.orderBy('sortOrder').toArray();
     return rows.length ? rows : [
@@ -353,12 +458,60 @@ const LocalDB = {
     return db.departments.delete(key);
   },
 
+  async ensureDefaultClassroom() {
+    let row = await db.classrooms.orderBy('id').first();
+    if (row) return row.id;
+    const now = new Date().toISOString();
+    return db.classrooms.add({ name: 'Main Classroom', description: 'Default workspace', color: '#4f46e5', createdAt: now, updatedAt: now });
+  },
+
+  async getClassrooms() {
+    const rows = await db.classrooms.toArray();
+    return rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  },
+
+  async createClassroom({ name, description = '', color = '#4f46e5' }) {
+    const now = new Date().toISOString();
+    return db.classrooms.add({ name: name || 'Classroom', description, color, createdAt: now, updatedAt: now });
+  },
+
+  async updateClassroom(id, changes = {}) {
+    return db.classrooms.update(Number(id), { ...changes, updatedAt: new Date().toISOString() });
+  },
+
+  async deleteClassroom(id) {
+    const all = await db.classrooms.toArray();
+    if (all.length <= 1) throw new Error('At least one classroom is required');
+    const fallback = all.find(c => c.id !== Number(id));
+    await db.projects.where('classroomId').equals(Number(id)).modify({ classroomId: fallback?.id || null });
+    await db.userClassrooms.where('classroomId').equals(Number(id)).delete();
+    return db.classrooms.delete(Number(id));
+  },
+
+  async getUserClassroomIds(userId) {
+    const rows = await db.userClassrooms.where('userId').equals(Number(userId)).toArray();
+    if (rows.length) return rows.map(r => Number(r.classroomId)).filter(Boolean);
+    const defaultId = await this.ensureDefaultClassroom();
+    await this.setUserClassrooms(userId, [defaultId]);
+    return [defaultId];
+  },
+
+  async setUserClassrooms(userId, classroomIds = []) {
+    const uid = Number(userId);
+    const ids = [...new Set((classroomIds || []).map(Number).filter(Boolean))];
+    const finalIds = ids.length ? ids : [await this.ensureDefaultClassroom()];
+    await db.userClassrooms.where('userId').equals(uid).delete();
+    const now = new Date().toISOString();
+    await db.userClassrooms.bulkAdd(finalIds.map(classroomId => ({ userId: uid, classroomId, createdAt: now })));
+    return finalIds;
+  },
+
   /* Users */
   async createUser(data) {
     const salt = generateSalt();
     const pwHash = await hashPassword(data.password, salt);
     const now = new Date().toISOString();
-    return db.users.add({
+    const id = await db.users.add({
       username: data.username.toLowerCase(),
       displayName: data.displayName || data.username,
       email: data.email || '',
@@ -366,9 +519,13 @@ const LocalDB = {
       salt,
       role: data.role || 'user',
       department: data.department || '',
+      bio: data.bio || '',
+      avatarBase64: data.avatarBase64 || '',
       color: data.color || '',
       createdAt: now
     });
+    await this.setUserClassrooms(id, data.classroomIds || [await this.ensureDefaultClassroom()]);
+    return id;
   },
 
   async getUser(id) { return db.users.get(id); },
@@ -446,8 +603,10 @@ const LocalDB = {
       status: data.status || 'active',
       priority: data.priority || 'medium',
       ownerId: data.ownerId || 1,
+      classroomId: data.classroomId != null ? Number(data.classroomId) : (await this.getUserClassroomIds(data.ownerId || actorUserId || 1))[0],
       department: data.department || '',
       workflowTemplate: data.workflowTemplate || '',
+      editorIds: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : [],
       completedAt: data.status === 'completed' ? now : null,
       isOngoing: !!data.isOngoing,
       cadence: data.cadence || '',
@@ -471,6 +630,7 @@ const LocalDB = {
     delete patch.actorUserId;
     if (patch.department != null) patch.department = patch.department || '';
     if (patch.workflowTemplate != null) patch.workflowTemplate = patch.workflowTemplate || '';
+    if (patch.editorIds != null) patch.editorIds = Array.isArray(patch.editorIds) ? patch.editorIds.map(Number).filter(Boolean) : [];
     if (patch.status != null) {
       if (patch.status === 'completed') patch.completedAt = existing?.completedAt || new Date().toISOString();
       else if (existing?.status === 'completed') patch.completedAt = null;
@@ -491,6 +651,7 @@ const LocalDB = {
     await db.updates.where('projectId').equals(id).delete();
     await db.attachments.where('projectId').equals(id).delete();
     await db.activityLog.where('projectId').equals(id).delete();
+    await db.projectAccessRequests.where('projectId').equals(id).delete();
     await db.projects.delete(id);
     if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
@@ -501,6 +662,7 @@ const LocalDB = {
     const fileName = data.fileName || 'file';
     const id = await db.attachments.add({
       projectId: data.projectId,
+      taskId: data.taskId || null,
       uploadedBy: data.uploadedBy,
       fileName,
       mimeType: data.mimeType || 'application/octet-stream',
@@ -586,6 +748,8 @@ const LocalDB = {
   async updateTask(id, changes, actorUserId = null) {
     const patch = { ...changes };
     delete patch.actorUserId;
+    const activityDetails = patch.activityDetails;
+    delete patch.activityDetails;
     if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
     if (patch.workflowStepKey != null) patch.workflowStepKey = patch.workflowStepKey || '';
     patch.updatedAt = new Date().toISOString();
@@ -594,7 +758,7 @@ const LocalDB = {
     if (task) {
       await db.projects.update(task.projectId, { updatedAt: patch.updatedAt });
       if (actorUserId) {
-        const detail = patch.status ? `status → ${patch.status}` : (task.title || '');
+        const detail = activityDetails || (patch.status ? `status -> ${patch.status}` : (task.title || ''));
         await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
       }
     }
@@ -708,6 +872,72 @@ const LocalDB = {
 
   async isEmpty() { return (await db.projects.count()) === 0; },
 
+  async getProjectAccessRequests({ projectId = null, requesterId = null, status = null } = {}) {
+    let rows = await db.projectAccessRequests.toArray();
+    if (projectId != null) rows = rows.filter(r => r.projectId === Number(projectId));
+    if (requesterId != null) rows = rows.filter(r => r.requesterId === Number(requesterId));
+    if (status != null) rows = rows.filter(r => r.status === status);
+    return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  },
+
+  async requestProjectAccess({ projectId, requesterId, message = '' }) {
+    const now = new Date().toISOString();
+    const existing = await db.projectAccessRequests
+      .where('[projectId+requesterId]')
+      .equals([Number(projectId), Number(requesterId)])
+      .first();
+    const row = {
+      projectId: Number(projectId),
+      requesterId: Number(requesterId),
+      message,
+      status: 'pending',
+      decidedBy: null,
+      decidedAt: null,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) {
+      await db.projectAccessRequests.update(existing.id, row);
+      return existing.id;
+    }
+    return db.projectAccessRequests.add(row);
+  },
+
+  async respondProjectAccess(requestId, { status, decidedBy }) {
+    const req = await db.projectAccessRequests.get(Number(requestId));
+    if (!req) throw new Error('Request not found');
+    const now = new Date().toISOString();
+    await db.projectAccessRequests.update(req.id, { status, decidedBy, decidedAt: now, updatedAt: now });
+    if (status === 'approved') {
+      const p = await db.projects.get(req.projectId);
+      const editorIds = new Set((p?.editorIds || []).map(Number));
+      editorIds.add(Number(req.requesterId));
+      await db.projects.update(req.projectId, { editorIds: [...editorIds], updatedAt: now });
+    }
+    return req;
+  },
+
+  async createBugReport({ userId, title, description, severity = 'normal', appVersion = '', githubIssueUrl = '', screenshots = [] }) {
+    const now = new Date().toISOString();
+    return db.bugReports.add({
+      userId: Number(userId),
+      title: title || '',
+      description: description || '',
+      severity: severity || 'normal',
+      appVersion: appVersion || '',
+      screenshots: Array.isArray(screenshots) ? screenshots : [],
+      status: githubIssueUrl ? 'sent' : 'open',
+      githubIssueUrl,
+      createdAt: now,
+      updatedAt: now
+    });
+  },
+
+  async getBugReports({ limit = 100 } = {}) {
+    const rows = await db.bugReports.toArray();
+    return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, limit);
+  },
+
   /* Migration */
   async migrateFromLocalStorage(adminId) {
     const raw = localStorage.getItem('simple-work-tracker-data');
@@ -736,7 +966,7 @@ const LocalDB = {
     const safeUsers = users.map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, email: u.email || '',
       role: u.role, department: u.department || '', createdAt: u.createdAt,
-      discordId: u.discordId || '', color: u.color || '',
+      discordId: u.discordId || '', color: u.color || '', bio: u.bio || '', avatarBase64: u.avatarBase64 || '',
       passwordHash: u.passwordHash, salt: u.salt
     }));
     const settings = await db.settings.toArray();
@@ -746,7 +976,7 @@ const LocalDB = {
       if (!a.blob) continue;
       const dataBase64 = await LocalDB.blobToBase64(a.blob);
       attachments.push({
-        id: a.id, projectId: a.projectId, uploadedBy: a.uploadedBy, fileName: a.fileName,
+        id: a.id, projectId: a.projectId, taskId: a.taskId || null, uploadedBy: a.uploadedBy, fileName: a.fileName,
         mimeType: a.mimeType, documentType: a.documentType || '', createdAt: a.createdAt, dataBase64
       });
     }
@@ -754,15 +984,21 @@ const LocalDB = {
     const notifications = await db.notifications.toArray();
     const webhooks = await db.webhooks.toArray();
     const sessions = await db.sessions.toArray();
-    return { version: 8, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions };
+    const projectAccessRequests = await db.projectAccessRequests.toArray();
+    const bugReports = await db.bugReports.toArray();
+    const classrooms = await db.classrooms.toArray();
+    const userClassrooms = await db.userClassrooms.toArray();
+    const directMessages = await db.directMessages.toArray();
+    return { version: 12, exportedAt: new Date().toISOString(), projects, tasks, milestones, updates, users: safeUsers, settings, attachments, activityLog, notifications, webhooks, sessions, projectAccessRequests, bugReports, classrooms, userClassrooms, directMessages };
   },
 
   async importAll(data) {
     const replaceSettings = Object.prototype.hasOwnProperty.call(data, 'settings');
-    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog, db.notifications, db.webhooks, db.sessions], async () => {
+    await db.transaction('rw', [db.projects, db.tasks, db.milestones, db.updates, db.settings, db.attachments, db.activityLog, db.notifications, db.webhooks, db.sessions, db.projectAccessRequests, db.bugReports, db.classrooms, db.userClassrooms, db.directMessages], async () => {
       await Promise.all([
         db.projects.clear(), db.tasks.clear(), db.milestones.clear(), db.updates.clear(),
-        db.attachments.clear(), db.activityLog.clear(), db.notifications.clear(), db.webhooks.clear(), db.sessions.clear()
+        db.attachments.clear(), db.activityLog.clear(), db.notifications.clear(), db.webhooks.clear(), db.sessions.clear(),
+        db.projectAccessRequests.clear(), db.bugReports.clear(), db.classrooms.clear(), db.userClassrooms.clear(), db.directMessages.clear()
       ]);
       if (data.projects?.length) await db.projects.bulkAdd(data.projects);
       if (data.tasks?.length) await db.tasks.bulkAdd(data.tasks);
@@ -778,6 +1014,7 @@ const LocalDB = {
           const blob = LocalDB.base64ToBlob(a.dataBase64, a.mimeType);
           await db.attachments.add({
             projectId: a.projectId,
+            taskId: a.taskId || null,
             uploadedBy: a.uploadedBy,
             fileName: a.fileName || 'file',
             mimeType: a.mimeType || 'application/octet-stream',
@@ -791,7 +1028,13 @@ const LocalDB = {
       if (data.notifications?.length) await db.notifications.bulkAdd(data.notifications);
       if (data.webhooks?.length) await db.webhooks.bulkAdd(data.webhooks);
       if (data.sessions?.length) await db.sessions.bulkAdd(data.sessions);
+      if (data.projectAccessRequests?.length) await db.projectAccessRequests.bulkAdd(data.projectAccessRequests);
+      if (data.bugReports?.length) await db.bugReports.bulkAdd(data.bugReports);
+      if (data.classrooms?.length) await db.classrooms.bulkAdd(data.classrooms);
+      if (data.userClassrooms?.length) await db.userClassrooms.bulkAdd(data.userClassrooms);
+      if (data.directMessages?.length) await db.directMessages.bulkAdd(data.directMessages);
     });
+    await LocalDB.ensureDefaultClassroom();
   },
 
   /* Sample Data */
