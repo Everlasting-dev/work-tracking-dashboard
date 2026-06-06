@@ -438,12 +438,15 @@ const SyncEngine = (() => {
     window.addEventListener('online',  _onOnline);
     window.addEventListener('offline', _onOffline);
 
-    // Non-blocking initial pull + flush
+    // Initial pull + flush. Callers may choose to await init() before deciding
+    // that a cloud-backed local cache is truly empty.
     if (navigator.onLine) {
-      pull().then(() => flush());
+      await pull();
+      await flush();
     }
 
     _publish();
+    return true;
   }
 
   return { init, pull, flush, getStatus };

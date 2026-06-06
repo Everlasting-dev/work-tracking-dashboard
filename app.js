@@ -54,7 +54,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.7'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.8'; }
 
 /* ──── Config ──── */
 
@@ -337,6 +337,22 @@ let _usersCacheAt = 0;
 let _webhooksCache = null;
 let _webhooksCacheAt = 0;
 let _workspaceFetchPromise = null;
+let initialCloudSyncChecked = false;
+
+function isCloudMode() {
+  return window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+}
+
+async function waitForInitialCloudUsers() {
+  if (initialCloudSyncChecked || !isCloudMode() || isOffline()) return;
+  initialCloudSyncChecked = true;
+  try {
+    await Promise.race([
+      window.WT_INITIAL_SYNC,
+      new Promise(resolve => setTimeout(resolve, 8000))
+    ]);
+  } catch (_) {}
+}
 
 function persistWorkspaceCache(data) {
   try {
@@ -375,7 +391,7 @@ function bustWorkspaceCache() {
     if (!isOffline()) localStorage.removeItem(SESSION_CACHE_KEY);
   } catch (_) {}
   // Also bust the Supabase shadow cache so tasks are re-fetched with fresh data
-  if (window.WT_STORAGE_MODE === 'supabase' && window.SupabaseDB?._shadowState) {
+  if (isCloudMode() && window.SupabaseDB?._shadowState) {
     window.SupabaseDB._shadowState.at = { projects: 0, tasks: 0, departments: 0, users: 0, updates: 0 };
     window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false, users: false, updates: false };
     try { window.SupabaseDB._persistShadowState(); } catch(_) {}
@@ -967,7 +983,12 @@ async function handleAuth(e) {
   const type = form.dataset.form;
 
   if (type === 'login') {
-    if (!(await DB.hasUsers())) {
+    let hasUsers = await DB.hasUsers();
+    if (!hasUsers) {
+      await waitForInitialCloudUsers();
+      hasUsers = await DB.hasUsers();
+    }
+    if (!hasUsers) {
       showAuthError('The cloud database has no accounts yet. Create the administrator account below.');
       renderAdminSetup();
       return;
@@ -1044,7 +1065,7 @@ async function showApp() {
   updateSidebarUser();
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
-  if (await DB.isEmpty() && window.WT_STORAGE_MODE !== 'supabase') await DB.createSampleData(s.userId);
+  if (await DB.isEmpty() && !isCloudMode()) await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
   startSidebarClock();
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
@@ -1060,7 +1081,7 @@ function updateOfflineSyncBanner() {
   const el = document.getElementById('offline-sync-banner');
   if (!el) return;
   const status = _getSyncStatus();
-  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const isCloud = isCloudMode();
   const cloudMode = isCloud && status?.enabled;
   const offline = isOffline();
   const pending = Number(status?.pending || 0);
@@ -1095,7 +1116,7 @@ function updateOfflineSyncBanner() {
 
 async function handleNetworkOnline() {
   updateOfflineSyncBanner();
-  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const isCloud = isCloudMode();
   if (!isCloud) return;
   showToast('Back online. Syncing saved changes...', 'info');
   try {
@@ -1118,7 +1139,7 @@ async function handleNetworkOnline() {
 
 function handleNetworkOffline() {
   updateOfflineSyncBanner();
-  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const isCloud = isCloudMode();
   if (isCloud) showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
 }
 
@@ -1217,7 +1238,7 @@ function renderSyncStatusIndicator() {
   if (!el) return;
   const status = _getSyncStatus();
   const offline = isOffline();
-  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const isCloud = isCloudMode();
   const visible = isCloud && status?.enabled && (offline || status.pending || status.failed || status.syncing);
   if (!visible) {
     el.textContent = '';
@@ -1269,11 +1290,11 @@ function updateSidebarUser() {
     ${avatarHtml}
     <div class="user-details">
       <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
-      <span class="user-role">@${esc(s.username)}${(window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid') ? ' · Cloud' : ''}</span>
+      <span class="user-role">@${esc(s.username)}${isCloudMode() ? ' · Cloud' : ''}</span>
     </div>
     <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
   el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
-  if (window.WT_STORAGE_MODE === 'supabase') {
+  if (isCloudMode()) {
     const roleEl = el.querySelector('.user-role');
     if (roleEl && !roleEl.querySelector('#sync-status-indicator')) {
       roleEl.insertAdjacentHTML('beforeend', '<button type="button" id="sync-status-indicator" class="sync-status-label hidden" aria-live="polite"></button>');
@@ -1302,7 +1323,7 @@ function renderUserMenu() {
   }
   menu.classList.remove('hidden');
   const syncStatus = _getSyncStatus();
-  const isCloud = window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  const isCloud = isCloudMode();
   const syncMenuItem = isCloud && syncStatus?.enabled && (syncStatus.pending || syncStatus.failed)
     ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="open-sync-diagnostics">${ICONS.alertTriangle} Cloud sync${syncStatus.failed ? ` (${syncStatus.failed} failed)` : ''}</button>`
     : '';
@@ -5027,6 +5048,10 @@ async function applyRoute() {
     let hasUsers = true;
     try {
       hasUsers = await DB.hasUsers();
+      if (!hasUsers) {
+        await waitForInitialCloudUsers();
+        hasUsers = await DB.hasUsers();
+      }
     } catch (err) {
       if (!savedSession && isOffline()) {
         document.getElementById('app').style.display = 'none';

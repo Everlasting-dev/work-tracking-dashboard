@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.0-beta.8
+
+- Fixed fresh desktop installs showing the Create administrator screen before the initial Supabase sync completed.
+- Cloud-enabled desktop mode now treats `hybrid` consistently as cloud mode for sync status, cache refresh, and sample-data guards.
+
 ## 2.1.0-beta.6
 
 - Added board view to the global Tasks page — projects appear as scrollable columns, read-only, clicking navigates to the project.
