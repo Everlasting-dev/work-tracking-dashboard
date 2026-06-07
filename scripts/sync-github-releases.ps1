@@ -68,6 +68,16 @@ function Ensure-GitTag {
     }
 }
 
+function Test-ReleaseExists {
+    param([string]$Tag)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $null = gh release view $Tag --repo $Repo 2>&1
+    $exists = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prev
+    return $exists
+}
+
 function Ensure-NotesOnlyRelease {
     param(
         [string]$Version,
@@ -81,8 +91,7 @@ Download the current stable build: **v$CurrentVersion** from Releases/latest.
     $isPrerelease = Test-IsPrerelease -Version $Version
     $prereleaseFlag = if ($isPrerelease) { '--prerelease' } else { '' }
 
-    $view = gh release view $Tag --repo $Repo 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-ReleaseExists -Tag $Tag)) {
         Write-Host "  Creating notes-only release $Tag"
         if ($prereleaseFlag) {
             gh release create $Tag --repo $Repo --title $title --notes $notes $prereleaseFlag --latest=false
@@ -136,8 +145,7 @@ function Invoke-PhaseC {
     $notes = Get-Changelog228Summary
     $title = "WorkTracker $CurrentVersion"
 
-    $view = gh release view $tag --repo $Repo 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-ReleaseExists -Tag $tag)) {
         Write-Host "Creating release $tag with assets"
         gh release create $tag --repo $Repo `
             $exe $blockmap $latestYml `
