@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0-beta.18
+
+Same build as 2.1.0-alpha.1, re-versioned as beta.18 so the in-app updater recognizes it as newer than 2.1.0-beta.17 (semver ranks `alpha` below `beta`, so alpha.1 was never offered to beta installs).
+
 ## 2.1.0-alpha.1
 
 - Fixed cloud sync diagnostics showing "issues need attention" while the details modal reported zero queued/failed jobs — the banner and modal now read the same SyncEngine queue, with retry/clear/copy wired to it.
