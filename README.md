@@ -47,7 +47,7 @@ Previous stable beta: [2.1.0-beta.20](https://github.com/Everlasting-dev/work-tr
 
 ## Install (end users)
 
-1. Download **WorkTracker-Setup-2.2.0-alpha.2.exe** from [Releases](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+1. Download **WorkTracker-Setup-2.2.0-alpha.2.exe** from the [2.2.0-alpha.2 release](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.2.0-alpha.2).
 2. Run the installer (Windows may show a SmartScreen prompt — the build is unsigned).
 3. Sign in. In cloud mode, use **Sync** on the auth screen or after login if you need to pull team data first.
 
