@@ -3128,6 +3128,26 @@ span.status-dot:hover::after { display: none; }
 .task-proj-group-name:hover { color: var(--accent); }
 .task-proj-group-name svg { opacity: 0.5; }
 .task-proj-group-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-proj-group-header-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.task-proj-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  font-size: 0.78rem; color: var(--text-muted);
+}
+.task-proj-meta--compact { font-size: 0.72rem; gap: 6px; }
+.task-proj-meta-owner {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--text-secondary); font: inherit; font-size: inherit;
+}
+.task-proj-meta-owner:hover { color: var(--accent); }
+.task-proj-meta-avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 700; flex-shrink: 0;
+}
+.task-proj-meta-classroom { font-size: inherit; color: var(--text-muted); }
+.task-proj-meta-classroom::before { content: 'Classroom · '; font-weight: 600; }
+.task-card-proj-meta { padding: 2px 0 6px 26px; }
 
 /* ── Task card note dot ── */
 .task-note-dot { color: var(--accent); font-size: 0.55rem; line-height: 1; }
@@ -3718,6 +3738,14 @@ span.status-dot:hover::after { display: none; }
 }
 
 /* Project visibility toggles */
+.visibility-panel-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 420px;
+  overflow-y: auto;
+}
 .visibility-row {
   display: flex;
   flex-direction: column;
@@ -3873,10 +3901,14 @@ span.status-dot:hover::after { display: none; }
   padding: 11px 14px;
   border-bottom: 1px solid var(--border-light);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   background: rgba(248,250,255,0.7);
+}
+.gtb-col-header-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px;
 }
 .gtb-proj-name {
   font-size: 0.83rem;
@@ -3887,7 +3919,6 @@ span.status-dot:hover::after { display: none; }
   align-items: center;
   gap: 5px;
   min-width: 0;
-  flex: 1;
   overflow-x: auto;
   white-space: nowrap;
   scrollbar-width: none;

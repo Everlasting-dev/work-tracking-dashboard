@@ -37,6 +37,31 @@ const ICONS = {
 
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 
+function enableSpellcheckOn(root = document.body) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll('input[type="text"], textarea').forEach(el => {
+    if (!el.disabled && el.type !== 'password') el.spellcheck = true;
+  });
+}
+
+let _spellcheckObserver = null;
+function setupSpellcheckObserver() {
+  if (_spellcheckObserver) return;
+  enableSpellcheckOn();
+  _spellcheckObserver = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        enableSpellcheckOn(node);
+      }
+    }
+  });
+  ['modal-overlay', 'content', 'chat-dock-root'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) _spellcheckObserver.observe(el, { childList: true, subtree: true });
+  });
+}
+
 function formatDateShort(iso) {
   if (!iso) return '';
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -55,7 +80,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.1.0-beta.18'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.2.0-alpha.2'; }
 
 /* ──── Config ──── */
 
@@ -122,13 +147,6 @@ const BUILTIN_TEMPLATE_STEPS = {
   'content-docs': ['Outline the structure', 'Write the first draft', 'Gather feedback', 'Revise & edit', 'Publish'],
 };
 const LOGISTICS_WORKFLOW_STEPS = [
-  {
-    key: 'shipping-list',
-    title: 'Attach approved shipping list',
-    helper: 'Upload the approved shipping list before the shipment can move.',
-    priority: 'high',
-    documentType: 'shipping-list'
-  },
   {
     key: 'packaging',
     title: 'Packaging complete',
@@ -867,16 +885,17 @@ async function ensureProjectWorkflowTasks(project, actorUserId) {
   return created > 0;
 }
 
+async function purgeRetiredLogisticsSteps(projectId, actorUserId) {
+  const tasks = await DB.getTasks({ projectId });
+  for (const t of tasks.filter(t => t.workflowStepKey === 'shipping-list')) {
+    await DB.deleteTask(t.id, actorUserId);
+  }
+}
+
 function validateLogisticsTaskTransition(task, nextStatus, project, tasks, attachments) {
   if (!isLogisticsWorkflow(project) || !task?.workflowStepKey || nextStatus === 'todo') return '';
   const byKey = logisticsStepTaskMap(tasks);
   const docs = logisticsAttachmentMap(attachments);
-  if (task.workflowStepKey === 'shipping-list' && nextStatus === 'done' && !docs['shipping-list']) {
-    return 'Upload the approved shipping list before completing this step.';
-  }
-  if (task.workflowStepKey === 'packaging' && byKey['shipping-list']?.status !== 'done') {
-    return 'Complete the shipping list approval step first.';
-  }
   if (task.workflowStepKey === 'courier-pickup' && byKey['packaging']?.status !== 'done') {
     return 'Complete packaging before marking courier pickup.';
   }
@@ -917,7 +936,6 @@ function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
   const rows = LOGISTICS_WORKFLOW_STEPS.map(step => {
     const task = taskByKey[step.key];
     const status = task?.status || 'todo';
-    const statusText = TSTATUS[status]?.l || 'To Do';
     const doc = step.documentType ? docs[step.documentType] : null;
     const docMeta = step.documentType
       ? `<span class="workflow-doc ${doc ? 'is-ready' : ''}">${doc ? `${documentTypeLabel(step.documentType)} uploaded` : `${documentTypeLabel(step.documentType)} missing`}</span>`
@@ -950,6 +968,14 @@ function renderLogisticsWorkflowCard(project, tasks, attachments, editable) {
     </div>
     <div class="workflow-step-list">${rows}</div>
   </section>`;
+}
+
+function resolveProjectIdFromAction(el) {
+  const id = Number(el?.dataset?.id || el?.dataset?.projectId);
+  if (Number.isFinite(id) && id > 0) return id;
+  if (state.currentProjectId) return Number(state.currentProjectId);
+  const m = (window.location.hash || '').match(/\/projects\/(\d+)/);
+  return m ? Number(m[1]) : null;
 }
 
 /* ──── State ──── */
@@ -2270,7 +2296,10 @@ async function renderProjectDetail(projectId) {
   // be missing if the project was created before workflow seeding or after a sync gap).
   if (isLogisticsWorkflow(project) && editable) {
     const uid = actorId();
-    if (uid) await ensureProjectWorkflowTasks(project, uid);
+    if (uid) {
+      await purgeRetiredLogisticsSteps(projectId, uid);
+      await ensureProjectWorkflowTasks(project, uid);
+    }
   }
   const [allProjectTasks, milestones, users, attList] = await Promise.all([
     DB.getTasks({ projectId }),
@@ -2597,7 +2626,25 @@ async function renderTab(tab, projectId, editable) {
   }
 }
 
-function renderGlobalTasksBoardHtml(tasks, pMap, uMap) {
+function renderTaskProjectMeta(proj, uMap, cMap, { compact = false } = {}) {
+  if (!proj) return '';
+  const owner = uMap[proj.ownerId];
+  const classroom = proj.classroomId != null ? cMap[Number(proj.classroomId)] : null;
+  const dept = projectDepartmentValue(proj, uMap);
+  const ownerHtml = owner
+    ? `<button type="button" class="task-proj-meta-owner" data-action="show-user-profile" data-user-id="${owner.id}">
+         <span class="task-proj-meta-avatar" ${userColorStyle(owner)}>${(owner.displayName || owner.username).charAt(0).toUpperCase()}</span>
+         <span>${esc(owner.displayName || owner.username)}</span>
+       </button>`
+    : `<span class="text-muted text-sm">Unknown owner</span>`;
+  const classroomHtml = classroom
+    ? `<span class="task-proj-meta-classroom">${esc(classroom.name)}</span>`
+    : '';
+  const deptHtml = dept ? departmentBadge(dept) : '';
+  return `<div class="task-proj-meta${compact ? ' task-proj-meta--compact' : ''}">${ownerHtml}${classroomHtml}${deptHtml}</div>`;
+}
+
+function renderGlobalTasksBoardHtml(tasks, pMap, uMap, cMap = {}) {
   const projectIds = [...new Set(tasks.map(t => t.projectId))].sort((a, b) =>
     (pMap[a]?.name || '').localeCompare(pMap[b]?.name || ''));
   if (!projectIds.length) return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
@@ -2611,7 +2658,10 @@ function renderGlobalTasksBoardHtml(tasks, pMap, uMap) {
       const ordered = [...pt.filter(t=>t.status==='doing'), ...pt.filter(t=>t.status==='todo'), ...pt.filter(t=>t.status==='done')];
       return `<div class="gtb-column">
         <div class="gtb-col-header">
-          <a href="#/projects/${pid}" class="gtb-proj-name">${ICONS.folder} ${esc(proj.name)}</a>
+          <div class="gtb-col-header-main">
+            <a href="#/projects/${pid}" class="gtb-proj-name">${ICONS.folder} ${esc(proj.name)}</a>
+            ${renderTaskProjectMeta(proj, uMap, cMap, { compact: true })}
+          </div>
           <div class="gtb-col-badges">
             ${doing ? `<span class="badge badge-blue">${doing}</span>` : ''}
             ${todo ? `<span class="badge badge-amber">${todo}</span>` : ''}
@@ -2635,7 +2685,11 @@ function renderGlobalTasksBoardHtml(tasks, pMap, uMap) {
 async function renderTasks() {
   const content = document.getElementById('content');
   const s = getSession();
-  const { projects: rawProjects, tasks: allTasks, users: allUsers } = await getWorkspaceData();
+  const [{ projects: rawProjects, tasks: allTasks, users: allUsers }, classrooms] = await Promise.all([
+    getWorkspaceData(),
+    DB.getClassrooms ? DB.getClassrooms().catch(() => []) : Promise.resolve([])
+  ]);
+  const cMap = Object.fromEntries((classrooms || []).map(c => [c.id, c]));
   const attachmentRows = await Promise.all((rawProjects || []).map(p => DB.getAttachments(p.id).catch(() => [])));
   const taskAttachmentMap = new Map();
   attachmentRows.flat().forEach(a => {
@@ -2680,6 +2734,7 @@ async function renderTasks() {
           </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
         </div>
+        ${showProject && proj ? `<div class="task-card-proj-meta">${renderTaskProjectMeta(proj, uMap, cMap, { compact: true })}</div>` : ''}
         <div class="task-card-bottom">
           ${editable
             ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}">${assigneeChipHtml(assignee)}</button>`
@@ -2712,7 +2767,10 @@ async function renderTasks() {
           <button class="tpg-toggle" data-action="toggle-task-group" data-pid="${pid}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
             <svg class="tpg-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
-          <a href="#/projects/${proj.id}" class="task-proj-group-name">${ICONS.folder} ${esc(proj.name)}</a>
+          <div class="task-proj-group-header-main">
+            <a href="#/projects/${proj.id}" class="task-proj-group-name">${ICONS.folder} ${esc(proj.name)}</a>
+            ${renderTaskProjectMeta(proj, uMap, cMap)}
+          </div>
           <div class="task-proj-group-badges">
             ${doingCnt ? `<span class="badge badge-blue">${doingCnt} in progress</span>` : ''}
             ${todoCnt ? `<span class="badge badge-amber">${todoCnt} to do</span>` : ''}
@@ -2739,7 +2797,7 @@ async function renderTasks() {
       Board
     </button>
   </div>`;
-  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(all, pMap, uMap) : body;
+  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(all, pMap, uMap, cMap) : body;
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${all.length} visible</span></div>
@@ -2932,7 +2990,7 @@ async function renderSettings() {
           <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Hide specific projects from individual members. Hidden projects are fully invisible unless the user is the owner or an editor.</p>
         </div>
       </div>
-      <div class="section-body" style="padding:16px 20px;display:flex;flex-direction:column;gap:18px">
+      <div class="section-body visibility-panel-body">
         ${(() => {
           const roomMap = Object.fromEntries((classrooms || []).map(c => [Number(c.id), c]));
           const projectVisibilityRow = (p) => {
@@ -3885,13 +3943,20 @@ function showModal(title, body) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal"><div class="modal-header"><h2>${title}</h2><button class="btn-icon" data-action="close-modal">${ICONS.x}</button></div><div class="modal-body">${body}</div></div>`;
   ov.classList.remove('hidden');
+  enableSpellcheckOn(ov);
   const inp = ov.querySelector('input:not([type=hidden]),textarea,select');
   if (inp) setTimeout(() => inp.focus(), 50);
 }
 function hideModal() { const ov = document.getElementById('modal-overlay'); ov.classList.add('hidden'); ov.innerHTML = ''; }
 
 async function showProjectModal(editId = null) {
-  const p = editId ? await DB.getProject(editId) : null;
+  const parsedId = Number(editId);
+  const editIntent = Number.isFinite(parsedId) && parsedId > 0;
+  const p = editIntent ? await DB.getProject(parsedId) : null;
+  if (editIntent && !p) {
+    showToast('Could not open project for editing — refresh and try again.', 'error');
+    return;
+  }
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
   const users = await DB.getUsers();
   const classrooms = DB.getClassrooms ? await DB.getClassrooms().catch(() => []) : [];
@@ -3911,7 +3976,7 @@ async function showProjectModal(editId = null) {
     </label>`).join('');
 
   showModal(isE ? 'Edit Project' : 'New Project', `
-    <form data-form="project" data-edit-id="${editId || ''}" class="project-form-v2">
+    <form data-form="project" data-edit-id="${isE ? parsedId : ''}" class="project-form-v2">
       <div class="pf-name-block">
         <input class="pf-name-input" name="name" type="text" value="${esc(p?.name || '')}" placeholder="Project name *" required autofocus>
         <textarea class="pf-desc-input" name="notes" placeholder="Short description (optional)…" rows="2">${esc(p?.notes || '')}</textarea>
@@ -5128,7 +5193,7 @@ async function handleFormSubmit(e) {
       _departmentCfgLoaded = false;
       await refreshDepartmentCfg();
       showToast('Department added', 'success');
-      await renderAdmin();
+      await renderSettings();
       return;
     } else if (type === 'edit-department') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5141,7 +5206,7 @@ async function handleFormSubmit(e) {
       _departmentCfgLoaded = false;
       await refreshDepartmentCfg();
       showToast('Department updated', 'success');
-      await renderAdmin();
+      await renderSettings();
       return;
     } else if (type === 'add-workflow-template') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5212,7 +5277,7 @@ const actions = {
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
-  'edit-project': (b) => showProjectModal(Number(b.dataset.id)),
+  'edit-project': (b) => showProjectModal(resolveProjectIdFromAction(b)),
   'delete-project': async (b) => {
     if (!canDeleteProject()) { showToast('Only admins can delete projects', 'error'); return; }
     const p = await DB.getProject(Number(b.dataset.id));
@@ -5691,7 +5756,7 @@ const actions = {
     _departmentCfgLoaded = false;
     await refreshDepartmentCfg();
     showToast('Department removed', 'success');
-    await renderAdmin();
+    await renderSettings();
   },
   'delete-classroom': async (b) => {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -6280,6 +6345,7 @@ async function init() {
     window.addEventListener('hashchange', closeSidebar);
     window.addEventListener('hashchange', () => { applyRoute(); });
 
+    setupSpellcheckObserver();
     await applyRoute();
   } catch (err) {
     console.error('Init failed:', err);

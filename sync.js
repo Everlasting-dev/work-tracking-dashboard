@@ -167,10 +167,15 @@ const SyncEngine = (() => {
       }
     }
 
+    let enqueueArgs = args;
+    if (_isCreate(method) && result != null && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+      enqueueArgs = [{ ...args[0], id: Number(result) }, ...args.slice(1)];
+    }
+
     const op = {
       id:        `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       method,
-      args:      _serialize(args),
+      args:      _serialize(enqueueArgs),
       localId:   _isCreate(method) ? (result ?? null) : null,
       status:    'pending',
       attempts:  0,
@@ -190,9 +195,23 @@ const SyncEngine = (() => {
     _flushTimer = setTimeout(flush, ms);
   }
 
+  // Updates/deletes must hit the remote path only — LocalDB already applied
+  // the change; the shadow cache often lacks rows that only exist in IndexedDB.
+  const REMOTE_ONLY_OPS = new Set([
+    'updateProject', 'updateTask', 'upsertDepartment', 'deleteDepartment',
+  ]);
+
+  function _opSortRank(method) {
+    if (_isCreate(method)) return 0;
+    if (/^update/.test(method) || method === 'upsertDepartment') return 1;
+    return 2;
+  }
+
   async function flush() {
     if (_syncing || !_client || !navigator.onLine) return;
-    const pending = _queue.filter(o => o.status === 'pending');
+    const pending = _queue
+      .filter(o => o.status === 'pending')
+      .sort((a, b) => _opSortRank(a.method) - _opSortRank(b.method));
     if (!pending.length) return;
 
     _syncing = true;
@@ -211,6 +230,10 @@ const SyncEngine = (() => {
         if (/does not exist|schema cache|could not find .* column|column .* of relation/i.test(msg)) {
           op.status = 'done';
           console.warn('[SyncEngine] skipping op for missing schema:', op.method, msg.slice(0, 160));
+        } else if (/^(Task|Project) not found$/i.test(msg.trim()) && /^update/.test(op.method)) {
+          // Stale queue entry — local row never reached the cloud or was already removed.
+          op.status = 'done';
+          console.warn('[SyncEngine] dropping stale update:', op.method, msg);
         } else {
           op.attempts++;
           op.error  = msg.slice(0, 200);
@@ -242,7 +265,8 @@ const SyncEngine = (() => {
       return;
     }
 
-    const result = await sb[op.method](...remapped);
+    const callArgs = REMOTE_ONLY_OPS.has(op.method) ? [...remapped, true] : remapped;
+    const result = await sb[op.method](...callArgs);
 
     // After a create: record local→remote ID mapping and patch LocalDB
     if (_isCreate(op.method) && op.localId != null && result != null) {
@@ -295,6 +319,36 @@ const SyncEngine = (() => {
     const valid = rows.filter(r => r?.id != null);
     if (!valid.length) return;
     await table.bulkPut(valid).catch(() => {});
+  }
+
+  async function _bulkPutByKey(table, rows, keyField = 'key') {
+    if (!table || !Array.isArray(rows) || !rows.length) return;
+    const valid = rows.filter(r => r?.[keyField] != null);
+    if (!valid.length) return;
+    await table.bulkPut(valid).catch(() => {});
+  }
+
+  async function _bulkPutBugReports(table, rows) {
+    if (!table || !Array.isArray(rows) || !rows.length) return;
+    const pendingIds = new Set(
+      _queue
+        .filter(o => o.method === 'updateBugReport' && (o.status === 'pending' || o.status === 'syncing'))
+        .map(o => Number(o.args?.[0]))
+        .filter(n => !Number.isNaN(n))
+    );
+    for (const remote of rows) {
+      if (remote?.id == null) continue;
+      const id = Number(remote.id);
+      if (pendingIds.has(id)) continue;
+      let local = null;
+      try { local = await table.get(id); } catch (_) {}
+      if (local) {
+        const localTs = local.updatedAt || local.createdAt || '';
+        const remoteTs = remote.updatedAt || remote.createdAt || '';
+        if (localTs > remoteTs) continue;
+      }
+      await table.put(remote).catch(() => {});
+    }
   }
 
   // Store only attachment metadata locally (no blobs). Never overwrite a row
@@ -415,13 +469,16 @@ const SyncEngine = (() => {
       if (users.status         === 'fulfilled') await _bulkPut(ldb.users,                 users.value);
       if (projects.status      === 'fulfilled') await _bulkPut(ldb.projects,              _normalizeProjects(projects.value));
       if (tasks.status         === 'fulfilled') await _bulkPut(ldb.tasks,                 _normalizeTasks(tasks.value));
-      if (departments.status   === 'fulfilled') await _bulkPut(ldb.departments,           departments.value);
+      if (departments.status   === 'fulfilled') {
+        await _bulkPutByKey(ldb.departments, departments.value, 'key');
+        if (window.LocalDB?.ensureDefaultDepartments) await window.LocalDB.ensureDefaultDepartments();
+      }
       if (classrooms.status    === 'fulfilled') await _bulkPut(ldb.classrooms,            classrooms.value);
       if (milestones.status    === 'fulfilled') await _bulkPut(ldb.milestones,            milestones.value);
       if (updates.status       === 'fulfilled') await _bulkPut(ldb.updates,               updates.value);
       if (notifications.status === 'fulfilled') await _bulkPut(ldb.notifications,         notifications.value);
       if (accessRequests.status=== 'fulfilled') await _bulkPut(ldb.projectAccessRequests, accessRequests.value);
-      if (bugReports.status    === 'fulfilled') await _bulkPut(ldb.bugReports,            bugReports.value);
+      if (bugReports.status    === 'fulfilled') await _bulkPutBugReports(ldb.bugReports,  bugReports.value);
       if (userClassrooms.status=== 'fulfilled') await _bulkPut(ldb.userClassrooms,        userClassrooms.value);
       if (attachments.status   === 'fulfilled') await _bulkPutAttachments(ldb.attachments, attachments.value);
       if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));

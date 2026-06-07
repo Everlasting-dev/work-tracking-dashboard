@@ -6,15 +6,17 @@ It is **local-first**: work offline on your machine, then sync to the cloud when
 
 ## Current Release
 
-**[2.1.0-beta.18](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.1.0-beta.18)** (latest)
+**[2.2.0-alpha.2](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.2.0-alpha.2)** (latest)
 
 | | |
 |---|---|
-| **Download** | [WorkTracker-Setup-2.1.0-beta.18.exe](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/download/v2.1.0-beta.18/WorkTracker-Setup-2.1.0-beta.18.exe) |
+| **Download** | [WorkTracker-Setup-2.2.0-alpha.2.exe](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/download/v2.2.0-alpha.2/WorkTracker-Setup-2.2.0-alpha.2.exe) |
 | **Check for updates** | User menu → **Help** → **Check for updates** (or the desktop menu) |
 | **Requires** | Windows 10/11, x64 |
 
-> **Versioning note:** Releases use semver. Stay on the `beta` line (`beta.18`, `beta.19`, …) so the in-app updater can offer patches to existing beta installs. An `alpha` tag ranks *below* `beta` and will not be offered automatically.
+> **Versioning note:** **2.2.0-alpha.2** is newer than the 2.1 beta line (`2.2` &gt; `2.1`). Within the same minor version, `alpha` still ranks below `beta` (e.g. `2.1.0-alpha.1` &lt; `2.1.0-beta.20`). The desktop updater has `allowPrerelease: true` so alpha builds can be offered when published to GitHub Releases.
+
+Previous stable beta: [2.1.0-beta.20](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.1.0-beta.20)
 
 ## Highlights
 
@@ -45,7 +47,7 @@ It is **local-first**: work offline on your machine, then sync to the cloud when
 
 ## Install (end users)
 
-1. Download **WorkTracker-Setup-2.1.0-beta.18.exe** from [Releases](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+1. Download **WorkTracker-Setup-2.2.0-alpha.2.exe** from [Releases](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 2. Run the installer (Windows may show a SmartScreen prompt — the build is unsigned).
 3. Sign in. In cloud mode, use **Sync** on the auth screen or after login if you need to pull team data first.
 

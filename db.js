@@ -474,9 +474,8 @@ const LocalDB = {
     return rows.slice(-limit);
   },
 
-  async getDepartments() {
-    const rows = await db.departments.orderBy('sortOrder').toArray();
-    return rows.length ? rows : [
+  _defaultDepartments() {
+    return [
       { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
       { key: 'logistics', label: 'Logistics', color: 'amber', sortOrder: 20 },
       { key: 'sales', label: 'Sales', color: 'green', sortOrder: 30 },
@@ -485,7 +484,20 @@ const LocalDB = {
     ];
   },
 
+  async ensureDefaultDepartments() {
+    const defaults = this._defaultDepartments();
+    const existing = new Set((await db.departments.toArray()).map(d => d.key));
+    const missing = defaults.filter(d => !existing.has(d.key));
+    if (missing.length) await db.departments.bulkPut(missing);
+  },
+
+  async getDepartments() {
+    await this.ensureDefaultDepartments();
+    return db.departments.orderBy('sortOrder').toArray();
+  },
+
   async upsertDepartment({ key, label, color, sortOrder = 0 }) {
+    await this.ensureDefaultDepartments();
     const slug = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (!slug) throw new Error('Department key is required');
     if (!label?.trim()) throw new Error('Department name is required');

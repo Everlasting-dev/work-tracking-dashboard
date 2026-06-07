@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.2.0-alpha.2
+
+### Fixed
+- **Departments:** Default departments (IT, Logistics, etc.) are now persisted locally instead of shown as placeholders; adding a custom department no longer makes the others disappear. Cloud sync correctly merges departments by `key`.
+- **Bug reports:** Admin status updates (e.g. marking fixed) no longer revert to open after reload — sync pull respects newer local changes and pending updates.
+- **Settings:** Project Visibility panel is scrollable (~4 projects visible) instead of stretching the whole page.
+
+## 2.2.0-alpha.1
+
+Alpha line for the 2.2 feature set (semver **2.2.0-alpha.1** is newer than **2.1.0-beta.*** — the in-app updater can offer it when prereleases are enabled).
+
+### Fixed
+- Cloud sync: background `updateTask` no longer fails with "Task not found" when advancing workflow steps.
+- Project **Edit** opens **Edit Project** with your data instead of an empty **New Project** dialog.
+- Logistics UI restored (workflow card + Tasks/Timeline tabs); removed retired **Attach approved shipping list** step; orphaned `shipping-list` tasks auto-deleted on project open.
+
+### Added
+- Native right-click spell-check suggestions in text fields (Electron desktop).
+- **Tasks** view shows project owner, classroom, and department on list groups, filtered cards, and board columns.
+
+## 2.1.0-beta.20
+
+### Fixed
+- Reverted beta.19 logistics split-panel layout — workflow card and Tasks/Timeline tabs are back in the main project view; documents panel is documents-only again (toggleable).
+- Removed retired **Attach approved shipping list** workflow step; **Packaging complete** is now the first step. Orphaned `shipping-list` tasks are auto-deleted when opening a logistics project.
+
+### Kept from beta.19
+- Cloud sync fix for `updateTask` "Task not found" errors.
+- Project **Edit** modal no longer opens as empty **New Project**.
+
+### Added
+- Native right-click spell-check suggestions in text fields (Electron desktop).
+- **Tasks** view shows project owner, classroom, and department on list groups, filtered cards, and board columns.
+
+## 2.1.0-beta.19
+
+### Fixed
+- Cloud sync: background `updateTask` no longer fails with "Task not found" when advancing logistics workflow steps; creates are queued with local IDs and sorted before updates.
+- Project **Edit** no longer opens an empty **New Project** dialog when the project ID cannot be resolved.
+
+### Changed
+- Logistics shipment projects: right panel split into **Documents** (top) and **Shipment workflow** (bottom); duplicate workflow card and Tasks/Timeline tabs removed from the main view. Click a step title to edit task notes/details.
+
 ## 2.1.0-beta.18
 
 Re-versioned from 2.1.0-alpha.1 so the in-app updater recognizes it as newer than 2.1.0-beta.17 (semver ranks `alpha` below `beta`).

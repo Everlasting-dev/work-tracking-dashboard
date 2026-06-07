@@ -1,5 +1,5 @@
 const path = require('path');
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell } = require('electron');
 
 let mainWindow;
 let checkingForUpdates = false;
@@ -44,7 +44,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      spellcheck: true
     }
   });
 
@@ -65,6 +66,30 @@ function createWindow() {
       event.preventDefault();
       shell.openExternal(url);
     }
+  });
+
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menu = new Menu();
+
+    if (params.misspelledWord && params.dictionarySuggestions?.length) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 6)) {
+        menu.append(new MenuItem({
+          label: suggestion,
+          click: () => mainWindow.webContents.replaceMisspelling(suggestion)
+        }));
+      }
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'cut', enabled: params.editFlags.canCut }));
+      menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }));
+      menu.append(new MenuItem({ role: 'paste', enabled: params.editFlags.canPaste }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'selectAll' }));
+    }
+
+    if (menu.items.length) menu.popup();
   });
 }
 
@@ -205,6 +230,7 @@ ipcMain.handle('updater:install', () => {
 
 app.whenReady().then(() => {
   app.setAppUserModelId('com.everlasting.worktracker');
+  session.defaultSession.setSpellCheckerLanguages(['en-US']);
   createWindow();
   createMenu();
   configureAutoUpdater();
