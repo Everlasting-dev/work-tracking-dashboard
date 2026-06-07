@@ -60,8 +60,10 @@ const SupabaseDB = {
 
   _trustedSessionUser(id = null) {
     try {
-      const raw = sessionStorage.getItem('wt-session') || localStorage.getItem('wt-trusted-session-v1');
-      const saved = raw ? JSON.parse(raw) : null;
+      let saved = null;
+      const rawSession = sessionStorage.getItem('wt-session');
+      if (rawSession) saved = JSON.parse(rawSession);
+      else if (typeof window.WT_getTrustedSession === 'function') saved = window.WT_getTrustedSession();
       if (!saved?.userId || (id != null && Number(saved.userId) !== Number(id))) return null;
       return {
         id: saved.userId,
@@ -531,13 +533,23 @@ const SupabaseDB = {
 
   _mapClassroom(r) {
     if (!r) return null;
+    const themePalette = r.theme_palette && typeof r.theme_palette === 'object' ? r.theme_palette : null;
     return {
       id: r.id,
       name: r.name || 'Classroom',
       description: r.description || '',
-      color: r.color || '#4f46e5',
+      color: r.color || themePalette?.primary || '#4f46e5',
+      themePalette,
       createdAt: r.created_at,
       updatedAt: r.updated_at
+    };
+  },
+
+  _mapPersonalNote(r) {
+    if (!r) return null;
+    return {
+      id: r.id, userId: r.user_id, content: r.content || '', done: !!r.done,
+      sortOrder: r.sort_order ?? 0, createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
 
@@ -867,9 +879,16 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapClassroom(r));
   },
 
-  async createClassroom({ name, description = '', color = '#4f46e5' }) {
+  async createClassroom({ name, description = '', color, themePalette } = {}) {
+    const row = { name: name || 'Classroom', description: description || '' };
+    if (themePalette) {
+      row.theme_palette = themePalette;
+      row.color = color || themePalette.primary || '#4f46e5';
+    } else if (color) {
+      row.color = color;
+    }
     const { data, error } = await this._sb().from('wt_classrooms')
-      .insert({ name: name || 'Classroom', description, color })
+      .insert(row)
       .select()
       .single();
     if (error) throw error;
@@ -882,6 +901,39 @@ const SupabaseDB = {
     if (changes.description != null) patch.description = changes.description || '';
     if (changes.color != null) patch.color = changes.color || '#4f46e5';
     const { error } = await this._sb().from('wt_classrooms').update(patch).eq('id', Number(id));
+    if (error) throw error;
+  },
+
+  async getPersonalNotes(userId) {
+    const { data, error } = await this._sb().from('wt_personal_notes')
+      .select('*').eq('user_id', Number(userId)).order('sort_order').order('created_at');
+    if (error) throw error;
+    return (data || []).map(r => this._mapPersonalNote(r));
+  },
+
+  async createPersonalNote({ userId, content, done = false, sortOrder = 0 }) {
+    const { data, error } = await this._sb().from('wt_personal_notes')
+      .insert({
+        user_id: Number(userId), content: String(content || '').slice(0, 4000),
+        done: !!done, sort_order: Number(sortOrder) || 0
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data?.id;
+  },
+
+  async updatePersonalNote(id, patch = {}) {
+    const payload = { updated_at: new Date().toISOString() };
+    if (patch.content !== undefined) payload.content = String(patch.content || '').slice(0, 4000);
+    if (patch.done !== undefined) payload.done = !!patch.done;
+    if (patch.sortOrder !== undefined) payload.sort_order = Number(patch.sortOrder);
+    const { error } = await this._sb().from('wt_personal_notes').update(payload).eq('id', Number(id));
+    if (error) throw error;
+  },
+
+  async deletePersonalNote(id) {
+    const { error } = await this._sb().from('wt_personal_notes').delete().eq('id', Number(id));
     if (error) throw error;
   },
 

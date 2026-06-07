@@ -128,6 +128,7 @@ const SyncEngine = (() => {
     'touchLastSeen','recordLoginSession',
     'createWorkflowTemplate','updateWorkflowTemplate','deleteWorkflowTemplate',
     'addFavorite','removeFavorite',
+    'createPersonalNote','updatePersonalNote','deletePersonalNote',
   ];
 
   function _wrapLocalDB() {
@@ -265,6 +266,13 @@ const SyncEngine = (() => {
       return;
     }
 
+    if (op.method === 'createClassroom' && remapped[0]?.id) {
+      try {
+        const row = await window.LocalDB?.db?.classrooms?.get(Number(remapped[0].id));
+        if (row?.themePalette) remapped[0] = { ...remapped[0], themePalette: row.themePalette, color: row.color };
+      } catch (_) {}
+    }
+
     const callArgs = REMOTE_ONLY_OPS.has(op.method) ? [...remapped, true] : remapped;
     const result = await sb[op.method](...callArgs);
 
@@ -287,6 +295,7 @@ const SyncEngine = (() => {
       createAttachment: 'attachments', createNotification: 'notifications',
       createBugReport: 'bugReports', sendDirectMessage: 'directMessages',
       createWorkflowTemplate: 'workflowTemplates', addFavorite: 'userFavorites',
+      createPersonalNote: 'personalNotes',
     };
     const table = TABLE_MAP[method];
     if (!table) return;
@@ -326,6 +335,29 @@ const SyncEngine = (() => {
     const valid = rows.filter(r => r?.[keyField] != null);
     if (!valid.length) return;
     await table.bulkPut(valid).catch(() => {});
+  }
+
+  async function _bulkPutPersonalNotes(table, rows) {
+    if (!table || !Array.isArray(rows) || !rows.length) return;
+    const pendingIds = new Set(
+      _queue
+        .filter(o => (o.method === 'updatePersonalNote' || o.method === 'createPersonalNote') && (o.status === 'pending' || o.status === 'syncing'))
+        .map(o => Number(o.args?.[0]?.id || o.localId))
+        .filter(n => !Number.isNaN(n) && n > 0)
+    );
+    for (const remote of rows) {
+      if (remote?.id == null) continue;
+      const id = Number(remote.id);
+      if (pendingIds.has(id)) continue;
+      let local = null;
+      try { local = await table.get(id); } catch (_) {}
+      if (local) {
+        const localTs = local.updatedAt || local.createdAt || '';
+        const remoteTs = remote.updatedAt || remote.createdAt || '';
+        if (localTs > remoteTs) continue;
+      }
+      await table.put(remote).catch(() => {});
+    }
   }
 
   async function _bulkPutBugReports(table, rows) {
@@ -418,7 +450,7 @@ const SyncEngine = (() => {
       const [
         users, projects, tasks, departments, classrooms,
         milestones, updates, notifications, accessRequests, bugReports, userClassrooms,
-        attachments, workflowTemplates, favorites
+        attachments, workflowTemplates, favorites, personalNotes
       ] = await Promise.allSettled([
         sb.getUsers(),
         sb.getProjects(),
@@ -461,6 +493,11 @@ const SyncEngine = (() => {
           if (error) throw error;
           return (data || []).map(r => ({ id: r.id, userId: r.user_id, favoriteUserId: r.favorite_user_id, createdAt: r.created_at }));
         })(),
+        (async () => {
+          const session = _getSession();
+          if (!session?.userId || !sb.getPersonalNotes) return [];
+          return sb.getPersonalNotes(session.userId);
+        })(),
       ]);
 
       const ldb = window.LocalDB?.db;
@@ -483,6 +520,7 @@ const SyncEngine = (() => {
       if (attachments.status   === 'fulfilled') await _bulkPutAttachments(ldb.attachments, attachments.value);
       if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));
       if (favorites.status     === 'fulfilled' && ldb.userFavorites) await _bulkPut(ldb.userFavorites, favorites.value);
+      if (personalNotes.status === 'fulfilled' && ldb.personalNotes) await _bulkPutPersonalNotes(ldb.personalNotes, personalNotes.value);
 
       const criticalFailures = [
         ['projects', projects],
@@ -572,7 +610,8 @@ const SyncEngine = (() => {
 
   function _getSession() {
     try {
-      const raw = sessionStorage.getItem('wt-session') || localStorage.getItem('wt-trusted-session-v1');
+      if (typeof window.WT_getActiveSession === 'function') return window.WT_getActiveSession();
+      const raw = sessionStorage.getItem('wt-session');
       return raw ? JSON.parse(raw) : null;
     } catch (_) { return null; }
   }

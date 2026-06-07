@@ -80,7 +80,140 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.2.0-alpha.2'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.2.8'; }
+
+/* ──── UI v3: Splash ──── */
+let _splashShownAt = Date.now();
+function setSplashStatus(msg) {
+  const el = document.getElementById('splash-status');
+  if (el && msg) el.textContent = msg;
+}
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el || el.classList.contains('fade-out')) return;
+  const minMs = 3200;
+  const wait = Math.max(0, minMs - (Date.now() - _splashShownAt));
+  setTimeout(() => {
+    el.classList.add('fade-out');
+    setTimeout(() => {
+      el.remove();
+      document.documentElement.classList.remove('splash-lock');
+    }, 500);
+  }, wait);
+}
+const _splashDelay = (ms) => new Promise(r => setTimeout(r, ms));
+window.setSplashStatus = setSplashStatus;
+window.hideSplash = hideSplash;
+
+/* ──── UI v3: Classroom themes ──── */
+function _seededRng(seed) {
+  let s = Number(seed) || 1;
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+}
+function hslToHex(h, s, l) {
+  const a = s * Math.min(l, 1 - l);
+  const f = n => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * c).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+function generateClassroomPalette(seed) {
+  const r = _seededRng(seed);
+  const hue = Math.floor(r() * 360);
+  const primary = hslToHex(hue, 0.55, 0.42);
+  const tint = hslToHex(hue, 0.35, 0.92);
+  const muted = hslToHex(hue, 0.2, 0.82);
+  return { primary, tint, muted };
+}
+function classroomPaletteOf(room) {
+  if (room?.themePalette?.primary) return room.themePalette;
+  const seed = Number(room?.id) || String(room?.name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return generateClassroomPalette(seed);
+}
+async function applyClassroomTheme(classroomId) {
+  const main = document.getElementById('main-content');
+  if (!main) return;
+  const id = classroomId != null && classroomId !== 'all' ? Number(classroomId) : null;
+  if (!id) {
+    main.style.removeProperty('--classroom-tint');
+    main.style.removeProperty('--classroom-accent');
+    main.style.removeProperty('--classroom-muted');
+    main.removeAttribute('data-classroom-id');
+    return;
+  }
+  const room = (await DB.getClassrooms()).find(c => Number(c.id) === id);
+  const pal = classroomPaletteOf(room || { id });
+  main.style.setProperty('--classroom-tint', pal.tint);
+  main.style.setProperty('--classroom-accent', pal.primary);
+  main.style.setProperty('--classroom-muted', pal.muted);
+  main.dataset.classroomId = String(id);
+}
+
+/* ──── UI v3: Personal notes panel ──── */
+let _notesPanelOpen = false;
+let _notesSaveTimers = {};
+function formatNoteTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch (_) { return ''; }
+}
+
+async function renderNotesPanel(focusNoteId = null) {
+  const list = document.getElementById('notes-panel-list');
+  const searchEl = document.getElementById('notes-panel-search');
+  if (searchEl && searchEl.value !== (state.notesSearch || '')) searchEl.value = state.notesSearch || '';
+  if (!list || !DB.getPersonalNotes) return;
+  const uid = getSession()?.userId;
+  if (!uid) { list.innerHTML = '<p class="notes-panel-empty">Sign in to use notes.</p>'; return; }
+  const q = (state.notesSearch || '').trim().toLowerCase();
+  let notes = await DB.getPersonalNotes(uid);
+  if (q) notes = notes.filter(n => (n.content || '').toLowerCase().includes(q));
+  if (!notes.length) {
+    list.innerHTML = `<p class="notes-panel-empty">${q ? 'No notes match your search.' : 'Click + to add your first note.'}</p>`;
+    return;
+  }
+  list.innerHTML = notes.map((n, i) => `
+    <div class="notes-sticky-card" data-note-id="${n.id}" style="animation-delay:${Math.min(i * 40, 200)}ms">
+      <div class="notes-sticky-top">
+        <span class="notes-sticky-time">${esc(formatNoteTime(n.updatedAt || n.createdAt))}</span>
+        <button type="button" class="notes-sticky-delete" data-action="delete-personal-note" data-id="${n.id}" title="Delete note" aria-label="Delete note">×</button>
+      </div>
+      <textarea class="notes-sticky-text" rows="3" data-note-edit="${n.id}" placeholder="Write a note…">${esc(n.content || '')}</textarea>
+    </div>`).join('');
+  if (focusNoteId) {
+    requestAnimationFrame(() => {
+      const ta = list.querySelector(`[data-note-edit="${focusNoteId}"]`);
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    });
+  }
+}
+function openNotesPanel() {
+  const panel = document.getElementById('notes-panel');
+  const backdrop = document.getElementById('notes-backdrop');
+  if (!panel) return;
+  _notesPanelOpen = true;
+  document.body.classList.add('notes-panel-open');
+  panel.classList.remove('hidden');
+  backdrop?.classList.remove('hidden');
+  renderNotesPanel();
+  renderChatDock().catch(() => {});
+}
+function closeNotesPanel() {
+  _notesPanelOpen = false;
+  document.body.classList.remove('notes-panel-open');
+  document.getElementById('notes-panel')?.classList.add('hidden');
+  document.getElementById('notes-backdrop')?.classList.add('hidden');
+  renderChatDock().catch(() => {});
+}
+function scheduleNoteSave(id, content) {
+  clearTimeout(_notesSaveTimers[id]);
+  _notesSaveTimers[id] = setTimeout(async () => {
+    if (DB.updatePersonalNote) await DB.updatePersonalNote(Number(id), { content });
+  }, 400);
+}
 
 /* ──── Config ──── */
 
@@ -295,6 +428,8 @@ function emptyState(opts) {
 
 const TRUSTED_SESSION_KEY = 'wt-trusted-session-v1';
 const TRUSTED_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const LOGOUT_FLAG_KEY = 'wt-logged-out-v1';
+const LAST_USER_KEY = 'wt-last-user-id';
 
 function sessionPayload(u) {
   return {
@@ -302,11 +437,16 @@ function sessionPayload(u) {
     username: u.username,
     displayName: u.displayName,
     role: u.role,
+    email: u.email || '',
     department: u.department || '',
     color: u.color || '',
     bio: u.bio || '',
     avatarBase64: u.avatarBase64 || ''
   };
+}
+function getActiveSession() {
+  if (localStorage.getItem(LOGOUT_FLAG_KEY)) return null;
+  return getSession() || restoreTrustedSession();
 }
 function getSession() { try { return JSON.parse(sessionStorage.getItem('wt-session')); } catch { return null; } }
 function getTrustedSession() {
@@ -337,6 +477,8 @@ function clearSession(opts = {}) {
   sessionStorage.removeItem('wt-session');
   if (opts.trusted) localStorage.removeItem(TRUSTED_SESSION_KEY);
 }
+window.WT_getTrustedSession = getTrustedSession;
+window.WT_getActiveSession = getActiveSession;
 function isOffline() { return typeof navigator !== 'undefined' && navigator.onLine === false; }
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) {
@@ -487,6 +629,33 @@ function loadPersistedWorkspaceCache() {
   } catch {
     return null;
   }
+}
+
+function resetClientState() {
+  bustWorkspaceCache();
+  stopChatDockPolling();
+  stopPresenceHeartbeat();
+  state.chatDockOpen = false;
+  state.chatChannel = null;
+  state.chatDockView = 'list';
+  state.chatDockSearch = '';
+  state.chatUsersMap = {};
+  state.notesSearch = '';
+  state.lastMainRoute = '/projects';
+  state.rankingPanelOpen = true;
+  state._detailCache = null;
+  state.userMenuOpen = false;
+  state.notifOpen = false;
+  state.helpMenuOpen = false;
+  _notesPanelOpen = false;
+  closeNotesPanel();
+  closeNotifPanel();
+  closeUserMenu();
+  const dockRoot = document.getElementById('chat-dock-root');
+  if (dockRoot) { dockRoot.innerHTML = ''; dockRoot.style.display = 'none'; }
+  _chatDockData = null;
+  stopChatUnreadPolling();
+  if (state.chatUnreadChannels) state.chatUnreadChannels.clear();
 }
 
 function bustWorkspaceCache() {
@@ -726,6 +895,27 @@ async function notifyUser({ userId, type, message, projectId = null, entityType 
   refreshNotificationBadge().catch(() => {});
 }
 
+async function notifyNewCoEditors(project, prevEditorIds, nextEditorIds, actorUserId) {
+  if (!project) return;
+  const prev = new Set((prevEditorIds || []).map(Number));
+  const added = (nextEditorIds || []).map(Number)
+    .filter(id => id && !prev.has(id) && id !== Number(actorUserId) && id !== Number(project.ownerId));
+  if (!added.length) return;
+  const actor = await DB.getUser(actorUserId);
+  const name = actor?.displayName || actor?.username || 'Someone';
+  for (const userId of added) {
+    await notifyUser({
+      userId,
+      type: 'update',
+      message: `${name} added you as co-editor on "${project.name}".`,
+      projectId: project.id,
+      entityType: 'project',
+      entityId: project.id,
+      actorUserId
+    }).catch(() => {});
+  }
+}
+
 /* ──── Last-seen / device capture ──── */
 
 async function sha256Text(text) {
@@ -816,9 +1006,9 @@ function classroomFilterHtml(classrooms = [], allowedIds = null) {
   const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
   const visible = allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms;
   if (!visible.length) return '';
-  return `<div class="classroom-switcher">
-    <span class="text-muted" style="font-size:0.75rem">Classroom:</span>
-    <select class="projects-filter-select classroom-select" data-project-filter-input="classroom">
+  return `<div class="classroom-switcher classroom-switcher--lg">
+    <span class="classroom-switcher-label">Classroom:</span>
+    <select class="projects-filter-select classroom-select classroom-select--lg" data-project-filter-input="classroom">
       <option value="all" ${state.classroomFilter === 'all' ? 'selected' : ''}>All classrooms</option>
       ${visible.map(c => `<option value="${c.id}" ${String(state.classroomFilter) === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
     </select>
@@ -993,12 +1183,16 @@ const state = {
   currentProjectId: null,
   workspaceScope: 'everyone',
   docPanelOpen: true,
+  rankingPanelOpen: true,
+  lastMainRoute: '/projects',
   userMenuOpen: false,
   notifOpen: false,
   chatChannel: null,
   chatDockOpen: false,
   chatDockView: 'list',
   chatDockSearch: '',
+  chatUnreadChannels: null,
+  notesSearch: '',
   reportMonth: formatMonthInput(),
   _libraryBlobUrls: [],
   _previewUrl: null
@@ -1127,6 +1321,11 @@ async function handleAuth(e) {
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
+    localStorage.removeItem(LOGOUT_FLAG_KEY);
+    const prevUserId = localStorage.getItem(LAST_USER_KEY);
+    const newUserId = String(user.id);
+    if (prevUserId && prevUserId !== newUserId) resetClientState();
+    localStorage.setItem(LAST_USER_KEY, newUserId);
     setSession(user, { remember: fd.get('rememberDevice') === 'on' });
     // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
     captureLastSeen(user.id).then(async () => {
@@ -1199,6 +1398,7 @@ async function showApp() {
   startPresenceHeartbeat();
   const dockRoot = document.getElementById('chat-dock-root');
   if (dockRoot) { dockRoot.style.display = ''; renderChatDock(); }
+  startChatUnreadPolling();
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
   else DB.flushPendingSync?.().catch(() => {});
   updateOfflineSyncBanner();
@@ -1274,26 +1474,67 @@ function handleNetworkOffline() {
   if (isCloud) showToast('You are offline. Changes are saved locally until internet returns.', 'warning');
 }
 
+function initClockTicks() {
+  const g = document.querySelector('.clock-ticks');
+  if (!g || g.childElementCount) return;
+  for (let i = 0; i < 12; i++) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    const a = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const r1 = 46, r2 = i % 3 === 0 ? 40 : 43;
+    line.setAttribute('x1', String(60 + Math.cos(a) * r1));
+    line.setAttribute('y1', String(60 + Math.sin(a) * r1));
+    line.setAttribute('x2', String(60 + Math.cos(a) * r2));
+    line.setAttribute('y2', String(60 + Math.sin(a) * r2));
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-width', i % 3 === 0 ? '2' : '1');
+    line.setAttribute('opacity', i % 3 === 0 ? '0.9' : '0.45');
+    g.appendChild(line);
+  }
+}
 function startSidebarClock() {
+  initClockTicks();
   const timeEl = document.getElementById('sc-time');
-  const msEl   = document.getElementById('sc-ms');
   const dateEl = document.getElementById('sc-date');
+  const hourHand = document.querySelector('.clock-hour');
+  const minHand = document.querySelector('.clock-minute');
+  const secHand = document.querySelector('.clock-second');
+  const yearFill = document.getElementById('sc-year-fill');
+  const monthFill = document.getElementById('sc-month-fill');
+  const weekFill = document.getElementById('sc-week-fill');
+  const yearPct = document.getElementById('sc-year-pct');
+  const monthPct = document.getElementById('sc-month-pct');
+  const weekPct = document.getElementById('sc-week-pct');
   if (!timeEl) return;
-  const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  let lastSec = -1;
+  function weekProgress(now) {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - start.getDay());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100));
+  }
   function tick() {
     const now = new Date();
-    const ms2 = String(Math.floor(now.getMilliseconds() / 10)).padStart(2, '0');
-    msEl.textContent = `.${ms2}`;
-    const s = now.getSeconds();
-    if (s !== lastSec) {
-      lastSec = s;
-      const h = String(now.getHours()).padStart(2, '0');
-      const m = String(now.getMinutes()).padStart(2, '0');
-      timeEl.textContent = `${h}:${m}:${String(s).padStart(2, '0')}`;
-      dateEl.textContent = `${DAYS[now.getDay()]} ${String(now.getDate()).padStart(2, '0')} ${MONTHS[now.getMonth()]}`;
-    }
+    const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+    timeEl.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    const DAYS_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    dateEl.textContent = `${DAYS_FULL[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
+    if (hourHand) hourHand.style.transform = `rotate(${(h % 12) * 30 + m * 0.5}deg)`;
+    if (minHand) minHand.style.transform = `rotate(${m * 6 + s * 0.1}deg)`;
+    if (secHand) secHand.style.transform = `rotate(${s * 6}deg)`;
+    const yStart = new Date(now.getFullYear(), 0, 1);
+    const yEnd = new Date(now.getFullYear() + 1, 0, 1);
+    const yP = ((now - yStart) / (yEnd - yStart)) * 100;
+    const mDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const mP = ((now.getDate() - 1) / mDays) * 100 + (h * 3600 + m * 60 + s) / (mDays * 86400) * 100;
+    const wP = weekProgress(now);
+    if (yearFill) yearFill.style.width = `${yP.toFixed(1)}%`;
+    if (monthFill) monthFill.style.width = `${mP.toFixed(1)}%`;
+    if (weekFill) weekFill.style.width = `${wP.toFixed(1)}%`;
+    if (yearPct) yearPct.textContent = `${Math.round(yP)}%`;
+    if (monthPct) monthPct.textContent = `${Math.round(mP)}%`;
+    if (weekPct) weekPct.textContent = `${Math.round(wP)}%`;
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
@@ -1422,32 +1663,47 @@ function updateSidebarUser() {
   const display = s.displayName || s.username;
   const init = display.charAt(0).toUpperCase();
   const isAdm = s.role === 'admin';
-  const el = document.getElementById('sidebar-user');
   const avatarHtml = s.avatarBase64
-    ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img" alt="${esc(display)}">`
-    : `<div class="user-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}${isAdm ? `<span class="admin-crown-badge" title="Admin">${ICONS.crown}</span>` : ''}</div>`;
-  el.innerHTML = `
-    ${avatarHtml}
-    <div class="user-details">
-      <span class="user-name">${esc(display)}${isAdm ? ` <span class="admin-tag" title="Administrator">${ICONS.crown} Admin</span>` : ''}</span>
-      <span class="user-role">@${esc(s.username)}${isCloudMode() ? ' · Cloud' : ''}</span>
-    </div>
-    <span class="user-menu-chevron">${ICONS.chevronDown}</span>`;
-  el.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
-  if (isCloudMode()) {
-    const roleEl = el.querySelector('.user-role');
-    if (roleEl && !roleEl.querySelector('#sync-status-indicator')) {
-      roleEl.insertAdjacentHTML('beforeend', '<button type="button" id="sync-status-indicator" class="sync-status-label hidden" aria-live="polite"></button>');
-    }
+    ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img sidebar-footer-avatar-img" alt="${esc(display)}">`
+    : `<div class="user-avatar sidebar-footer-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}</div>`;
+  const footerUser = document.getElementById('sidebar-footer-user');
+  if (footerUser) {
+    footerUser.innerHTML = `
+      ${avatarHtml}
+      <div class="sidebar-footer-user-meta">
+        <span class="user-name">${esc(display)}</span>
+        <span class="user-role">${isAdm ? 'Admin' : 'Member'}<span id="sync-status-indicator" class="sync-status-label hidden"></span></span>
+      </div>
+      <svg class="user-menu-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>`;
+    footerUser.title = display;
+    footerUser.setAttribute('aria-expanded', state.userMenuOpen ? 'true' : 'false');
+    footerUser.classList.remove('is-member-only');
   }
-  const adminNav    = document.getElementById('nav-admin');
-  const settingsNav = document.getElementById('nav-settings');
-  const dashNav     = document.getElementById('nav-dashboard');
-  const reportNav   = document.getElementById('nav-reports');
-  if (adminNav)    adminNav.style.display    = s.role === 'admin' ? '' : 'none';
-  if (settingsNav) settingsNav.style.display = s.role === 'admin' ? '' : 'none';
-  if (dashNav)     dashNav.style.display     = s.role === 'admin' ? '' : 'none';
-  if (reportNav)   reportNav.style.display   = s.role === 'admin' ? '' : 'none';
+  const footerActions = document.getElementById('sidebar-footer-actions');
+  if (footerActions) {
+    const bellBtn = `
+        <button type="button" class="sidebar-action-btn sidebar-notif-btn" data-action="toggle-route-notifications" data-nav="notifications" title="Notifications" aria-label="Notifications">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span class="nav-item-badge hidden" id="notif-badge">0</span>
+        </button>`;
+    const adminBtns = isAdm ? `
+        <button type="button" class="sidebar-action-btn" data-action="toggle-route-settings" data-nav="settings" title="Settings" aria-label="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button type="button" class="sidebar-action-btn" data-action="toggle-route-admin" data-nav="admin" title="Admin" aria-label="Admin">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+        </button>` : '';
+    footerActions.innerHTML = bellBtn + adminBtns;
+    footerActions.style.display = '';
+  }
+  const adminNav  = document.getElementById('nav-admin');
+  const dashNav   = document.getElementById('nav-dashboard');
+  const reportNav = document.getElementById('nav-reports');
+  if (adminNav)  adminNav.style.display  = isAdm ? '' : 'none';
+  if (dashNav)   dashNav.style.display   = isAdm ? '' : 'none';
+  if (reportNav) reportNav.style.display = isAdm ? '' : 'none';
+  const hash = window.location.hash.slice(1) || '/projects';
+  updateNav(hash);
   renderSyncStatusIndicator();
   renderUserMenu();
 }
@@ -1477,6 +1733,7 @@ function renderUserMenu() {
       <svg class="user-menu-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
     </button>
     ${helpOpen ? `<div class="user-menu-subgroup">
+      <div class="user-menu-version">v${esc(getAppVersion())} · Black &amp; White Edition</div>
       <button type="button" class="user-menu-item user-menu-subitem" data-action="user-show-howto">${ICONS.sparkles} How-to guide</button>
       <button type="button" class="user-menu-item user-menu-subitem" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
       <button type="button" class="user-menu-item user-menu-subitem" data-action="show-about">${ICONS.target} About WorkTracker</button>
@@ -1484,7 +1741,8 @@ function renderUserMenu() {
     </div>` : ''}`;
   menu.innerHTML = `
     ${syncMenuItem}
-    <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} View Profile</button>
+    <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
+    <button type="button" class="user-menu-item" data-action="app-refresh">${ICONS.refresh} Refresh app</button>
     ${helpSection}
     ${adminItems}
     <hr class="user-menu-divider">
@@ -1594,6 +1852,11 @@ async function renderProjects() {
       <div class="projects-page-title">
         <h1>Projects</h1>
         <span class="projects-page-count">${allRaw.length} total</span>
+        ${state.classroomFilter && state.classroomFilter !== 'all' ? (() => {
+          const room = classrooms.find(c => String(c.id) === String(state.classroomFilter));
+          const pal = classroomPaletteOf(room || { id: state.classroomFilter });
+          return room ? `<span class="classroom-theme-chip" style="--classroom-accent:${esc(pal.primary)};--classroom-tint:${esc(pal.tint)}">${esc(room.name)}</span>` : '';
+        })() : ''}
       </div>
       <div class="projects-page-actions">
         <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} Task</button>
@@ -2496,16 +2759,15 @@ async function renderTab(tab, projectId, editable) {
   const el = document.getElementById('tab-content'); if (!el) return;
 
   if (tab === 'tasks') {
-    const s = getSession();
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
-    const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
+    const tasks = allTasks;
     const users = cache?.users ?? await getUsersCached();
     const attachments = cache?.attList ?? await DB.getAttachments(projectId);
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
 
     el.innerHTML = `<div class="task-view-header">
-      <span class="text-muted text-sm tab-hint">${editable ? 'Drag cards to change status or reorder. Click a card to open details.' : 'Tasks assigned to you. Click a card to open details.'}</span>
+      <span class="text-muted text-sm tab-hint">${editable ? 'Drag cards to change status or reorder. Click a card to open details.' : 'View project tasks. Click a card for details.'}</span>
       ${editable ? `<div class="task-view-actions">
         ${tasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">Save as template</button>` : ''}
         <button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>
@@ -2521,8 +2783,7 @@ async function renderTab(tab, projectId, editable) {
   } else if (tab === 'timeline') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
-    const s = getSession();
-    const tasks = editable ? allTasks : allTasks.filter(t => t.assigneeId === s.userId);
+    const tasks = allTasks;
     const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `<div style="padding-top:4px">${renderTaskChainTimelineHtml(tasks, uMap)}</div>`;
@@ -2644,10 +2905,13 @@ function renderTaskProjectMeta(proj, uMap, cMap, { compact = false } = {}) {
   return `<div class="task-proj-meta${compact ? ' task-proj-meta--compact' : ''}">${ownerHtml}${classroomHtml}${deptHtml}</div>`;
 }
 
-function renderGlobalTasksBoardHtml(tasks, pMap, uMap, cMap = {}) {
+function renderGlobalTasksBoardHtml(tasks, pMap, uMap, cMap = {}, filterLabel = null) {
   const projectIds = [...new Set(tasks.map(t => t.projectId))].sort((a, b) =>
     (pMap[a]?.name || '').localeCompare(pMap[b]?.name || ''));
-  if (!projectIds.length) return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
+  if (!projectIds.length) {
+    if (filterLabel) return emptyState({ icon: 'tasks', title: `No ${filterLabel} tasks`, description: 'Try another filter.' });
+    return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
+  }
   return `<div class="global-task-board">
     ${projectIds.map(pid => {
       const proj = pMap[pid];
@@ -2708,6 +2972,8 @@ async function renderTasks() {
   const f = state.taskFilter;
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
+  const filteredTasks = f === 'all' ? all : f === 'done' ? all.filter(t => t.status === 'done') : all.filter(t => t.status === f);
+  const filterLabel = f === 'todo' ? 'to-do' : f === 'doing' ? 'in-progress' : f === 'done' ? 'done' : null;
   const PRIO = { urgent: 0, high: 1, medium: 2, low: 3 };
   const sortPrio = ts => [...ts].sort((a,b) => (PRIO[a.priority]??2)-(PRIO[b.priority]??2));
 
@@ -2781,9 +3047,9 @@ async function renderTasks() {
       </div>`;
     }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
   } else {
-    const filtered = f === 'done' ? all.filter(t=>t.status==='done') : sortPrio(all.filter(t=>t.status===f));
+    const filtered = f === 'done' ? filteredTasks : sortPrio(filteredTasks);
     body = filtered.length ? `<div class="task-group-body-v2">${filtered.map(t=>renderCard(t,true)).join('')}</div>`
-      : emptyState({ icon:'tasks', title:`No ${f==='todo'?'to-do':f==='doing'?'in-progress':'done'} tasks`, description:'Try another filter.' });
+      : emptyState({ icon:'tasks', title:`No ${filterLabel || f} tasks`, description:'Try another filter.' });
   }
 
   const vm = state.globalTaskViewMode || 'list';
@@ -2797,11 +3063,11 @@ async function renderTasks() {
       Board
     </button>
   </div>`;
-  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(all, pMap, uMap, cMap) : body;
+  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(filteredTasks, pMap, uMap, cMap, filterLabel) : body;
   content.innerHTML = `
     <div class="projects-page-header">
-      <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${all.length} visible</span></div>
-      <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}<button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button></div>
+      <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${filteredTasks.length} visible</span></div>
+      <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}${(isAdmin() || editableProjectIds.size > 0) ? `<button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button>` : ''}</div>
     </div>
     <div class="projects-status-pills">
       <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
@@ -3053,14 +3319,14 @@ async function renderSettings() {
       </div>
       <div class="section-body classroom-admin">
         <div class="classroom-list">
-          ${classrooms.map(c => `<div class="classroom-admin-row">
-            <span class="classroom-color-dot" style="background:${esc(c.color || '#4f46e5')}"></span>
+          ${classrooms.map(c => { const pal = classroomPaletteOf(c); return `<div class="classroom-admin-row">
+            <span class="classroom-color-dot" style="background:${esc(pal.primary)}"></span>
             <div class="classroom-admin-row-info">
               <strong>${esc(c.name)}</strong>
               ${c.description ? `<small>${esc(c.description)}</small>` : ''}
             </div>
             <button type="button" class="btn btn-sm btn-ghost" data-action="delete-classroom" data-id="${c.id}">Remove</button>
-          </div>`).join('') || '<p class="text-muted text-sm" style="padding:12px 16px">No classrooms yet.</p>'}
+          </div>`; }).join('') || '<p class="text-muted text-sm" style="padding:12px 16px">No classrooms yet.</p>'}
         </div>
         <form data-form="add-classroom" class="classroom-add-form">
           <label class="classroom-add-field">
@@ -3071,10 +3337,8 @@ async function renderSettings() {
             <span>Description</span>
             <input name="description" type="text" placeholder="What this classroom is for">
           </label>
-          <div class="classroom-add-form-row">
-            <input name="color" type="color" value="#4f46e5" title="Pick a colour">
-            <button type="submit" class="btn btn-primary" style="flex:1">+ Add Classroom</button>
-          </div>
+          <p class="text-muted text-sm" style="margin-bottom:10px">Each classroom gets an auto-assigned colour theme.</p>
+          <button type="submit" class="btn btn-primary" style="width:100%">+ Add Classroom</button>
         </form>
       </div>
     </section>
@@ -3163,6 +3427,98 @@ async function renderSettings() {
 
 /* ──── Chat (Discord bridge) ──── */
 
+const CHAT_READ_KEY = 'wt-chat-read-v2';
+let _chatUnreadTimer = null;
+
+function chatReadStorageKey() {
+  const uid = actorId();
+  return uid ? `${CHAT_READ_KEY}-${uid}` : null;
+}
+function loadChatReadMap() {
+  const key = chatReadStorageKey();
+  if (!key) return {};
+  try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
+}
+function saveChatReadMap(map) {
+  const key = chatReadStorageKey();
+  if (key) localStorage.setItem(key, JSON.stringify(map));
+}
+function markChatChannelRead(channelId) {
+  if (!channelId) return;
+  const map = loadChatReadMap();
+  map[channelId] = new Date().toISOString();
+  saveChatReadMap(map);
+  if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
+  state.chatUnreadChannels.delete(channelId);
+  updateChatUnreadBadge();
+  if (state.chatDockOpen && state.chatDockView === 'list') {
+    const list = document.getElementById('chat-dock-list');
+    if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
+  }
+}
+function isChannelUnread(channelId, latestMsg) {
+  if (!latestMsg?.createdAt) return false;
+  const me = actorId();
+  const senderId = latestMsg.userId ?? latestMsg.fromUserId;
+  if (senderId && Number(senderId) === Number(me)) return false;
+  const readAt = loadChatReadMap()[channelId];
+  if (!readAt) return true;
+  return latestMsg.createdAt > readAt;
+}
+async function getChannelLatestMessage(channelId) {
+  const msgs = await getChatMessagesForChannel(channelId);
+  return msgs.length ? msgs[msgs.length - 1] : null;
+}
+function updateChatUnreadBadge() {
+  const btn = document.querySelector('.chat-dock-launcher');
+  if (!btn) return;
+  const has = state.chatUnreadChannels?.size > 0;
+  btn.classList.toggle('has-unread', has);
+  let badge = btn.querySelector('.dock-launcher-badge');
+  if (has && !badge) {
+    badge = document.createElement('span');
+    badge.className = 'dock-launcher-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    btn.appendChild(badge);
+  } else if (!has && badge) badge.remove();
+}
+async function refreshChatUnreadState() {
+  const uid = actorId();
+  if (!uid) {
+    state.chatUnreadChannels = new Set();
+    updateChatUnreadBadge();
+    return;
+  }
+  if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
+  const unread = new Set();
+  const latestGeneral = await getChannelLatestMessage('general');
+  if (isChannelUnread('general', latestGeneral)) unread.add('general');
+  let users = _chatDockData?.users;
+  if (!users) {
+    const data = await getWorkspaceData();
+    users = data.users || [];
+  }
+  for (const u of users.filter(x => x.id !== uid)) {
+    const ch = `dm-${u.id}`;
+    const latest = await getChannelLatestMessage(ch);
+    if (isChannelUnread(ch, latest)) unread.add(ch);
+  }
+  state.chatUnreadChannels = unread;
+  updateChatUnreadBadge();
+  if (state.chatDockOpen && state.chatDockView === 'list') {
+    const list = document.getElementById('chat-dock-list');
+    if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
+  }
+}
+function startChatUnreadPolling() {
+  stopChatUnreadPolling();
+  refreshChatUnreadState().catch(() => {});
+  _chatUnreadTimer = setInterval(() => refreshChatUnreadState().catch(() => {}), 12000);
+}
+function stopChatUnreadPolling() {
+  if (_chatUnreadTimer) { clearInterval(_chatUnreadTimer); _chatUnreadTimer = null; }
+}
+
 async function getChatMessagesForChannel(channelId) {
   if (channelId?.startsWith('dm-')) {
     const otherId = Number(channelId.slice(3));
@@ -3224,6 +3580,7 @@ async function refreshChatPane() {
   const messages = await getChatMessagesForChannel(channelId);
   pane.innerHTML = renderChatMessagesHtml(messages, uMap);
   pane.scrollTop = pane.scrollHeight;
+  markChatChannelRead(channelId);
 }
 
 function renderChatMessagesHtml(messages, uMap) {
@@ -3280,8 +3637,11 @@ async function renderChat() {
 
 function openChatDock(channelId = null) {
   state.chatDockOpen = true;
-  if (channelId) { state.chatChannel = channelId; state.chatDockView = 'convo'; }
-  else if (!state.chatDockView) state.chatDockView = 'list';
+  if (channelId) {
+    state.chatChannel = channelId;
+    state.chatDockView = 'convo';
+    markChatChannelRead(channelId);
+  } else if (!state.chatDockView) state.chatDockView = 'list';
   renderChatDock();
 }
 function closeChatDock() {
@@ -3320,7 +3680,8 @@ function chatDockContactRow(u, isFav) {
     ? `<img src="${esc(u.avatarBase64)}" alt="${esc(initials)}">`
     : initials;
   const sub = isUserOnline(u) ? 'Online' : (u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Offline');
-  return `<button type="button" class="chat-dock-contact" data-action="open-chat-channel" data-channel-id="dm-${u.id}">
+  const unreadCls = state.chatUnreadChannels?.has(`dm-${u.id}`) ? ' chat-dock-contact--unread' : '';
+  return `<button type="button" class="chat-dock-contact${unreadCls}" data-action="open-chat-channel" data-channel-id="dm-${u.id}">
     <span class="chat-dock-contact-av" ${userColorStyle(u)}>${avatarInner}${presenceDotHtml(u)}</span>
     <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">${esc(u.displayName || u.username)}</span><small>${sub}</small></span>
     <span class="chat-dock-fav ${isFav ? 'is-fav' : ''}" data-action="toggle-chat-favorite" data-user-id="${u.id}" title="${isFav ? 'Unpin contact' : 'Pin contact'}">${isFav ? '★' : '☆'}</span>
@@ -3339,16 +3700,12 @@ function chatDockListBodyHtml() {
   const others = filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u))
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
 
-  const projectChannels = (d.projects || []).filter(p => canEdit(p));
+  const generalUnread = state.chatUnreadChannels?.has('general') ? ' chat-dock-contact--unread' : '';
   const channelsHtml = `
-    <button type="button" class="chat-dock-contact" data-action="open-chat-channel" data-channel-id="general">
+    <button type="button" class="chat-dock-contact${generalUnread}" data-action="open-chat-channel" data-channel-id="general">
       <span class="chat-dock-contact-av chat-dock-channel-ic">#</span>
       <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">general</span><small>${d.generalHook?.url ? 'Discord connected' : 'Team channel'}</small></span>
-    </button>
-    ${projectChannels.map(p => `<button type="button" class="chat-dock-contact" data-action="open-chat-channel" data-channel-id="project-${p.id}">
-      <span class="chat-dock-contact-av chat-dock-channel-ic">#</span>
-      <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">${esc(p.name)}</span><small>Project channel</small></span>
-    </button>`).join('')}`;
+    </button>`;
 
   const section = (label, html) => html ? `<div class="chat-dock-section-label">${label}</div>${html}` : '';
   return `
@@ -3412,11 +3769,19 @@ async function renderChatDock() {
   const open = !!state.chatDockOpen;
   root.classList.toggle('chat-dock-open', open);
   const panel = open ? await chatDockPanelHtml() : '';
+  const notesOpen = _notesPanelOpen;
+  const chatUnread = !open && state.chatUnreadChannels?.size > 0;
   root.innerHTML = `
     ${panel}
-    <button type="button" class="chat-dock-launcher" data-action="toggle-chat-dock" title="Messages" aria-label="Messages">
-      ${open ? (ICONS.close || '×') : ICONS.chat}
-    </button>`;
+    <div class="dock-launchers">
+      <button type="button" class="dock-launcher notes-dock-launcher${notesOpen ? ' is-active' : ''}" data-action="open-notes" title="Notes" aria-label="Notes">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+      </button>
+      <button type="button" class="dock-launcher chat-dock-launcher${open ? ' is-active' : ''}${chatUnread ? ' has-unread' : ''}" data-action="toggle-chat-dock" title="Messages" aria-label="Messages">
+        ${open ? (ICONS.close || '×') : ICONS.chat}
+        ${chatUnread ? '<span class="dock-launcher-badge" aria-hidden="true"></span>' : ''}
+      </button>
+    </div>`;
 
   if (open && state.chatDockView === 'list') {
     const search = document.getElementById('chat-dock-search');
@@ -3887,8 +4252,7 @@ async function renderNotificationPanel() {
     ${rows.length === 0
       ? `<div class="notif-empty">No notifications yet. Assignments and updates will show up here.</div>`
       : `<ul class="notif-list">${rows.map(n => {
-          const projectHref = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
-          return `<li><button type="button" class="notif-item ${n.readAt ? '' : 'unread'}" data-action="notif-open" data-id="${n.id}" data-href="${projectHref}">
+          return `<li><button type="button" class="notif-item ${n.readAt ? '' : 'unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-dot"></span>
             <span class="notif-body">
               <span class="notif-msg">${esc(n.message)}</span>
@@ -3908,24 +4272,48 @@ function toggleNotifPanel(force = null) {
 
 function closeNotifPanel() { toggleNotifPanel(false); }
 
+async function showBugReportStatusModal(bugId) {
+  const report = (await DB.getBugReports({ limit: 500 })).find(b => Number(b.id) === Number(bugId));
+  if (!report) { showToast('Bug report not found', 'warning'); return; }
+  const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', sent: 'Sent to GitHub', fixed: 'Fixed', closed: 'Closed', wont_fix: "Won't fix" };
+  const st = report.status || 'open';
+  const resolved = ['fixed', 'closed', 'wont_fix'].includes(st);
+  showModal('Bug report update', `
+    <div class="bug-report-status-modal">
+      <div class="bug-report-titleline" style="margin-bottom:12px">
+        <strong>${esc(report.title)}</strong>
+        ${badge(STATUS_LABEL[st] || st, resolved ? 'green' : (st === 'in_progress' ? 'blue' : 'amber'))}
+      </div>
+      <p class="text-secondary text-sm" style="margin-bottom:12px">${esc(report.description)}</p>
+      ${report.resolutionNote ? `<div class="bug-report-resolution" style="margin-bottom:12px"><strong>Resolution note</strong><p>${esc(report.resolutionNote)}</p></div>` : ''}
+      <p class="text-muted text-sm">Reported ${timeAgo(report.createdAt)} · ${esc(report.severity)} severity</p>
+    </div>
+    <div class="form-actions"><button type="button" class="btn btn-primary" data-action="close-modal">Close</button></div>`);
+}
+
+function notifButtonAttrs(n) {
+  const href = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+  const entityType = n.entityType ? ` data-entity-type="${esc(n.entityType)}"` : '';
+  const entityId = n.entityId != null ? ` data-entity-id="${n.entityId}"` : '';
+  return `data-action="notif-open" data-id="${n.id}" data-href="${href}"${entityType}${entityId}`;
+}
+
 async function renderNotificationsPage() {
   const content = document.getElementById('content');
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
-  // Auto-mark all as read when page is visited
-  if (uid && unread > 0) { await DB.markAllNotificationsRead(uid); refreshNotificationBadge(); }
   const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋', access_request: '🔐', access_approved: '✅', access_declined: '⛔', bug_report: '⚠️', project_completed: '🏆' };
   content.innerHTML = `
     <div class="projects-page-header">
-      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total</span></div>
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` · ${unread} unread` : ''}</span></div>
+      ${unread ? `<button type="button" class="btn btn-ghost btn-sm" data-action="notif-mark-all">Mark all read</button>` : ''}
     </div>
     <div class="notif-page-list">
       ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
         : rows.map(n => {
-          const href = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
           const icon = TYPE_ICON[n.type] || '🔔';
-          return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" data-action="notif-open" data-id="${n.id}" data-href="${href}">
+          return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-page-icon">${icon}</span>
             <div class="notif-page-body">
               <span class="notif-page-msg">${esc(n.message)}</span>
@@ -3948,6 +4336,28 @@ function showModal(title, body) {
   if (inp) setTimeout(() => inp.focus(), 50);
 }
 function hideModal() { const ov = document.getElementById('modal-overlay'); ov.classList.add('hidden'); ov.innerHTML = ''; }
+
+async function showSaveTemplateModal(projectId) {
+  const pid = Number(projectId);
+  const p = await DB.getProject(pid);
+  if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const tasks = sortTasksByOrder(await DB.getTasks({ projectId: pid }));
+  if (!tasks.length) { showToast('No tasks to save', 'warning'); return; }
+  const defaultName = `${p.name} workflow`;
+  showModal('Save as workflow template', `
+    <p class="text-muted text-sm" style="margin-bottom:14px">Save ${tasks.length} task${tasks.length === 1 ? '' : 's'} from <strong>${esc(p.name)}</strong> as a reusable workflow template. Manage templates in Settings.</p>
+    <form data-form="save-tasks-as-template" data-project-id="${pid}">
+      <div class="form-group">
+        <label>Template name</label>
+        <input type="text" name="name" value="${esc(defaultName)}" required maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save template</button>
+      </div>
+    </form>`);
+}
 
 async function showProjectModal(editId = null) {
   const parsedId = Number(editId);
@@ -4320,18 +4730,46 @@ function rankIcon(label, size = 18) {
     rook: '<path d="M6.4 6h2.1v1.7h2V6h3v1.7h2V6h2.1v4.2l-1.6 1.4.6 6.9H7.4l.6-6.9-1.6-1.4z"/><path d="M5.8 19.2h12.4V21H5.8z"/>',
     queen: '<path d="M4.8 9l1.9 9.3h10.6L19.2 9l-3.1 3.2-2.1-5.3-2 5.3-2-5.3-2.1 5.3z"/><path d="M5.8 19.4h12.4V21H5.8z"/><circle cx="4.8" cy="7.8" r="1.5"/><circle cx="12" cy="5.6" r="1.5"/><circle cx="19.2" cy="7.8" r="1.5"/>',
     king: '<path d="M11 2.6h2v2h2v2h-2v1.6h-2V6.6H9v-2h2z"/><path d="M5.4 10c2.1 1.1 4.1 1.6 6.6 1.6S16.5 11.1 18.6 10l-1.4 8.4H6.8z"/><path d="M5.8 19.4h12.4V21H5.8z"/>',
+    emperor: '<path d="M4 9l2 9h12l2-9-4 3-2-5-2 5z"/><path d="M5 20h14v2H5z"/><circle cx="4" cy="7" r="1.5"/><circle cx="12" cy="5" r="1.5"/><circle cx="20" cy="7" r="1.5"/>',
+    titan: '<path d="M7 20V9l5-4 5 4v11z"/><path d="M5 20h14v2H5z"/><path d="M10 12h4v8h-4z"/>',
+    mythic: '<path d="M12 2l2.4 6.8H21l-5.5 4 2.1 6.7L12 16.8 6.4 19.5l2.1-6.7L3 8.8h6.6z"/>',
+    veteran: '<circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M9 11l3 3 5-6"/>',
+    ascendant: '<path d="M12 3v6"/><path d="M8 7l4-4 4 4"/><path d="M6 20h12"/><path d="M8 14h8l-1 6H9z"/>',
+    transcendent: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8"/><path d="M12 8v8"/>',
   };
   const body = paths[k] || paths.pawn;
   return `<svg class="rank-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${body}</svg>`;
 }
 
+const RANK_ORDER = { Pawn: 0, Knight: 1, Bishop: 2, Rook: 3, Queen: 4, King: 5, Veteran: 6, Emperor: 7, Ascendant: 8, Titan: 9, Mythic: 10, Transcendent: 11 };
+
 function profileRank(score) {
-  if (score >= 120) return { label: 'King', tone: 'purple', next: null };
+  if (score >= 500) return { label: 'Mythic', tone: 'purple', next: null };
+  if (score >= 350) return { label: 'Titan', tone: 'purple', next: 500 - score };
+  if (score >= 200) return { label: 'Emperor', tone: 'purple', next: 350 - score };
+  if (score >= 120) return { label: 'King', tone: 'purple', next: 200 - score };
   if (score >= 80) return { label: 'Queen', tone: 'purple', next: 120 - score };
   if (score >= 50) return { label: 'Rook', tone: 'blue', next: 80 - score };
   if (score >= 28) return { label: 'Bishop', tone: 'green', next: 50 - score };
   if (score >= 12) return { label: 'Knight', tone: 'amber', next: 28 - score };
   return { label: 'Pawn', tone: 'muted', next: 12 - score };
+}
+
+function completionMilestone(completedTasks) {
+  if (completedTasks >= 200) return { label: 'Transcendent', tone: 'purple', kind: 'milestone' };
+  if (completedTasks >= 100) return { label: 'Ascendant', tone: 'purple', kind: 'milestone' };
+  if (completedTasks >= 50) return { label: 'Veteran', tone: 'blue', kind: 'milestone' };
+  return null;
+}
+
+function resolveUserRank(score, completedTasks) {
+  const scoreRank = profileRank(score);
+  const milestone = completionMilestone(completedTasks);
+  if (!milestone) return scoreRank;
+  const scoreOrd = RANK_ORDER[scoreRank.label] ?? 0;
+  const mileOrd = RANK_ORDER[milestone.label] ?? 0;
+  if (mileOrd > scoreOrd) return { ...milestone, next: null };
+  return scoreRank;
 }
 
 function userProfileStats(userId, projects = [], tasks = []) {
@@ -4342,6 +4780,7 @@ function userProfileStats(userId, projects = [], tasks = []) {
   const completedTasks = assigned.filter(t => t.status === 'done');
   const completedFounded = founded.filter(p => p.status === 'completed' || projectStatsFromTasks(tasks, p.id).progress === 100);
   const score = founded.length * 8 + completedFounded.length * 10 + coediting.length * 5 + completedTasks.length * 3 + assigned.filter(t => t.status === 'doing').length;
+  const rank = resolveUserRank(score, completedTasks.length);
   return {
     founded: founded.length,
     completedFounded: completedFounded.length,
@@ -4349,7 +4788,7 @@ function userProfileStats(userId, projects = [], tasks = []) {
     assigned: assigned.length,
     completedTasks: completedTasks.length,
     score,
-    rank: profileRank(score)
+    rank
   };
 }
 
@@ -4526,10 +4965,13 @@ async function showProfileModal() {
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
       <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Project lead at Everlasting">${esc(user.bio || '')}</textarea></div>
-      <div class="form-group"><label>Department</label><select name="department">
+      ${isAdm ? `<div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
-      </select></div>
+      </select></div>` : `<div class="form-group"><label>Department</label>
+        <div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div>
+        <p class="text-muted text-sm" style="margin-top:6px">Assigned by an admin. Project tags (e.g. R&amp;D) come from the project, not your profile.</p>
+      </div>`}
       <div class="form-group"><label>Accent Color</label><div style="display:flex;gap:8px;align-items:center"><input name="color" type="color" value="${esc(user.color||'#4f46e5')}" style="height:36px;width:60px;border-radius:6px;border:1px solid var(--border);cursor:pointer"><span class="text-muted text-sm">Used for your avatar and highlights</span></div></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
     </form>`);
@@ -4645,10 +5087,11 @@ function showAboutModal() {
       <div class="about-logo-row">
         <div class="about-logo-mark">
           <svg width="36" height="36" viewBox="0 0 100 100">
-            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="white" opacity="0.95"/>
-            <path d="M74 30 L80 36 L90 23" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="white" opacity="0.65"/>
-            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="white" opacity="0.4"/>
+            <rect width="100" height="100" rx="22" fill="#000"/>
+            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="#ffffff"/>
+            <path d="M74 30 L80 36 L90 23" stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="#ffffff"/>
+            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="#ffffff"/>
           </svg>
         </div>
         <div>
@@ -4884,8 +5327,10 @@ async function handleFormSubmit(e) {
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
         const existing = await DB.getProject(Number(editId));
+        const prevEditorIds = existing?.editorIds || [];
         await DB.updateProject(Number(editId), data, uid);
         const updated = await DB.getProject(Number(editId));
+        await notifyNewCoEditors(updated, prevEditorIds, data.editorIds || [], uid);
         await ensureProjectWorkflowTasks(updated, uid);
         await syncWorkflowProjectStatus(updated, uid);
         if (updated && existing?.status !== 'completed' && updated.status === 'completed') {
@@ -4911,6 +5356,7 @@ async function handleFormSubmit(e) {
           await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
         }
         await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))})${bulkTitles.length ? ` with ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''}` : ''}.`);
+        await notifyNewCoEditors(created, [], data.editorIds || [], uid);
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, created);
         if (unsaved.length) showToast(`Project created, but ${unsaved.join(', ')} could not be saved yet.`, 'warning');
@@ -4961,8 +5407,11 @@ async function handleFormSubmit(e) {
       const projectId = Number(form.dataset.projectId);
       const project = await DB.getProject(projectId);
       if (!project || !canManageProjectAccess(project)) { showToast('Permission denied', 'error'); return; }
+      const prevEditorIds = project.editorIds || [];
       const editorIds = fd.getAll('editorIds').map(Number).filter(Boolean);
       await DB.updateProject(projectId, { editorIds }, uid);
+      const updated = await DB.getProject(projectId);
+      await notifyNewCoEditors(updated, prevEditorIds, editorIds, uid);
       bustWorkspaceCache();
       hideModal();
       await router();
@@ -5068,6 +5517,7 @@ async function handleFormSubmit(e) {
         const toUserId = Number(channelId.slice(3));
         await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
         form.reset();
+        markChatChannelRead(channelId);
         await refreshChatPane();
         return;
       }
@@ -5104,6 +5554,7 @@ async function handleFormSubmit(e) {
         showToast('Posted to Discord but could not save in app', 'warning');
         await refreshChatPane();
       }
+      markChatChannelRead(channelId);
       return;
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
@@ -5176,7 +5627,8 @@ async function handleFormSubmit(e) {
       const color = fd.get('color') || '';
       const avatarBase64 = fd.get('avatarBase64') || '';
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, department, bio, avatarBase64, ...(color && { color }) };
+      const profileData = { displayName, email, bio, avatarBase64, ...(color && { color }) };
+      if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
@@ -5233,12 +5685,24 @@ async function handleFormSubmit(e) {
       if (!name) return;
       await DB.createClassroom({
         name,
-        description: fd.get('description')?.trim() || '',
-        color: fd.get('color') || '#4f46e5'
+        description: fd.get('description')?.trim() || ''
       });
       bustWorkspaceCache();
       showToast('Classroom added', 'success');
-      await renderAdmin();
+      await renderSettings();
+      return;
+    } else if (type === 'save-tasks-as-template') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+      const pid = Number(form.dataset.projectId);
+      const name = fd.get('name')?.trim();
+      if (!pid || !name) { showToast('Enter a template name', 'warning'); return; }
+      const p = await DB.getProject(pid);
+      if (!p) return;
+      const tasks = sortTasksByOrder(await DB.getTasks({ projectId: pid }));
+      const steps = tasks.map(t => ({ title: t.title, priority: t.priority || 'medium' }));
+      await DB.createWorkflowTemplate({ name, description: `Saved from "${p.name}"`, steps, createdBy: actorId(), actorUserId: actorId() });
+      hideModal();
+      showToast(`Saved "${name}" with ${steps.length} task${steps.length === 1 ? '' : 's'}`, 'success');
       return;
     } else if (type === 'user-classrooms') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5274,6 +5738,43 @@ async function handleFormSubmit(e) {
 
 const actions = {
   'add-project': () => showProjectModal(),
+  'open-notes': () => (_notesPanelOpen ? closeNotesPanel() : openNotesPanel()),
+  'close-notes': () => closeNotesPanel(),
+  'app-refresh': () => { closeUserMenu(); location.reload(); },
+  'toggle-route-settings': () => {
+    const route = window.location.hash.slice(1) || '/projects';
+    window.location.hash = route === '/settings' ? `#${state.lastMainRoute || '/projects'}` : '#/settings';
+  },
+  'toggle-route-notifications': () => {
+    const route = window.location.hash.slice(1) || '/projects';
+    window.location.hash = route === '/notifications' ? `#${state.lastMainRoute || '/projects'}` : '#/notifications';
+  },
+  'toggle-route-admin': () => {
+    const route = window.location.hash.slice(1) || '/projects';
+    window.location.hash = route === '/admin' ? `#${state.lastMainRoute || '/projects'}` : '#/admin';
+  },
+  'add-personal-note': async () => {
+    const uid = getSession()?.userId;
+    if (!uid || !DB.createPersonalNote) return;
+    const id = await DB.createPersonalNote({ userId: uid, content: '' });
+    await renderNotesPanel(id);
+  },
+  'toggle-ranking-panel': async () => {
+    state.rankingPanelOpen = !state.rankingPanelOpen;
+    await renderRankingPanel();
+  },
+  'toggle-personal-note': async (btn) => {
+    const id = Number(btn.dataset.id);
+    if (!id || !DB.updatePersonalNote) return;
+    await DB.updatePersonalNote(id, { done: btn.checked });
+    await renderNotesPanel();
+  },
+  'delete-personal-note': async (btn) => {
+    const id = Number(btn.dataset.id);
+    if (!id || !DB.deletePersonalNote) return;
+    await DB.deletePersonalNote(id);
+    await renderNotesPanel();
+  },
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
@@ -5347,7 +5848,7 @@ const actions = {
   'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
-  'user-view-profile': async () => { closeUserMenu(); await showUserProfileModal(actorId()); },
+  'user-view-profile': async () => { closeUserMenu(); await showProfileModal(); },
   'edit-my-profile': async () => { await showProfileModal(); },
   'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
@@ -5494,14 +5995,10 @@ const actions = {
     showToast(removed ? `Cleared ${removed} failed job${removed > 1 ? 's' : ''}` : 'No failed jobs to clear', 'info');
   },
   'user-logout': async () => {
-    closeUserMenu();
-    stopPresenceHeartbeat();
-    stopChatDockPolling();
-    state.chatDockOpen = false;
-    const dockRoot = document.getElementById('chat-dock-root');
-    if (dockRoot) { dockRoot.innerHTML = ''; dockRoot.style.display = 'none'; }
     const s = getSession();
-    if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username });
+    if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username }).catch(() => {});
+    localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
+    resetClientState();
     clearSession({ trusted: true });
     wtAppBootstrapped = false;
     window.location.hash = '';
@@ -5727,16 +6224,7 @@ const actions = {
     await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'save-tasks-as-template': async (b) => {
-    const pid = Number(b.dataset.projectId);
-    const p = await DB.getProject(pid);
-    if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    const tasks = sortTasksByOrder(await DB.getTasks({ projectId: pid }));
-    if (!tasks.length) { showToast('No tasks to save', 'warning'); return; }
-    const name = prompt('Template name:', `${p.name} workflow`);
-    if (!name?.trim()) return;
-    const steps = tasks.map(t => ({ title: t.title, priority: t.priority || 'medium' }));
-    await DB.createWorkflowTemplate({ name: name.trim(), description: `Saved from "${p.name}"`, steps, createdBy: actorId(), actorUserId: actorId() });
-    showToast(`Saved "${name.trim()}" with ${steps.length} task${steps.length === 1 ? '' : 's'}`, 'success');
+    await showSaveTemplateModal(Number(b.dataset.projectId));
   },
   'delete-workflow-template': async (b) => {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5806,12 +6294,16 @@ const actions = {
   },
   'notif-open': async (b) => {
     const id = Number(b.dataset.id);
-    const href = b.dataset.href || '#/projects';
     await DB.markNotificationRead(id);
     closeNotifPanel();
+    refreshNotificationBadge();
+    if (b.dataset.entityType === 'bug_report' && b.dataset.entityId) {
+      await showBugReportStatusModal(Number(b.dataset.entityId));
+      return;
+    }
+    const href = b.dataset.href || '#/projects';
     if (window.location.hash !== href) window.location.hash = href;
     else await applyRoute();
-    refreshNotificationBadge();
   },
   'select-chat-channel': async (b) => {
     hideModal();
@@ -5918,35 +6410,66 @@ function presenceDotHtml(user) {
 
 /* ──── Ranking explanation (Phase 4) ──── */
 
-function rankingExplanationHtml() {
+function rankingExplanationBodyHtml() {
   const tiers = [
     { l: 'Pawn', r: '0 – 11', tone: 'muted' },
     { l: 'Knight', r: '12 – 27', tone: 'amber' },
     { l: 'Bishop', r: '28 – 49', tone: 'green' },
     { l: 'Rook', r: '50 – 79', tone: 'blue' },
     { l: 'Queen', r: '80 – 119', tone: 'purple' },
-    { l: 'King', r: '120+', tone: 'purple' },
+    { l: 'King', r: '120 – 199', tone: 'purple' },
+    { l: 'Emperor', r: '200 – 349', tone: 'purple' },
+    { l: 'Titan', r: '350 – 499', tone: 'purple' },
+    { l: 'Mythic', r: '500+', tone: 'purple' },
   ];
-  return `<section class="section-card ranking-explainer" style="margin-bottom:24px">
-    <div class="section-header">
-      <div>
-        <h2>How ranking works</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">The more you found, co-edit and complete, the higher your chess rank climbs.</p>
-      </div>
+  const milestones = [
+    { l: 'Veteran', r: '50 tasks done', tone: 'blue' },
+    { l: 'Ascendant', r: '100 tasks done', tone: 'purple' },
+    { l: 'Transcendent', r: '200 tasks done', tone: 'purple' },
+  ];
+  return `
+    <p class="ranking-panel-intro">The more you found, co-edit and complete, the higher your rank climbs. Task milestones can override your score tier.</p>
+    <div class="ranking-points">
+      <span class="ranking-point">Found a project <strong>+8</strong></span>
+      <span class="ranking-point">Complete a founded project <strong>+10</strong></span>
+      <span class="ranking-point">Co-edit a project <strong>+5</strong></span>
+      <span class="ranking-point">Complete a task <strong>+3</strong></span>
+      <span class="ranking-point">Task in progress <strong>+1</strong></span>
     </div>
-    <div class="section-body" style="padding:16px 20px">
-      <div class="ranking-points">
-        <span class="ranking-point">Found a project <strong>+8</strong></span>
-        <span class="ranking-point">Complete a founded project <strong>+10</strong></span>
-        <span class="ranking-point">Co-edit a project <strong>+5</strong></span>
-        <span class="ranking-point">Complete a task <strong>+3</strong></span>
-        <span class="ranking-point">Task in progress <strong>+1</strong></span>
-      </div>
-      <div class="ranking-tiers">
-        ${tiers.map(t => `<div class="ranking-tier profile-rank--${t.tone}"><span class="rank-label">${rankIcon(t.l, 18)}${t.l}</span><small>${t.r} pts</small></div>`).join('')}
-      </div>
+    <div class="ranking-panel-section-label">Score tiers</div>
+    <div class="ranking-tiers">
+      ${tiers.map(t => `<div class="ranking-tier profile-rank--${t.tone}"><span class="rank-label">${rankIcon(t.l, 18)}${t.l}</span><small>${t.r} pts</small></div>`).join('')}
     </div>
-  </section>`;
+    <div class="ranking-panel-section-label">Completion milestones</div>
+    <div class="ranking-tiers">
+      ${milestones.map(t => `<div class="ranking-tier profile-rank--${t.tone}"><span class="rank-label">${rankIcon(t.l, 18)}${t.l}</span><small>${t.r}</small></div>`).join('')}
+    </div>`;
+}
+
+function hideRankingPanel() {
+  const panel = document.getElementById('ranking-panel');
+  const main = document.getElementById('main-content');
+  if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+  if (main) main.classList.remove('with-ranking-panel');
+}
+
+async function renderRankingPanel() {
+  const panel = document.getElementById('ranking-panel');
+  const main = document.getElementById('main-content');
+  if (!panel) return;
+  if (!state.rankingPanelOpen || window.location.hash.slice(1) !== '/users') {
+    panel.classList.add('hidden');
+    if (main) main.classList.remove('with-ranking-panel');
+    return;
+  }
+  panel.classList.remove('hidden');
+  if (main) main.classList.add('with-ranking-panel');
+  panel.innerHTML = `
+    <div class="ranking-panel-head">
+      <h3>How ranking works</h3>
+      <button type="button" class="btn-icon" data-action="toggle-ranking-panel" title="Close panel" aria-label="Close ranking panel">${ICONS.x}</button>
+    </div>
+    <div class="ranking-panel-body">${rankingExplanationBodyHtml()}</div>`;
 }
 
 async function renderUsers() {
@@ -5982,8 +6505,8 @@ async function renderUsers() {
       <div class="user-card-stats">
         <div><strong>${stats.founded}</strong><span>Founded</span></div>
         <div><strong>${stats.completedFounded}</strong><span>Completed</span></div>
-        <div><strong>${stats.coediting}</strong><span>Co-editing</span></div>
-        <div><strong>${stats.completedTasks}</strong><span>Tasks done</span></div>
+        <div><strong>${stats.coediting}</strong><span>Co-edit</span></div>
+        <div><strong>${stats.completedTasks}</strong><span>Done</span></div>
       </div>
       <div class="user-card-foot">${isUserOnline(u) ? '<span class="user-card-online">Online now</span>' : `Last active ${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'a while ago'}`}</div>
     </div>`;
@@ -5992,15 +6515,19 @@ async function renderUsers() {
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} · ranked by contribution</p></div>
+      <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
     </div>
-    ${rankingExplanationHtml()}
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
+  await renderRankingPanel();
 }
 
 async function router() {
   await ensureDepartmentCfg();
   const hash = window.location.hash.slice(1) || '/projects';
   if (hash === '/recovery') return;
+  if (!['/settings', '/notifications', '/admin'].includes(hash)) {
+    state.lastMainRoute = hash;
+  }
   if (!hash.startsWith('/projects/')) {
     revokeLibraryPreviewUrls();
     hideDocumentPanel();
@@ -6008,6 +6535,7 @@ async function router() {
     if (main) main.classList.remove('with-doc-panel');
     state.currentProjectId = null;
   }
+  if (hash !== '/users') hideRankingPanel();
   updateNav(hash);
   const content = document.getElementById('content');
   if (content) content.classList.add('content-fade');
@@ -6035,12 +6563,28 @@ async function router() {
   else if (hash === '/admin') await renderAdmin();
   else if (hash === '/settings') await renderSettings();
   else window.location.hash = '#/projects';
-  requestAnimationFrame(() => content?.classList.remove('content-fade'));
+  requestAnimationFrame(() => {
+    content?.classList.remove('content-fade');
+    content?.classList.add('content-enter');
+    setTimeout(() => content?.classList.remove('content-enter'), 320);
+  });
+  if (hash.startsWith('/projects/')) {
+    const pid = parseInt(hash.split('/')[2]);
+    if (!isNaN(pid)) {
+      const p = await DB.getProject(pid).catch(() => null);
+      if (p?.classroomId != null) await applyClassroomTheme(p.classroomId);
+      else await applyClassroomTheme(state.classroomFilter);
+    }
+  } else if (hash === '/' || hash === '/projects') {
+    await applyClassroomTheme(state.classroomFilter);
+  } else {
+    await applyClassroomTheme('all');
+  }
   refreshNotificationBadge().catch(() => {});
 }
 
 function updateNav(route) {
-  document.querySelectorAll('.nav-item').forEach(item => {
+  document.querySelectorAll('.nav-item, .sidebar-action-btn[data-nav]').forEach(item => {
     const n = item.dataset.nav;
     if (!n) return;
     item.classList.toggle('active',
@@ -6093,7 +6637,12 @@ function setupImport() {
 async function applyRoute() {
   const raw = window.location.hash.slice(1) || '';
   const hash = raw.split('?')[0];
-  const savedSession = getSession() || restoreTrustedSession();
+  let savedSession = null;
+  if (localStorage.getItem(LOGOUT_FLAG_KEY)) {
+    clearSession({ trusted: true });
+  } else {
+    savedSession = getActiveSession();
+  }
 
   if (!savedSession || !isOffline()) {
     let hasUsers = true;
@@ -6196,9 +6745,9 @@ async function init() {
         await actions['sync-now']();
         return;
       }
-      const userBtn = e.target.closest('#sidebar-user');
+      const userBtn = e.target.closest('#sidebar-footer-user');
       const menu = document.getElementById('user-menu');
-      if (userBtn && !e.target.closest('#sync-status-indicator')) { e.stopPropagation(); toggleUserMenu(); return; }
+      if (userBtn && !e.target.closest('#sync-status-indicator') && !e.target.closest('.sidebar-action-btn')) { e.stopPropagation(); toggleUserMenu(); return; }
       if (menu && !menu.contains(e.target)) closeUserMenu();
       const notifPanel = document.getElementById('notif-panel');
       const notifTrigger = e.target.closest('#nav-notif');
@@ -6232,6 +6781,15 @@ async function init() {
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
+    document.getElementById('notes-panel-search')?.addEventListener('input', (e) => {
+      state.notesSearch = e.target.value || '';
+      renderNotesPanel();
+    });
+    document.getElementById('notes-panel-list')?.addEventListener('input', (e) => {
+      const ta = e.target.closest('[data-note-edit]');
+      if (ta) scheduleNoteSave(ta.dataset.noteEdit, ta.value);
+    });
+    document.getElementById('notes-backdrop')?.addEventListener('click', closeNotesPanel);
     document.getElementById('chat-dock-root')?.addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('input', async (e) => {
       const target = e.target;
@@ -6256,6 +6814,7 @@ async function init() {
         await renderProjects();
       } else if (target?.dataset?.projectFilterInput === 'classroom') {
         state.classroomFilter = target.value || 'all';
+        await applyClassroomTheme(state.classroomFilter);
         await renderProjects();
       } else if (target?.dataset?.reportInput === 'month') {
         state.reportMonth = target.value || formatMonthInput();
@@ -6265,7 +6824,8 @@ async function init() {
     document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') hideModal(); });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
+        if (_notesPanelOpen) closeNotesPanel();
+        else if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
         else hideModal();
       }
     });
@@ -6353,14 +6913,32 @@ async function init() {
   }
 }
 
-function hideSplash() {
-  const el = document.getElementById('splash');
-  if (!el) return;
-  el.classList.add('fade-out');
-  setTimeout(() => el.remove(), 500);
-}
-
 // Safety net: never leave the splash up longer than 6 s
 setTimeout(hideSplash, 6000);
 
-bootstrapDB().then(() => init()).finally(hideSplash);
+document.documentElement.classList.add('splash-lock');
+document.getElementById('splash')?.classList.add('is-visible');
+
+(async () => {
+  try {
+    setSplashStatus('Loading local database…');
+    await _splashDelay(800);
+    await bootstrapDB();
+    if (window.WT_STORAGE_MODE === 'hybrid') {
+      setSplashStatus('Connecting to cloud…');
+      await _splashDelay(700);
+    }
+    if (window.WT_INITIAL_SYNC) {
+      setSplashStatus('Syncing workspace…');
+      await window.WT_INITIAL_SYNC.catch(() => {});
+      await _splashDelay(600);
+    }
+    setSplashStatus('Ready');
+    await _splashDelay(500);
+    await init();
+  } catch (err) {
+    console.error('Bootstrap failed:', err);
+  } finally {
+    hideSplash();
+  }
+})();

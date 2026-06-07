@@ -37,6 +37,7 @@ function createWindow() {
     minHeight: 720,
     title: 'WorkTracker',
     backgroundColor: '#f6f7fb',
+    autoHideMenuBar: true,
     show: false,
     icon: path.join(__dirname, '..', 'favicon.svg'),
     webPreferences: {
@@ -94,36 +95,7 @@ function createWindow() {
 }
 
 function createMenu() {
-  const template = [
-    {
-      label: 'WorkTracker',
-      submenu: [
-        { label: `Version ${app.getVersion()}`, enabled: false },
-        { type: 'separator' },
-        {
-          label: 'Check for Updates',
-          click: () => checkForUpdates({ manual: true })
-        },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
-    }
-  ];
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
 }
 
 async function checkForUpdates({ manual = false } = {}) {
@@ -179,7 +151,7 @@ function configureAutoUpdater() {
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = true;
+  autoUpdater.allowPrerelease = false;
   autoUpdater.verifyUpdateCodeSignature = false;
 
   autoUpdater.on('checking-for-update', () => {

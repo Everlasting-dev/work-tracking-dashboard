@@ -1,84 +1,24 @@
 # WorkTracker
 
-WorkTracker is a desktop workspace for tracking projects, tasks, files, team activity, and lightweight team communication.
+WorkTracker is a desktop project and task workspace for teams — projects, boards, files, activity, and lightweight chat in one app.
 
-It is **local-first**: work offline on your machine, then sync to the cloud when you are online. The Windows desktop build is aimed at everyday use — install once, sign in, and receive quiet update prompts when a newer build is available.
+## Current release
 
-## Current Release
+**v2.2.8** — download the Windows installer from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 
-**[2.2.0-alpha.2](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.2.0-alpha.2)** (latest)
+1. Download and run the installer (Windows 10/11, x64).
+2. Sign in with your team account.
+3. Use **Help → Check for updates** in the app when you want to check for a newer build.
 
-| | |
-|---|---|
-| **Download** | [WorkTracker-Setup-2.2.0-alpha.2.exe](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/download/v2.2.0-alpha.2/WorkTracker-Setup-2.2.0-alpha.2.exe) |
-| **Check for updates** | User menu → **Help** → **Check for updates** (or the desktop menu) |
-| **Requires** | Windows 10/11, x64 |
+Release notes live in [CHANGELOG.md](CHANGELOG.md).
 
-> **Versioning note:** **2.2.0-alpha.2** is newer than the 2.1 beta line (`2.2` &gt; `2.1`). Within the same minor version, `alpha` still ranks below `beta` (e.g. `2.1.0-alpha.1` &lt; `2.1.0-beta.20`). The desktop updater has `allowPrerelease: true` so alpha builds can be offered when published to GitHub Releases.
+## Releases policy
 
-Previous stable beta: [2.1.0-beta.20](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.1.0-beta.20)
+Only the **Latest** GitHub release includes a downloadable installer. Older version tags remain for history and changelog reference only — they do not ship installers. This keeps everyone on the current stable build and avoids outdated installs with known issues.
 
-## Highlights
+## Developers
 
-### Projects & tasks
-- Project dashboard with ownership, editor access, classrooms, departments, and sticky search/filters
-- Per-project **Kanban board** — drag cards to change status or reorder; click to open details; editable task titles
-- Global **Tasks** view with wrapping project tiles and per-tile vertical scroll
-- Built-in and custom **workflow templates** that auto-fill starting tasks when creating a project
-- **Logistics shipment workflow** with document uploads and step-by-step handoff
-- Project completion celebration and classroom-wide notifications
-
-### Team & collaboration
-- **Users** tab — ranks (chess tiers), bios, presence, ranking explainer
-- **Docked chat** — DMs, favorites, online users, general and project channels (launcher bottom-right)
-- User profiles with avatar, bio, and contribution stats
-- Contributor ranking computed from projects, tasks, and co-editing
-
-### Files & sync
-- Cloud-backed attachments — metadata syncs locally; files fetch on demand when opened
-- Offline-first with queued sync when the network returns; unified sync diagnostics (retry / clear / details)
-- Discord webhooks for project and general channels (when online)
-
-### Admin
-- User, role, classroom, department, and project-visibility management (grouped by classroom)
-- Editable workflow templates in Settings
-- In-app bug reports with admin ticket status, GitHub issue link, and resolution notes
-- Monthly reports with co-authors/editors; export and AI report (cloud)
-
-## Install (end users)
-
-1. Download **WorkTracker-Setup-2.2.0-alpha.2.exe** from the [2.2.0-alpha.2 release](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.2.0-alpha.2).
-2. Run the installer (Windows may show a SmartScreen prompt — the build is unsigned).
-3. Sign in. In cloud mode, use **Sync** on the auth screen or after login if you need to pull team data first.
-
-## Development
-
-```bash
-npm install
-npm start          # run Electron locally
-npm run dist:win   # build installer → release/
-npm run publish:win  # build + publish to GitHub Releases (needs GH_TOKEN)
-```
-
-Installer output: `release/WorkTracker-Setup-<version>.exe`
-
-### Cloud backend (team mode)
-
-Cloud mode needs a configured backend and schema. Apply `supabase/schema.sql` on a fresh or existing database before expecting new features (workflow templates, sort order, bug resolution notes, etc.) to sync end-to-end.
-
-Do **not** commit production secrets, service-role keys, or admin credentials. Keep tokens in your host or CI secret store.
-
-## Updates
-
-Desktop updates are delivered through **GitHub Releases**. Each published build includes the installer, `.blockmap`, and `latest.yml` for `electron-updater`.
-
-- Prerelease updates are enabled (`allowPrerelease: true`).
-- **Help → Check for updates** runs a manual check; automatic checks run shortly after app start.
-- If an update is available but cannot install automatically (e.g. unsigned build), download the latest installer from Releases.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+Clone the repo, run `npm install`, then `npm start` for local development. See `package.json` scripts for packaging. Do not commit production secrets or installer binaries.
 
 ## License
 

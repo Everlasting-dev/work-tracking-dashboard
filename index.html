@@ -16,17 +16,18 @@
   <div id="splash">
     <div class="splash-inner">
       <div class="splash-logo-mark">
-        <svg width="42" height="42" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-          <rect x="14" y="28" width="52" height="11" rx="5.5" fill="white" opacity="0.95"/>
-          <path d="M74 30 L80 36 L90 23" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-          <rect x="14" y="46" width="40" height="11" rx="5.5" fill="white" opacity="0.65"/>
-          <rect x="14" y="64" width="26" height="11" rx="5.5" fill="white" opacity="0.4"/>
+        <svg width="40" height="40" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <rect x="14" y="28" width="52" height="11" rx="5.5" fill="#ffffff"/>
+          <path d="M74 30 L80 36 L90 23" stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="14" y="46" width="40" height="11" rx="5.5" fill="#ffffff"/>
+          <rect x="14" y="64" width="26" height="11" rx="5.5" fill="#ffffff"/>
         </svg>
       </div>
       <p class="splash-brand">WORKTRACKER</p>
+      <p class="splash-edition">Black &amp; White Edition</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
-      <p class="splash-status">Initializing workspace…</p>
-      <p class="splash-version">v2.2.0-alpha.2</p>
+      <p class="splash-status" id="splash-status">Loading local database…</p>
+      <p class="splash-version">v2.2.8</p>
     </div>
   </div>
 
@@ -44,23 +45,36 @@
   <!-- Main App (hidden until logged in) -->
   <div id="app" class="app-layout" style="display:none">
     <aside class="sidebar" id="sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-icon-svg">
-          <svg width="18" height="18" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="white" opacity="0.95"/>
-            <path d="M74 30 L80 36 L90 23" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="white" opacity="0.65"/>
-            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="white" opacity="0.4"/>
+      <div class="sidebar-brand" title="WorkTracker">
+        <div class="brand-icon-svg brand-icon-bw">
+          <svg width="20" height="20" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <rect x="14" y="28" width="52" height="11" rx="5.5" fill="#fff"/>
+            <path d="M74 30 L80 36 L90 23" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="14" y="46" width="40" height="11" rx="5.5" fill="#fff"/>
+            <rect x="14" y="64" width="26" height="11" rx="5.5" fill="#fff"/>
           </svg>
         </div>
         <span class="brand-name">WorkTracker</span>
       </div>
 
       <div class="sidebar-clock" id="sidebar-clock" aria-live="off" aria-label="Current time">
-        <div class="sc-time-row">
-          <span class="sc-time" id="sc-time">00:00:00</span><span class="sc-ms" id="sc-ms">.00</span>
+        <svg class="clock-face" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="clock-face-ring" cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="3.5"/>
+          <g class="clock-ticks"></g>
+          <line class="clock-hand clock-hour" x1="60" y1="60" x2="60" y2="34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line class="clock-hand clock-minute" x1="60" y1="60" x2="60" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <line class="clock-hand clock-second" x1="60" y1="60" x2="60" y2="18" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+          <circle cx="60" cy="60" r="2.5" fill="currentColor"/>
+        </svg>
+        <div class="clock-digital">
+          <span class="sc-time" id="sc-time">00:00:00</span>
+          <span class="sc-date" id="sc-date">Mon 01 Jan</span>
         </div>
-        <span class="sc-date" id="sc-date">Mon 01 Jan</span>
+        <div class="clock-progress">
+          <div class="clock-bar-row"><span class="clock-bar-label">Year</span><div class="clock-bar"><div class="clock-bar-fill clock-bar-fill--year" id="sc-year-fill"></div></div><b class="clock-bar-pct" id="sc-year-pct">0%</b></div>
+          <div class="clock-bar-row"><span class="clock-bar-label">Month</span><div class="clock-bar"><div class="clock-bar-fill clock-bar-fill--month" id="sc-month-fill"></div></div><b class="clock-bar-pct" id="sc-month-pct">0%</b></div>
+          <div class="clock-bar-row"><span class="clock-bar-label">Week</span><div class="clock-bar"><div class="clock-bar-fill clock-bar-fill--week" id="sc-week-fill"></div></div><b class="clock-bar-pct" id="sc-week-pct">0%</b></div>
+        </div>
       </div>
 
       <nav class="sidebar-nav" id="sidebar-nav">
@@ -74,15 +88,10 @@
         </a>
         <a href="#/users" class="nav-item" data-nav="users">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          <span>Users</span>
-        </a>
-        <a href="#/notifications" class="nav-item" data-nav="notifications" id="nav-notif">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-          <span>Notifications</span>
-          <span class="nav-item-badge hidden" id="notif-badge">0</span>
+          <span>Team</span>
         </a>
         <a href="#/dashboard" class="nav-item" data-nav="dashboard" id="nav-dashboard" style="display:none">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
           <span>Dashboard</span>
         </a>
         <a href="#/reports" class="nav-item" data-nav="reports" id="nav-reports" style="display:none">
@@ -93,31 +102,23 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
           <span>Admin</span>
         </a>
-        <a href="#/settings" class="nav-item" data-nav="settings" id="nav-settings" style="display:none">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span>Settings</span>
-        </a>
       </nav>
 
-      <!-- New Project quick-action -->
-      <div class="sidebar-new-project-wrap">
-        <button class="sidebar-new-project-btn" data-action="add-project">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New Project
-        </button>
-      </div>
-
       <div class="sidebar-footer">
-        <div id="sidebar-user" class="sidebar-user-info sidebar-user-clickable" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false"></div>
+        <div class="sidebar-footer-actions" id="sidebar-footer-actions"></div>
+        <div class="sidebar-footer-user sidebar-user-clickable" id="sidebar-footer-user" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false"></div>
         <div id="user-menu" class="user-menu-popup hidden" role="menu"></div>
       </div>
     </aside>
 
     <div class="app-body">
-      <main class="main-content" id="main-content">
-        <div id="content" class="content-area"></div>
-      </main>
+      <div class="app-main-column">
+        <main class="main-content" id="main-content">
+          <div id="content" class="content-area"></div>
+        </main>
+      </div>
       <aside id="document-panel" class="document-panel hidden" aria-label="Project documents"></aside>
+      <aside id="ranking-panel" class="ranking-panel hidden" aria-label="How ranking works"></aside>
     </div>
 
     <!-- Mobile Bottom Navigation (visible only on small screens) -->
@@ -137,6 +138,21 @@
       </a>
     </nav>
   </div>
+
+  <div id="notes-backdrop" class="notes-backdrop hidden" aria-hidden="true"></div>
+  <aside id="notes-panel" class="notes-panel hidden" aria-label="Personal notes">
+    <div class="notes-panel-head">
+      <button type="button" class="notes-panel-add-btn" data-action="add-personal-note" title="New note" aria-label="New note">+</button>
+      <h2>Notes</h2>
+      <button type="button" class="btn-icon" data-action="close-notes" aria-label="Close notes">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="notes-panel-search-wrap">
+      <input type="search" id="notes-panel-search" class="notes-panel-search" placeholder="Search…" autocomplete="off" aria-label="Search notes">
+    </div>
+    <div class="notes-panel-list" id="notes-panel-list"></div>
+  </aside>
 
   <div id="chat-dock-root" class="chat-dock-root" style="display:none"></div>
   <div id="offline-sync-banner" class="offline-sync-banner hidden" aria-live="polite"></div>

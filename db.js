@@ -259,6 +259,51 @@ db.version(13).stores({
   userFavorites: '++id, userId, favoriteUserId, &[userId+favoriteUserId], createdAt'
 });
 
+db.version(14).stores({
+  projects: '++id, name, type, status, priority, ownerId, classroomId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt',
+  classrooms: '++id, name, createdAt',
+  userClassrooms: '++id, userId, classroomId, &[userId+classroomId]',
+  directMessages: '++id, [fromUserId+toUserId], createdAt',
+  workflowTemplates: '++id, name, createdBy, createdAt, updatedAt',
+  userFavorites: '++id, userId, favoriteUserId, &[userId+favoriteUserId], createdAt',
+  personalNotes: '++id, userId, done, sortOrder, createdAt, updatedAt'
+}).upgrade(async tx => {
+  const genPalette = (seed) => {
+    let s = Number(seed) || 1;
+    const rng = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+    const hue = Math.floor(rng() * 360);
+    const hsl = (h, sat, lit) => {
+      const a = sat * Math.min(lit, 1 - lit);
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const c = lit - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * c).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    };
+    return { primary: hsl(hue, 0.55, 0.42), tint: hsl(hue, 0.35, 0.92), muted: hsl(hue, 0.2, 0.82) };
+  };
+  await tx.table('classrooms').toCollection().modify(room => {
+    if (!room.themePalette?.primary) {
+      room.themePalette = genPalette(room.id || room.name);
+      if (!room.color) room.color = room.themePalette.primary;
+    }
+  });
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -509,11 +554,29 @@ const LocalDB = {
     return db.departments.delete(key);
   },
 
+  _genClassroomPalette(seed) {
+    let s = Number(seed) || 1;
+    const rng = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+    const hue = Math.floor(rng() * 360);
+    const hsl = (h, sat, lit) => {
+      const a = sat * Math.min(lit, 1 - lit);
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const c = lit - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * c).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    };
+    const primary = hsl(hue, 0.55, 0.42);
+    return { primary, tint: hsl(hue, 0.35, 0.92), muted: hsl(hue, 0.2, 0.82) };
+  },
+
   async ensureDefaultClassroom() {
     let row = await db.classrooms.orderBy('id').first();
     if (row) return row.id;
     const now = new Date().toISOString();
-    return db.classrooms.add({ name: 'Main Classroom', description: 'Default workspace', color: '#4f46e5', createdAt: now, updatedAt: now });
+    const themePalette = this._genClassroomPalette(Date.now());
+    return db.classrooms.add({ name: 'Main Classroom', description: 'Default workspace', color: themePalette.primary, themePalette, createdAt: now, updatedAt: now });
   },
 
   async getClassrooms() {
@@ -521,9 +584,37 @@ const LocalDB = {
     return rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   },
 
-  async createClassroom({ name, description = '', color = '#4f46e5' }) {
+  async createClassroom({ name, description = '' }) {
     const now = new Date().toISOString();
-    return db.classrooms.add({ name: name || 'Classroom', description, color, createdAt: now, updatedAt: now });
+    const tempId = Date.now() % 1000000;
+    const themePalette = this._genClassroomPalette(tempId + (name || '').length);
+    return db.classrooms.add({ name: name || 'Classroom', description, color: themePalette.primary, themePalette, createdAt: now, updatedAt: now });
+  },
+
+  async getPersonalNotes(userId) {
+    const uid = Number(userId);
+    const rows = await db.personalNotes.where('userId').equals(uid).toArray();
+    return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.createdAt || '').localeCompare(b.createdAt || ''));
+  },
+
+  async createPersonalNote({ userId, content, done = false }) {
+    const now = new Date().toISOString();
+    const uid = Number(userId);
+    const existing = await db.personalNotes.where('userId').equals(uid).count();
+    return db.personalNotes.add({ userId: uid, content: String(content || '').slice(0, 4000), done: !!done, sortOrder: existing * 10, createdAt: now, updatedAt: now });
+  },
+
+  async updatePersonalNote(id, patch = {}) {
+    const allowed = { updatedAt: new Date().toISOString() };
+    if (patch.content !== undefined) allowed.content = String(patch.content || '').slice(0, 4000);
+    if (patch.done !== undefined) allowed.done = !!patch.done;
+    if (patch.sortOrder !== undefined) allowed.sortOrder = Number(patch.sortOrder);
+    await db.personalNotes.update(Number(id), allowed);
+    return db.personalNotes.get(Number(id));
+  },
+
+  async deletePersonalNote(id) {
+    return db.personalNotes.delete(Number(id));
   },
 
   async ensureSampleClassroom(ownerId) {

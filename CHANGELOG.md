@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.2.8
+
+### Fixed
+- Session and logout persistence — signed-out state survives restarts; clean client reset on logout.
+- Member task visibility — assigned tasks show correctly for non-admin members.
+- Member notification bell — in-app alerts for relevant team activity.
+- Chat unread indicators — bold rows and launcher badge for unread messages.
+- Co-editor alerts — notifications when someone joins as a co-editor on your project.
+- Tasks board filters — status and search filters apply correctly in board view.
+- Splash screen — scrollbar alignment during startup loading.
+
+### Changed
+- Profile fields — email and department display with appropriate edit locks for members.
+- Admin sidebar — shield icon for admin-only areas.
+- Save-as-template modal and black-and-white sticky notes styling (2.2.6–2.2.7 carry-over).
+
+### Distribution
+- **Stable go-live:** v2.2.8 is the only publicly downloadable release; auto-updater follows stable Latest only.
+
+## 2.2.1
+
+### Changed — UI overhaul
+- Black & white minimalist theme with Pinterest-style icon sidebar and hover tooltips.
+- Student Life OS analog clock with digital time and Year / Month / Week progress bars.
+- Classroom auto-randomized colour palettes; main content tints when a classroom filter is active.
+- Personal Notes slide-out panel (per-user, cloud sync) for quick todos and reminders.
+- Enhanced bootstrap splash with real loading step labels.
+- Route and card entrance animations; scrollable panels polish.
+
 ## 2.2.0-alpha.2
 
 ### Fixed
