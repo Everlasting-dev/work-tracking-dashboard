@@ -2,30 +2,21 @@
 
 ## 2.1.0-beta.18
 
-Same build as 2.1.0-alpha.1, re-versioned as beta.18 so the in-app updater recognizes it as newer than 2.1.0-beta.17 (semver ranks `alpha` below `beta`, so alpha.1 was never offered to beta installs).
+Re-versioned from 2.1.0-alpha.1 so the in-app updater recognizes it as newer than 2.1.0-beta.17 (semver ranks `alpha` below `beta`).
 
-## 2.1.0-alpha.1
-
-- Fixed cloud sync diagnostics showing "issues need attention" while the details modal reported zero queued/failed jobs — the banner and modal now read the same SyncEngine queue, with retry/clear/copy wired to it.
-- Schema-mismatch sync writes (optional new columns/tables not yet migrated) are dropped instead of sticking as permanent failed jobs.
-- Replaced user-facing "Supabase" wording with neutral cloud/sync language across toasts, banners, and the sync diagnostics modal.
-- Global Tasks board is now a wrapping tile grid (fixed-size tiles, vertical scroll inside each) instead of a horizontal scroll strip; long project names scroll on the left, counts stay on the right.
-- Projects landing page keeps header, scope, search, filters, and status pills sticky while only the project grid scrolls.
-- Built-in workflow templates (Basic project, Software feature, Content/docs) auto-fill editable starting tasks when creating a project.
-- Logistics shipment workflow: auto-fills preview steps in the new-project dialog, seeds workflow tasks on create without duplicates, backfills missing steps when opening a shipment project, and lets you advance steps from the workflow card.
-- Removed Chat from the sidebar (dock launcher remains); grouped How-to, Report a bug, About, and Check for updates under a Help submenu.
-- Chess-piece rank icons on profiles, dashboard, Users tab, and ranking explainer; black-and-white favicon.
-
-## 2.1.0-beta.18
-
-- Project tasks are now a board-only Kanban: drag cards between columns to change status and reorder within a column, click a card to open details, and tasks show oldest-first. The board order (`sort_order`) syncs to Supabase.
-- Task titles are now editable directly in the task detail modal and sync to the cloud.
-- Added editable, Supabase-backed Workflow Templates. Create/edit them in Settings, pick one when creating a project to auto-fill editable starting tasks, and save a project's current board as a new template.
-- New public Users tab showing everyone's rank, bio, presence (online/offline dots via a 60s heartbeat), and an expandable explanation of how the ranking system scores contributions.
-- Replaced the full-page chat with a docked hybrid chat panel: DM anyone, pin favorites, see who's online, and switch between general/project channels without leaving your current view.
-- Completing a project now fires an animated celebration and notifies the whole classroom, crediting the owner and co-editors as their contributor ranks rise.
-- Bug reports can now be managed in-app: admins set ticket status (open / in progress / sent / fixed / closed / won't fix), attach a GitHub issue URL, and add a resolution note that's sent back to the reporter.
-- Monthly reports now list project co-authors/editors, and the Settings project-visibility controls are grouped by classroom instead of one long flat list.
+- Project tasks are now a board-only Kanban: drag cards between columns to change status and reorder within a column, click a card to open details, and tasks show oldest-first. Board order syncs to the cloud.
+- Task titles are editable directly in the task detail modal.
+- Editable workflow templates in Settings; built-in templates (Basic project, Software feature, Content/docs) and custom templates auto-fill starting tasks when creating a project. Save a project's board as a new template.
+- Logistics shipment workflow: preview steps in the new-project dialog, seed workflow tasks on create, backfill on open, advance steps from the workflow card.
+- New public Users tab — ranks (chess tiers), bios, presence heartbeat, ranking explainer.
+- Docked hybrid chat (DMs, favorites, channels); chat removed from sidebar — use the bottom-right launcher.
+- Project completion celebration and classroom notifications; contributor ranks update live.
+- Fixed cloud sync diagnostics — banner and details modal now read the same queue; retry/clear/copy wired; schema-mismatch writes no longer stick as permanent failures.
+- Neutral cloud/sync wording in the UI (no backend product names in user messages).
+- Global Tasks board: wrapping tiles with per-tile vertical scroll; Projects page sticky header/filters.
+- Help submenu: How-to, Report a bug, About, Check for updates.
+- Admin bug ticket status, GitHub issue URL, resolution notes; monthly reports list co-authors/editors; visibility grouped by classroom.
+- Chess-piece rank icons; black-and-white favicon.
 
 ## 2.1.0-beta.17
 

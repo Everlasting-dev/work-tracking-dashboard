@@ -1,58 +1,82 @@
 # WorkTracker
 
-WorkTracker is a desktop and web workspace for tracking projects, tasks, files, team activity, and lightweight team communication.
+WorkTracker is a desktop workspace for tracking projects, tasks, files, team activity, and lightweight team communication.
 
-It supports local-first use for offline work and optional cloud sync for shared teams. The Windows desktop build is designed for normal end users: install it, sign in once, keep working, and receive quiet update prompts when a new patch is available.
+It is **local-first**: work offline on your machine, then sync to the cloud when you are online. The Windows desktop build is aimed at everyday use — install once, sign in, and receive quiet update prompts when a newer build is available.
 
 ## Current Release
 
-**2.1.0-beta.3**
+**[2.1.0-beta.18](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/tag/v2.1.0-beta.18)** (latest)
 
-This beta focuses on desktop polish, offline sync, classroom workspaces, direct chats, profile visibility, bug reporting, and a calmer update experience.
+| | |
+|---|---|
+| **Download** | [WorkTracker-Setup-2.1.0-beta.18.exe](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/download/v2.1.0-beta.18/WorkTracker-Setup-2.1.0-beta.18.exe) |
+| **Check for updates** | User menu → **Help** → **Check for updates** (or the desktop menu) |
+| **Requires** | Windows 10/11, x64 |
+
+> **Versioning note:** Releases use semver. Stay on the `beta` line (`beta.18`, `beta.19`, …) so the in-app updater can offer patches to existing beta installs. An `alpha` tag ranks *below* `beta` and will not be offered automatically.
 
 ## Highlights
 
-- Project dashboard with ownership, editor access, and classroom filtering
-- Per-project task boards, lists, timeline chain view, files, notes, and activity
-- Shared cloud mode with offline cache and queued sync when the network returns
-- Windows installer with automatic update checks through GitHub Releases
-- General chat plus direct user-to-user chats
-- User profiles with bio and avatar support
-- Admin tools for users, roles, classrooms, integrations, and bug reports
-- In-app bug reports with optional screenshot attachments
+### Projects & tasks
+- Project dashboard with ownership, editor access, classrooms, departments, and sticky search/filters
+- Per-project **Kanban board** — drag cards to change status or reorder; click to open details; editable task titles
+- Global **Tasks** view with wrapping project tiles and per-tile vertical scroll
+- Built-in and custom **workflow templates** that auto-fill starting tasks when creating a project
+- **Logistics shipment workflow** with document uploads and step-by-step handoff
+- Project completion celebration and classroom-wide notifications
 
-## Desktop App
+### Team & collaboration
+- **Users** tab — ranks (chess tiers), bios, presence, ranking explainer
+- **Docked chat** — DMs, favorites, online users, general and project channels (launcher bottom-right)
+- User profiles with avatar, bio, and contribution stats
+- Contributor ranking computed from projects, tasks, and co-editing
 
-Build the Windows installer:
+### Files & sync
+- Cloud-backed attachments — metadata syncs locally; files fetch on demand when opened
+- Offline-first with queued sync when the network returns; unified sync diagnostics (retry / clear / details)
+- Discord webhooks for project and general channels (when online)
+
+### Admin
+- User, role, classroom, department, and project-visibility management (grouped by classroom)
+- Editable workflow templates in Settings
+- In-app bug reports with admin ticket status, GitHub issue link, and resolution notes
+- Monthly reports with co-authors/editors; export and AI report (cloud)
+
+## Install (end users)
+
+1. Download **WorkTracker-Setup-2.1.0-beta.18.exe** from [Releases](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+2. Run the installer (Windows may show a SmartScreen prompt — the build is unsigned).
+3. Sign in. In cloud mode, use **Sync** on the auth screen or after login if you need to pull team data first.
+
+## Development
 
 ```bash
 npm install
-npm run dist:win
+npm start          # run Electron locally
+npm run dist:win   # build installer → release/
+npm run publish:win  # build + publish to GitHub Releases (needs GH_TOKEN)
 ```
 
-Installer output is written to `release/`.
+Installer output: `release/WorkTracker-Setup-<version>.exe`
 
-The desktop app keeps the same data behavior as the web app. In cloud mode, Supabase remains the shared online store. When offline, supported changes are stored locally and synced after the connection returns. Discord webhooks still work when the app has internet access. Any separate Discord bridge service should be deployed and managed separately from the desktop installer.
+### Cloud backend (team mode)
+
+Cloud mode needs a configured backend and schema. Apply `supabase/schema.sql` on a fresh or existing database before expecting new features (workflow templates, sort order, bug resolution notes, etc.) to sync end-to-end.
+
+Do **not** commit production secrets, service-role keys, or admin credentials. Keep tokens in your host or CI secret store.
 
 ## Updates
 
-Desktop updates are delivered through GitHub Releases. Each published desktop version should include the generated installer, blockmap, and update manifest from `release/`.
+Desktop updates are delivered through **GitHub Releases**. Each published build includes the installer, `.blockmap`, and `latest.yml` for `electron-updater`.
 
-Users see a subtle notification when an update is ready. Manual update checks should show either an install prompt or a simple no-update message.
-
-## Web App
-
-The web version can run as a static site. Local-only mode stores data in the browser. Cloud mode requires a configured backend and should be deployed using your private production settings.
-
-## Security Notes
-
-Do not commit production secrets, private tokens, service-role keys, or administrator credentials. Keep deployment credentials in your hosting provider or CI secret store.
-
-This repository intentionally keeps operational instructions high level. Production database policies, release credentials, and integration tokens should be managed privately by the project owner.
+- Prerelease updates are enabled (`allowPrerelease: true`).
+- **Help → Check for updates** runs a manual check; automatic checks run shortly after app start.
+- If an update is available but cannot install automatically (e.g. unsigned build), download the latest installer from Releases.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes.
+See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 ## License
 
