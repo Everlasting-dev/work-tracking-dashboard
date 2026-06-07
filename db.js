@@ -235,6 +235,30 @@ db.version(12).stores({
   }
 });
 
+db.version(13).stores({
+  projects: '++id, name, type, status, priority, ownerId, classroomId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt',
+  classrooms: '++id, name, createdAt',
+  userClassrooms: '++id, userId, classroomId, &[userId+classroomId]',
+  directMessages: '++id, [fromUserId+toUserId], createdAt',
+  // Phase 3: user-editable, cloud-synced workflow templates (steps stored as JSON).
+  workflowTemplates: '++id, name, createdBy, createdAt, updatedAt',
+  // Phase 5: pinned chat contacts (favorites) for the docked chat.
+  userFavorites: '++id, userId, favoriteUserId, &[userId+favoriteUserId], createdAt'
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -252,6 +276,19 @@ function generateSalt() {
 }
 
 /* ── Database helpers (Supabase-ready: swap Dexie calls for supabase.from() later) ── */
+
+// True when a Supabase workspace is configured and reachable. Used to decide
+// whether attachments should live in cloud storage (metadata-only locally)
+// instead of being kept as blobs in this device's IndexedDB.
+function attachmentsCloudConfigured() {
+  return (window.WT_STORAGE_MODE === 'hybrid' || window.WT_STORAGE_MODE === 'supabase')
+    && !!window.SupabaseDB;
+}
+function attachmentsCloudReady() {
+  return attachmentsCloudConfigured()
+    && !!window.SupabaseDB._client
+    && (typeof navigator === 'undefined' || navigator.onLine !== false);
+}
 
 const LocalDB = {
   db,
@@ -518,6 +555,11 @@ const LocalDB = {
     return [defaultId];
   },
 
+  async getClassroomMemberIds(classroomId) {
+    const rows = await db.userClassrooms.where('classroomId').equals(Number(classroomId)).toArray();
+    return [...new Set(rows.map(r => Number(r.userId)).filter(Boolean))];
+  },
+
   async setUserClassrooms(userId, classroomIds = []) {
     const uid = Number(userId);
     const ids = [...new Set((classroomIds || []).map(Number).filter(Boolean))];
@@ -678,10 +720,38 @@ const LocalDB = {
     if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'deleted', entityType: 'project', entityId: id, details: p?.name || '' });
   },
 
-  /* Attachments (files stored in IndexedDB) */
+  /* Attachments
+   * Cloud mode: the file is uploaded to Supabase Storage and only its metadata
+   * (path, name, type) is cached locally — the blob is never persisted on this
+   * device, so files are fetched on demand instead of downloaded to every PC.
+   * Offline / local mode: the blob is stored locally and flagged for upload so
+   * the sync engine can push it once the device is back online. */
   async addAttachment(data) {
     const now = new Date().toISOString();
     const fileName = data.fileName || 'file';
+
+    if (attachmentsCloudReady() && data.blob) {
+      try {
+        const meta = await window.SupabaseDB.addAttachment(data);
+        const rec = {
+          id: meta.id,
+          projectId: data.projectId,
+          taskId: data.taskId || null,
+          uploadedBy: data.uploadedBy,
+          fileName,
+          mimeType: data.mimeType || 'application/octet-stream',
+          documentType: data.documentType || '',
+          storagePath: meta.storagePath,
+          createdAt: meta.createdAt || now
+        };
+        await db.attachments.put(rec);
+        await db.projects.update(data.projectId, { updatedAt: now });
+        return meta.id;
+      } catch (err) {
+        console.warn('[attachments] cloud upload failed, keeping a local copy to retry:', err);
+      }
+    }
+
     const id = await db.attachments.add({
       projectId: data.projectId,
       taskId: data.taskId || null,
@@ -690,6 +760,7 @@ const LocalDB = {
       mimeType: data.mimeType || 'application/octet-stream',
       documentType: data.documentType || '',
       blob: data.blob,
+      pendingUpload: attachmentsCloudConfigured(),
       createdAt: now
     });
     await db.projects.update(data.projectId, { updatedAt: now });
@@ -703,14 +774,34 @@ const LocalDB = {
   },
 
   async getAttachment(id) { return db.attachments.get(id); },
-  getAttachmentUrl() { return null; },
+
+  // Build a direct (public bucket) URL for a cloud-stored file so it can be
+  // viewed/downloaded on demand without persisting the blob locally.
+  getAttachmentUrl(storagePath) {
+    if (!storagePath) return '';
+    try {
+      if (window.SupabaseDB?._client?.storage) return window.SupabaseDB.getAttachmentUrl(storagePath);
+    } catch (_) {}
+    const cfg = window.WT_CONFIG || {};
+    if (cfg.supabaseUrl) {
+      const base = String(cfg.supabaseUrl).replace(/\/$/, '');
+      return `${base}/storage/v1/object/public/project-files/${storagePath}`;
+    }
+    return '';
+  },
 
   async deleteAttachment(id, actorUserId = null) {
     const row = await db.attachments.get(id);
+    let cloudDeleted = false;
+    if (row?.storagePath && attachmentsCloudReady()) {
+      try { await window.SupabaseDB.deleteAttachment(id, actorUserId); cloudDeleted = true; }
+      catch (err) { console.warn('[attachments] cloud delete failed:', err); }
+    }
     await db.attachments.delete(id);
     if (row) {
       await db.projects.update(row.projectId, { updatedAt: new Date().toISOString() });
-      if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
+      // SupabaseDB.deleteAttachment already logs the activity when it ran.
+      if (actorUserId && !cloudDeleted) await LocalDB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
     }
   },
 
@@ -750,6 +841,9 @@ const LocalDB = {
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
       priority: data.priority || 'medium',
+      // sort_order on the board. New tasks default to "now" (epoch seconds) so they
+      // land at the bottom; an explicit drag-reorder rewrites these to small indices.
+      sortOrder: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000),
       createdAt: now,
       updatedAt: now
     });
@@ -774,6 +868,7 @@ const LocalDB = {
     delete patch.activityDetails;
     if (patch.assigneeId != null) patch.assigneeId = Number(patch.assigneeId);
     if (patch.workflowStepKey != null) patch.workflowStepKey = patch.workflowStepKey || '';
+    if (patch.sortOrder != null) patch.sortOrder = Number(patch.sortOrder);
     patch.updatedAt = new Date().toISOString();
     const task = await db.tasks.get(id);
     await db.tasks.update(id, patch);
@@ -794,6 +889,66 @@ const LocalDB = {
       await db.projects.update(task.projectId, { updatedAt: new Date().toISOString() });
       if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title || '' });
     }
+  },
+
+  /* Workflow Templates (user-editable; steps = [{ title, priority }]) */
+  _normalizeTemplateSteps(steps) {
+    return (Array.isArray(steps) ? steps : [])
+      .map(s => ({
+        title: (s?.title || '').trim(),
+        priority: ['low', 'medium', 'high', 'urgent'].includes(s?.priority) ? s.priority : 'medium'
+      }))
+      .filter(s => s.title);
+  },
+
+  async getWorkflowTemplates() {
+    const rows = await db.workflowTemplates.toArray();
+    return rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  },
+
+  async getWorkflowTemplate(id) { return db.workflowTemplates.get(Number(id)); },
+
+  async createWorkflowTemplate(data) {
+    const now = new Date().toISOString();
+    const id = await db.workflowTemplates.add({
+      name: (data.name || '').trim() || 'Untitled template',
+      description: (data.description || '').trim(),
+      steps: LocalDB._normalizeTemplateSteps(data.steps),
+      createdBy: data.createdBy || data.actorUserId || null,
+      createdAt: now,
+      updatedAt: now
+    });
+    return id;
+  },
+
+  async updateWorkflowTemplate(id, changes) {
+    const patch = {};
+    if (changes.name != null) patch.name = (changes.name || '').trim() || 'Untitled template';
+    if (changes.description != null) patch.description = (changes.description || '').trim();
+    if (changes.steps != null) patch.steps = LocalDB._normalizeTemplateSteps(changes.steps);
+    patch.updatedAt = new Date().toISOString();
+    await db.workflowTemplates.update(Number(id), patch);
+    return db.workflowTemplates.get(Number(id));
+  },
+
+  async deleteWorkflowTemplate(id) {
+    await db.workflowTemplates.delete(Number(id));
+  },
+
+  /* Chat favorites (Phase 5) */
+  async getFavorites(userId) {
+    return db.userFavorites.where('userId').equals(Number(userId)).toArray();
+  },
+  async addFavorite({ userId, favoriteUserId }) {
+    const a = Number(userId), b = Number(favoriteUserId);
+    const existing = await db.userFavorites.where('[userId+favoriteUserId]').equals([a, b]).first();
+    if (existing) return existing.id;
+    return db.userFavorites.add({ userId: a, favoriteUserId: b, createdAt: new Date().toISOString() });
+  },
+  async removeFavorite(userId, favoriteUserId) {
+    const a = Number(userId), b = Number(favoriteUserId);
+    const existing = await db.userFavorites.where('[userId+favoriteUserId]').equals([a, b]).first();
+    if (existing) await db.userFavorites.delete(existing.id);
   },
 
   /* Milestones */
@@ -950,6 +1105,7 @@ const LocalDB = {
       screenshots: Array.isArray(screenshots) ? screenshots : [],
       status: githubIssueUrl ? 'sent' : 'open',
       githubIssueUrl,
+      resolutionNote: '',
       createdAt: now,
       updatedAt: now
     });
@@ -958,6 +1114,17 @@ const LocalDB = {
   async getBugReports({ limit = 100 } = {}) {
     const rows = await db.bugReports.toArray();
     return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, limit);
+  },
+
+  async updateBugReport(id, patch = {}) {
+    const allowed = {};
+    if (patch.status !== undefined) allowed.status = patch.status;
+    if (patch.githubIssueUrl !== undefined) allowed.githubIssueUrl = patch.githubIssueUrl;
+    if (patch.resolutionNote !== undefined) allowed.resolutionNote = patch.resolutionNote;
+    if (patch.severity !== undefined) allowed.severity = patch.severity;
+    allowed.updatedAt = new Date().toISOString();
+    await db.bugReports.update(Number(id), allowed);
+    return db.bugReports.get(Number(id));
   },
 
   /* Migration */

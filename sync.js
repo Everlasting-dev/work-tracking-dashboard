@@ -85,7 +85,8 @@ const SyncEngine = (() => {
     try { cloned = JSON.parse(JSON.stringify(args)); } catch (_) { return args; }
 
     const FOREIGN_KEYS = ['projectId','milestoneId','assigneeId','ownerId',
-                          'uploadedBy','userId','classroomId','actorUserId'];
+                          'uploadedBy','userId','classroomId','actorUserId',
+                          'createdBy','favoriteUserId','fromUserId','toUserId'];
 
     // First positional arg is often a bare ID for update/delete
     if (/^(update|delete)/.test(method) &&
@@ -125,6 +126,8 @@ const SyncEngine = (() => {
     'sendDirectMessage',
     'saveGeneralWebhook','saveProjectWebhook','deleteWebhook',
     'touchLastSeen','recordLoginSession',
+    'createWorkflowTemplate','updateWorkflowTemplate','deleteWorkflowTemplate',
+    'addFavorite','removeFavorite',
   ];
 
   function _wrapLocalDB() {
@@ -202,14 +205,22 @@ const SyncEngine = (() => {
         op.status = 'done';
         _lastError = '';
       } catch (err) {
-        op.attempts++;
-        op.error  = String(err?.message || err).slice(0, 200);
-        op.status = op.attempts >= 3 ? 'failed' : 'pending';
-        _lastError = op.error;
-        if (op.status === 'failed') {
-          window.dispatchEvent(new CustomEvent('wt-sync-error', {
-            detail: { summary: op.method, error: op.error }
-          }));
+        const msg = String(err?.message || err);
+        // Optional/not-yet-migrated schema: drop the op instead of letting it
+        // pile up as a permanent "issue" the user can't resolve.
+        if (/does not exist|schema cache|could not find .* column|column .* of relation/i.test(msg)) {
+          op.status = 'done';
+          console.warn('[SyncEngine] skipping op for missing schema:', op.method, msg.slice(0, 160));
+        } else {
+          op.attempts++;
+          op.error  = msg.slice(0, 200);
+          op.status = op.attempts >= 3 ? 'failed' : 'pending';
+          _lastError = op.error;
+          if (op.status === 'failed') {
+            window.dispatchEvent(new CustomEvent('wt-sync-error', {
+              detail: { summary: op.method, error: op.error }
+            }));
+          }
         }
       }
       _publish();
@@ -251,6 +262,7 @@ const SyncEngine = (() => {
       createUser: 'users', createClassroom: 'classrooms',
       createAttachment: 'attachments', createNotification: 'notifications',
       createBugReport: 'bugReports', sendDirectMessage: 'directMessages',
+      createWorkflowTemplate: 'workflowTemplates', addFavorite: 'userFavorites',
     };
     const table = TABLE_MAP[method];
     if (!table) return;
@@ -285,6 +297,60 @@ const SyncEngine = (() => {
     await table.bulkPut(valid).catch(() => {});
   }
 
+  // Store only attachment metadata locally (no blobs). Never overwrite a row
+  // this device is still trying to upload.
+  async function _bulkPutAttachments(table, rows) {
+    if (!table || !Array.isArray(rows)) return;
+    const meta = rows.filter(r => r?.id != null).map(r => ({
+      id: r.id,
+      projectId: r.projectId,
+      taskId: r.taskId || null,
+      uploadedBy: r.uploadedBy,
+      fileName: r.fileName,
+      mimeType: r.mimeType,
+      documentType: r.documentType || '',
+      storagePath: r.storagePath,
+      createdAt: r.createdAt
+    }));
+    if (!meta.length) return;
+    let localOnlyIds = new Set();
+    try {
+      // Any row still holding a blob without a cloud path is a file this device
+      // hasn't uploaded yet — don't overwrite it before it's pushed up.
+      const localOnly = await table.filter(a => a.blob && !a.storagePath).toArray();
+      localOnlyIds = new Set(localOnly.map(a => a.id));
+    } catch (_) {}
+    const safe = meta.filter(r => !localOnlyIds.has(r.id));
+    await table.bulkPut(safe).catch(() => {});
+  }
+
+  // Upload any files that live only on this device (offline uploads + legacy
+  // files from before cloud sync worked), then replace the local blob row with
+  // cloud metadata so the device stops storing the file itself.
+  async function _flushAttachments() {
+    if (!_client || !navigator.onLine || !window.SupabaseDB?.addAttachment) return;
+    const ldb = window.LocalDB?.db;
+    if (!ldb?.attachments) return;
+    let pending = [];
+    try { pending = await ldb.attachments.filter(a => a.blob && !a.storagePath).toArray(); } catch (_) { return; }
+    for (const a of pending) {
+      try {
+        const meta = await window.SupabaseDB.addAttachment({
+          projectId: a.projectId, taskId: a.taskId || null, uploadedBy: a.uploadedBy,
+          fileName: a.fileName, mimeType: a.mimeType, documentType: a.documentType || '', blob: a.blob
+        });
+        await ldb.attachments.delete(a.id);
+        await ldb.attachments.put({
+          id: meta.id, projectId: a.projectId, taskId: a.taskId || null, uploadedBy: a.uploadedBy,
+          fileName: a.fileName, mimeType: a.mimeType, documentType: a.documentType || '',
+          storagePath: meta.storagePath, createdAt: meta.createdAt || a.createdAt
+        });
+      } catch (err) {
+        console.warn('[SyncEngine] attachment upload retry failed:', err);
+      }
+    }
+  }
+
   async function pull() {
     if (_pullRunning || !_client || !navigator.onLine) return;
     _pullRunning = true;
@@ -297,7 +363,8 @@ const SyncEngine = (() => {
       // Parallel fetch of all collections from Supabase
       const [
         users, projects, tasks, departments, classrooms,
-        milestones, updates, notifications, accessRequests, bugReports, userClassrooms
+        milestones, updates, notifications, accessRequests, bugReports, userClassrooms,
+        attachments, workflowTemplates, favorites
       ] = await Promise.allSettled([
         sb.getUsers(),
         sb.getProjects(),
@@ -326,6 +393,20 @@ const SyncEngine = (() => {
           if (error) throw error;
           return (data || []).map(r => ({ id: r.id, userId: r.user_id, classroomId: r.classroom_id, createdAt: r.created_at }));
         }),
+        // Attachment metadata only — never the file blobs. Files are fetched on
+        // demand from Supabase Storage when a user actually opens them.
+        sb._sb().from('wt_attachments').select('*').then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map(r => sb._mapAttachment(r));
+        }),
+        sb.getWorkflowTemplates ? sb.getWorkflowTemplates() : Promise.resolve([]),
+        (async () => {
+          const session = _getSession();
+          if (!session?.userId) return [];
+          const { data, error } = await sb._sb().from('wt_user_favorites').select('*').eq('user_id', session.userId);
+          if (error) throw error;
+          return (data || []).map(r => ({ id: r.id, userId: r.user_id, favoriteUserId: r.favorite_user_id, createdAt: r.created_at }));
+        })(),
       ]);
 
       const ldb = window.LocalDB?.db;
@@ -342,6 +423,9 @@ const SyncEngine = (() => {
       if (accessRequests.status=== 'fulfilled') await _bulkPut(ldb.projectAccessRequests, accessRequests.value);
       if (bugReports.status    === 'fulfilled') await _bulkPut(ldb.bugReports,            bugReports.value);
       if (userClassrooms.status=== 'fulfilled') await _bulkPut(ldb.userClassrooms,        userClassrooms.value);
+      if (attachments.status   === 'fulfilled') await _bulkPutAttachments(ldb.attachments, attachments.value);
+      if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));
+      if (favorites.status     === 'fulfilled' && ldb.userFavorites) await _bulkPut(ldb.userFavorites, favorites.value);
 
       const criticalFailures = [
         ['projects', projects],
@@ -362,6 +446,9 @@ const SyncEngine = (() => {
 
       _lastPullAt = Date.now();
       localStorage.setItem(PULL_KEY, String(_lastPullAt));
+
+      // Push up any files that were added while offline.
+      await _flushAttachments();
 
       // Notify the app to refresh the current view
       window.dispatchEvent(new CustomEvent('wt-sync-pulled'));
@@ -408,8 +495,21 @@ const SyncEngine = (() => {
       priority:        t.priority        || 'medium',
       notes:           t.notes           || '',
       customFields:    t.customFields    || [],
+      sortOrder:       t.sortOrder       ?? 0,
       createdAt:       t.createdAt       || new Date().toISOString(),
       updatedAt:       t.updatedAt       || new Date().toISOString(),
+    }));
+  }
+
+  function _normalizeTemplates(rows = []) {
+    return rows.map(t => ({
+      id:          t.id,
+      name:        t.name        || 'Untitled template',
+      description: t.description || '',
+      steps:       Array.isArray(t.steps) ? t.steps : [],
+      createdBy:   t.createdBy   ?? null,
+      createdAt:   t.createdAt   || new Date().toISOString(),
+      updatedAt:   t.updatedAt   || new Date().toISOString(),
     }));
   }
 
@@ -444,6 +544,17 @@ const SyncEngine = (() => {
     try {
       _client = window.supabase.createClient(url, anonKey);
       window.SupabaseDB._client = _client;
+      // SupabaseDB caches fetched rows in its internal shadow state. In the
+      // offline-first architecture SupabaseDB.init()/_initLocalSync() is never
+      // called, so we must initialize that shadow state here — otherwise every
+      // getProjects/getTasks/getUsers/getDepartments call throws on a null
+      // _shadowState and the pull silently drops projects, tasks, etc.
+      if (typeof window.SupabaseDB._loadShadowState === 'function' && !window.SupabaseDB._shadowState) {
+        window.SupabaseDB._loadShadowState();
+      }
+      if (typeof window.SupabaseDB._loadSyncQueue === 'function' && !Array.isArray(window.SupabaseDB._syncQueue)) {
+        window.SupabaseDB._loadSyncQueue();
+      }
     } catch (err) {
       console.error('[SyncEngine] init error:', err);
       return;
@@ -466,7 +577,53 @@ const SyncEngine = (() => {
     return true;
   }
 
-  return { init, pull, flush, getStatus };
+  // ── Queue inspection / management (for diagnostics UI) ───────────────
+
+  function _opSummary(op) {
+    const a = op.args || [];
+    const first = a[0];
+    const data = a.find(x => x && typeof x === 'object' && !Array.isArray(x));
+    const name = data?.name || data?.title || data?.message || (typeof first === 'object' ? '' : first);
+    return name ? `${op.method} — ${String(name).slice(0, 80)}` : op.method;
+  }
+
+  function getQueueDetails() {
+    return _queue
+      .filter(o => o.status !== 'done')
+      .map(o => ({
+        type: o.method,
+        status: o.status,
+        attempts: o.attempts || 0,
+        summary: _opSummary(o),
+        lastError: o.error || '',
+        nextRetryLabel: '',
+        payloadJson: (() => { try { return JSON.stringify(o.args, null, 2); } catch (_) { return ''; } })(),
+      }));
+  }
+
+  function clearFailed() {
+    const before = _queue.length;
+    _queue = _queue.filter(o => o.status !== 'failed');
+    const removed = before - _queue.length;
+    _lastError = '';
+    _saveQueue();
+    _publish();
+    return removed;
+  }
+
+  async function retry() {
+    let reset = 0;
+    for (const op of _queue) {
+      if (op.status === 'failed') { op.status = 'pending'; op.attempts = 0; op.error = null; reset++; }
+    }
+    _lastError = '';
+    _saveQueue();
+    _publish();
+    await flush();
+    return reset;
+  }
+
+  return { init, pull, flush, getStatus, getQueueDetails, clearFailed, retry };
 })();
 
 window.SyncEngine = SyncEngine;

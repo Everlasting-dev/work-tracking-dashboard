@@ -201,6 +201,7 @@ const SupabaseDB = {
   },
 
   _shadowSetCollection(name, rows, keyField = 'id') {
+    if (!this._shadowState) this._loadShadowState();
     const next = {};
     for (const row of rows || []) {
       if (row?.[keyField] == null) continue;
@@ -214,6 +215,7 @@ const SupabaseDB = {
   },
 
   _shadowUpsert(name, row, keyField = 'id') {
+    if (!this._shadowState) this._loadShadowState();
     if (!row || row[keyField] == null) return null;
     this._shadowState.collections[name][String(row[keyField])] = this._clone(row);
     this._shadowState.at[name] = Date.now();
@@ -222,6 +224,7 @@ const SupabaseDB = {
   },
 
   _shadowDelete(name, key) {
+    if (!this._shadowState) this._loadShadowState();
     delete this._shadowState.collections[name][String(key)];
     this._shadowState.at[name] = Date.now();
     this._persistShadowState();
@@ -293,6 +296,7 @@ const SupabaseDB = {
     if (changes.workflowStepKey !== undefined) next.workflowStepKey = changes.workflowStepKey || '';
     if (changes.notes !== undefined) next.notes = changes.notes ?? '';
     if (changes.customFields !== undefined) next.customFields = changes.customFields ?? [];
+    if (changes.sortOrder !== undefined) next.sortOrder = Number(changes.sortOrder) || 0;
     next.updatedAt = new Date().toISOString();
     return next;
   },
@@ -552,7 +556,8 @@ const SupabaseDB = {
       id: r.id, userId: r.user_id, title: r.title || '', description: r.description || '',
       severity: r.severity || 'normal', appVersion: r.app_version || '', screenshots: Array.isArray(r.screenshots) ? r.screenshots : [],
       status: r.status || 'open',
-      githubIssueUrl: r.github_issue_url || '', createdAt: r.created_at, updatedAt: r.updated_at
+      githubIssueUrl: r.github_issue_url || '', resolutionNote: r.resolution_note || '',
+      createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
 
@@ -574,6 +579,19 @@ const SupabaseDB = {
       workflowStepKey: r.workflow_step_key || '',
       title: r.title, dueDate: r.due_date || '', status: r.status, priority: r.priority,
       notes: r.notes || '', customFields,
+      sortOrder: r.sort_order ?? 0,
+      createdAt: r.created_at, updatedAt: r.updated_at
+    };
+  },
+
+  _mapWorkflowTemplate(r) {
+    if (!r) return null;
+    let steps = [];
+    try { steps = r.steps ? (typeof r.steps === 'string' ? JSON.parse(r.steps) : r.steps) : []; } catch (_) {}
+    return {
+      id: r.id, name: r.name || '', description: r.description || '',
+      steps: Array.isArray(steps) ? steps : [],
+      createdBy: r.created_by ?? null,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -1245,7 +1263,7 @@ const SupabaseDB = {
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);
     if (data.uploadedBy) await this.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: row.id, details: fileName });
-    return row.id;
+    return this._mapAttachment(row);
   },
 
   async getAttachments(projectId) {
@@ -1307,6 +1325,7 @@ const SupabaseDB = {
         priority: data.priority || 'medium',
         notes: data.notes || '',
         customFields: data.customFields || [],
+        sortOrder: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000),
         createdAt: now,
         updatedAt: now
       };
@@ -1334,7 +1353,8 @@ const SupabaseDB = {
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium',
       notes: data.notes || '',
-      custom_fields: JSON.stringify(data.customFields || [])
+      custom_fields: JSON.stringify(data.customFields || []),
+      sort_order: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000)
     }).select().single();
     if (error) throw error;
     const updatedAt = new Date().toISOString();
@@ -1440,6 +1460,7 @@ const SupabaseDB = {
     if (changes.workflowStepKey !== undefined) patch.workflow_step_key = changes.workflowStepKey || '';
     if (changes.notes !== undefined) patch.notes = changes.notes ?? '';
     if (changes.customFields !== undefined) patch.custom_fields = JSON.stringify(changes.customFields ?? []);
+    if (changes.sortOrder !== undefined) patch.sort_order = Number(changes.sortOrder) || 0;
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
     if (task) {
@@ -1463,6 +1484,62 @@ const SupabaseDB = {
       this._touchShadowProject(task.projectId);
       if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'deleted', entityType: 'task', entityId: id, details: task.title });
     }
+  },
+
+  /* Workflow templates (Phase 3) */
+  async getWorkflowTemplates() {
+    const { data, error } = await this._sb().from('wt_workflow_templates').select('*').order('name');
+    if (error) throw error;
+    return (data || []).map(r => this._mapWorkflowTemplate(r));
+  },
+
+  async createWorkflowTemplate(data) {
+    const id = data.id ?? await this._nextTableId('wt_workflow_templates');
+    const { data: row, error } = await this._sb().from('wt_workflow_templates').insert({
+      id,
+      name: (data.name || '').trim() || 'Untitled template',
+      description: (data.description || '').trim(),
+      steps: JSON.stringify(data.steps || []),
+      created_by: data.createdBy ?? data.actorUserId ?? null
+    }).select().single();
+    if (error) throw error;
+    return row.id;
+  },
+
+  async updateWorkflowTemplate(id, changes) {
+    const patch = { updated_at: new Date().toISOString() };
+    if (changes.name != null) patch.name = (changes.name || '').trim() || 'Untitled template';
+    if (changes.description != null) patch.description = (changes.description || '').trim();
+    if (changes.steps != null) patch.steps = JSON.stringify(changes.steps || []);
+    const { error } = await this._sb().from('wt_workflow_templates').update(patch).eq('id', id);
+    if (error) throw error;
+  },
+
+  async deleteWorkflowTemplate(id) {
+    const { error } = await this._sb().from('wt_workflow_templates').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /* Chat favorites (Phase 5) */
+  async getFavorites(userId) {
+    const { data, error } = await this._sb().from('wt_user_favorites').select('*').eq('user_id', userId);
+    if (error) throw error;
+    return (data || []).map(r => ({ id: r.id, userId: r.user_id, favoriteUserId: r.favorite_user_id, createdAt: r.created_at }));
+  },
+
+  async addFavorite(data) {
+    const id = data.id ?? await this._nextTableId('wt_user_favorites');
+    const { data: row, error } = await this._sb().from('wt_user_favorites')
+      .upsert({ id, user_id: data.userId, favorite_user_id: data.favoriteUserId }, { onConflict: 'user_id,favorite_user_id' })
+      .select().single();
+    if (error) throw error;
+    return row?.id ?? id;
+  },
+
+  async removeFavorite(userId, favoriteUserId) {
+    const { error } = await this._sb().from('wt_user_favorites').delete()
+      .eq('user_id', userId).eq('favorite_user_id', favoriteUserId);
+    if (error) throw error;
   },
 
   async createMilestone(data) {
@@ -1693,6 +1770,17 @@ const SupabaseDB = {
       throw error;
     }
     return (data || []).map(r => this._mapBugReport(r));
+  },
+
+  async updateBugReport(id, patch = {}) {
+    const payload = { updated_at: new Date().toISOString() };
+    if (patch.status !== undefined) payload.status = patch.status;
+    if (patch.githubIssueUrl !== undefined) payload.github_issue_url = patch.githubIssueUrl || '';
+    if (patch.resolutionNote !== undefined) payload.resolution_note = patch.resolutionNote || '';
+    if (patch.severity !== undefined) payload.severity = patch.severity;
+    const { data, error } = await this._sb().from('wt_bug_reports').update(payload).eq('id', Number(id)).select().single();
+    if (error) throw error;
+    return this._mapBugReport(data);
   },
 
   /* Notifications */
@@ -2190,3 +2278,9 @@ const SupabaseDB = {
     await this.createUpdate({ projectId: jobId, content: 'Started updating resume.' });
   }
 };
+
+// Expose the Supabase adapter globally. SyncEngine and app.js reference
+// window.SupabaseDB; without this assignment it is undefined, which makes
+// SyncEngine.init() throw immediately (window.SupabaseDB._client = ...) and
+// silently disables all cloud sync.
+window.SupabaseDB = SupabaseDB;

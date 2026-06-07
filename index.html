@@ -26,7 +26,7 @@
       <p class="splash-brand">WORKTRACKER</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status">Initializing workspace…</p>
-      <p class="splash-version">v2.1.0-beta.14</p>
+      <p class="splash-version">v2.1.0-beta.17</p>
     </div>
   </div>
 
@@ -72,9 +72,9 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
           <span>Tasks</span>
         </a>
-        <a href="#/chat" class="nav-item" data-nav="chat">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span>Chat</span>
+        <a href="#/users" class="nav-item" data-nav="users">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Users</span>
         </a>
         <a href="#/notifications" class="nav-item" data-nav="notifications" id="nav-notif">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
@@ -135,13 +135,10 @@
         <span>Alerts</span>
         <span class="nav-item-badge hidden" id="mobile-notif-badge">0</span>
       </a>
-      <a href="#/chat" class="nav-item mobile-nav-item" data-nav="chat">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        <span>Chat</span>
-      </a>
     </nav>
   </div>
 
+  <div id="chat-dock-root" class="chat-dock-root" style="display:none"></div>
   <div id="offline-sync-banner" class="offline-sync-banner hidden" aria-live="polite"></div>
   <div class="notif-panel hidden" id="notif-panel" role="dialog" aria-label="Notifications"></div>
   <div class="modal-overlay hidden" id="modal-overlay"></div>

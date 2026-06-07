@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.1.0-alpha.1
+
+- Fixed cloud sync diagnostics showing "issues need attention" while the details modal reported zero queued/failed jobs — the banner and modal now read the same SyncEngine queue, with retry/clear/copy wired to it.
+- Schema-mismatch sync writes (optional new columns/tables not yet migrated) are dropped instead of sticking as permanent failed jobs.
+- Replaced user-facing "Supabase" wording with neutral cloud/sync language across toasts, banners, and the sync diagnostics modal.
+- Global Tasks board is now a wrapping tile grid (fixed-size tiles, vertical scroll inside each) instead of a horizontal scroll strip; long project names scroll on the left, counts stay on the right.
+- Projects landing page keeps header, scope, search, filters, and status pills sticky while only the project grid scrolls.
+- Built-in workflow templates (Basic project, Software feature, Content/docs) auto-fill editable starting tasks when creating a project.
+- Logistics shipment workflow: auto-fills preview steps in the new-project dialog, seeds workflow tasks on create without duplicates, backfills missing steps when opening a shipment project, and lets you advance steps from the workflow card.
+- Removed Chat from the sidebar (dock launcher remains); grouped How-to, Report a bug, About, and Check for updates under a Help submenu.
+- Chess-piece rank icons on profiles, dashboard, Users tab, and ranking explainer; black-and-white favicon.
+
+## 2.1.0-beta.18
+
+- Project tasks are now a board-only Kanban: drag cards between columns to change status and reorder within a column, click a card to open details, and tasks show oldest-first. The board order (`sort_order`) syncs to Supabase.
+- Task titles are now editable directly in the task detail modal and sync to the cloud.
+- Added editable, Supabase-backed Workflow Templates. Create/edit them in Settings, pick one when creating a project to auto-fill editable starting tasks, and save a project's current board as a new template.
+- New public Users tab showing everyone's rank, bio, presence (online/offline dots via a 60s heartbeat), and an expandable explanation of how the ranking system scores contributions.
+- Replaced the full-page chat with a docked hybrid chat panel: DM anyone, pin favorites, see who's online, and switch between general/project channels without leaving your current view.
+- Completing a project now fires an animated celebration and notifies the whole classroom, crediting the owner and co-editors as their contributor ranks rise.
+- Bug reports can now be managed in-app: admins set ticket status (open / in progress / sent / fixed / closed / won't fix), attach a GitHub issue URL, and add a resolution note that's sent back to the reporter.
+- Monthly reports now list project co-authors/editors, and the Settings project-visibility controls are grouped by classroom instead of one long flat list.
+
+## 2.1.0-beta.17
+
+- Documents are now cloud-backed instead of copied to every device. Attachment metadata (name, type, path) syncs to each PC so files appear in projects/tasks, but the actual file is only fetched on demand from Supabase Storage when opened or downloaded — nothing bulk-downloads to users' machines.
+- Uploads in cloud mode now go straight to Supabase Storage and keep only metadata locally.
+- Files uploaded while offline are queued and pushed up when the device reconnects.
+- Legacy files that only existed locally (from before cloud sync worked) are automatically migrated up to Supabase Storage on the next sync, so they become visible to everyone.
+- File preview now works for cloud files via on-demand URLs (images, PDFs, and text).
+
+## 2.1.0-beta.16
+
+- Fixed the real cause of cloud sync being completely dead: `db-supabase.js` never assigned `window.SupabaseDB`, so `SyncEngine.init()` hit its `if (!window.SupabaseDB) return;` guard and silently bailed at startup — no pull, no push, no sync button, and no error. The app effectively ran local-only (sample data + master-key prompt). Added `window.SupabaseDB = SupabaseDB;`.
+- This works together with the beta.15 shadow-state initialization, which is now actually reached, so projects/tasks/users/departments hydrate from Supabase.
+
+## 2.1.0-beta.15
+
+- Fixed the core sync bug: projects, tasks, departments, and users failed to pull from Supabase because the SyncEngine never initialized SupabaseDB's internal shadow-state cache, so every cached write threw on a null object and the pull silently dropped the data (while misreporting it as a missing-schema error). The same null cache also broke saving new projects/tasks to the cloud.
+- SyncEngine now initializes SupabaseDB's shadow state and sync queue on startup, and SupabaseDB lazily re-creates its shadow state defensively so it can never be null when written.
+
 ## 2.1.0-beta.14
 
 - Fixed installed offline builds missing `sync.js`, which prevented Supabase SyncEngine from starting.
