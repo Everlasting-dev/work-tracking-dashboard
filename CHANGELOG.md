@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.21
+
+### Fixed
+- **DMs no longer route to yourself** — `_resolveSupabaseUserId` had an auth-session fallback (Fast path 2) that ran for any user ID, including the recipient's. When the recipient's local ID wasn't found in Supabase, it fetched the current auth session and returned the **sender's** Supabase ID instead. Every DM from user 4 to user 2 was stored as `from_user_id=4, to_user_id=4`. Fast path 2 now only runs when the ID being resolved matches `sessionStorage.userId` (the sender). Recipients fall through to username lookup. A self-DM guard throws immediately if resolution still collapses both IDs to the same value.
+
 ## 2.2.20
 
 ### Fixed
