@@ -11,6 +11,10 @@ const SupabaseDB = {
   _syncFlushPromise: null,
   _syncFlushTimer: null,
   _syncHooksBound: false,
+  // Session-level cache: local/stale user ID → canonical Supabase ID.
+  // Prevents "user not found" errors after _patchLocalUserId deletes the stale Dexie row
+  // on the first successful resolve (subsequent resolves would find nothing in Dexie).
+  _resolvedUserIds: new Map(),
 
   async init(url, anonKey) {
     if (!window.supabase?.createClient) throw new Error('Supabase SDK not loaded');
@@ -768,9 +772,14 @@ const SupabaseDB = {
   // patching LocalDB when the Supabase ID differs from the local Dexie ID.
   async _resolveSupabaseUserId(localId) {
     const uid = Number(localId);
+
+    // Session cache: if we already resolved this stale ID → canonical ID this session, return it.
+    // Prevents failures after _patchLocalUserId removes the stale Dexie entry on first resolve.
+    if (this._resolvedUserIds.has(uid)) return this._resolvedUserIds.get(uid);
+
     // Fast path 1: user already exists in Supabase with this exact ID
     const { data: byId } = await this._sb().from('wt_users').select('id').eq('id', uid).maybeSingle();
-    if (byId) return uid;
+    if (byId) { this._resolvedUserIds.set(uid, uid); return uid; }
 
     const localUser = await window.LocalDB?.getUser?.(uid).catch(() => null);
 
@@ -785,6 +794,7 @@ const SupabaseDB = {
           if (byAuth?.id) {
             const realId = Number(byAuth.id);
             await this._patchLocalUserId(uid, realId, localUser);
+            this._cacheResolvedId(uid, realId);
             return realId;
           }
         }
@@ -793,12 +803,17 @@ const SupabaseDB = {
 
     if (!localUser?.username) throw new Error(`User ${uid} not found in Supabase or local DB`);
 
-    // Fast path 3: recipient (or sender) may already exist under a different Supabase ID
+    // Fast path 3: recipient (or sender) may already exist under a different Supabase ID.
+    // Try both the stored username case and lowercase to handle case-mismatch between local/Supabase.
+    const uname = localUser.username;
     const { data: byUsername } = await this._sb()
-      .from('wt_users').select('id').eq('username', localUser.username.toLowerCase()).maybeSingle();
+      .from('wt_users').select('id')
+      .or(`username.eq.${uname.toLowerCase()},username.eq.${uname}`)
+      .maybeSingle();
     if (byUsername?.id) {
       const realId = Number(byUsername.id);
       await this._patchLocalUserId(uid, realId, localUser);
+      this._cacheResolvedId(uid, realId);
       return realId;
     }
 
@@ -817,7 +832,11 @@ const SupabaseDB = {
       bio: localUser.bio || ''
     }).select('id').single();
 
-    if (!insertErr) return Number(inserted.id);
+    if (!insertErr) {
+      const realId = Number(inserted.id);
+      this._cacheResolvedId(uid, realId);
+      return realId;
+    }
 
     if (insertErr.code === '23505') {
       // Username already exists in Supabase with a different ID (offline-creation ID drift).
@@ -826,11 +845,22 @@ const SupabaseDB = {
       if (existing?.id) {
         const realId = Number(existing.id);
         await this._patchLocalUserId(uid, realId, localUser);
+        this._cacheResolvedId(uid, realId);
         return realId;
       }
     }
 
     throw insertErr;
+  },
+
+  // Cache a stale-ID → canonical-ID mapping and notify the app so open chat channels can update.
+  _cacheResolvedId(staleId, canonicalId) {
+    this._resolvedUserIds.set(staleId, canonicalId);
+    if (staleId !== canonicalId) {
+      window.dispatchEvent(new CustomEvent('wt-user-id-resolved', {
+        detail: { staleId, canonicalId }
+      }));
+    }
   },
 
   _localToRemoteId(localId) {

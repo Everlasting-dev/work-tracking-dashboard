@@ -7167,6 +7167,29 @@ function setupRealtimeHandlers() {
     }
   });
 
+  // When SupabaseDB resolves a stale local user ID to a canonical Supabase ID,
+  // update any open DM channel that still references the stale ID so the next
+  // send uses the correct channel and doesn't hit "User X not found".
+  window.addEventListener('wt-user-id-resolved', (e) => {
+    const { staleId, canonicalId } = e.detail || {};
+    if (!staleId || !canonicalId || staleId === canonicalId) return;
+    const staleChannel = `dm-${staleId}`;
+    const canonicalChannel = `dm-${canonicalId}`;
+    if (state.chatChannel === staleChannel) {
+      state.chatChannel = canonicalChannel;
+    }
+    // Also update any user entry in the cached contact list so the channel links are correct
+    if (_chatDockData?.users) {
+      _chatDockData.users = _chatDockData.users.map(u =>
+        u.id === staleId ? { ...u, id: canonicalId } : u
+      );
+    }
+    if (state.chatUsersMap?.[staleId]) {
+      state.chatUsersMap[canonicalId] = { ...state.chatUsersMap[staleId], id: canonicalId };
+      delete state.chatUsersMap[staleId];
+    }
+  });
+
   window.addEventListener('wt-realtime-user', () => {
     bustWorkspaceCache();
     if (wtAppBootstrapped) router().catch(() => {});

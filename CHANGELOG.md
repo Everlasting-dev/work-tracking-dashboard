@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.22
+
+### Fixed
+- **"User 33 not found" DM send failure** — When a device's local Dexie DB had a stale entry for a user (e.g. id=33 for someone whose real Supabase ID is 87), the first DM send correctly resolved the stale ID to the canonical one via username lookup and patched Dexie. But that patch *deleted* the id=33 row, so every subsequent send found nothing in Dexie and threw "User X not found". Fixed by: (1) a session-level resolution cache (`_resolvedUserIds` Map) — once stale ID 33 maps to canonical 87, all future calls in the session return 87 without touching Dexie; (2) a `wt-user-id-resolved` event that updates the open chat channel, contacts list, and `chatUsersMap` so `dm-33` becomes `dm-87` immediately; (3) case-insensitive username fallback in path 3 to handle original-case vs lowercase mismatches.
+
 ## 2.2.21
 
 ### Fixed
