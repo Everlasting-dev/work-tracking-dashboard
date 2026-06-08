@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.20
+
+### Fixed
+- **Source-of-truth release** — `main` now contains the full 2.2.16–2.2.19 fix stack (auth ID linking, DM routing, classroom/project/task FK resolution, sync queue ordering). Prior `v2.2.19` tag pointed at older code; this build is the corrected installer.
+
 ## 2.2.19
 
 ### Fixed
