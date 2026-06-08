@@ -1530,8 +1530,14 @@ function startSidebarClock() {
   const yearPct = document.getElementById('sc-year-pct');
   const monthPct = document.getElementById('sc-month-pct');
   const weekPct = document.getElementById('sc-week-pct');
+  const workArc = document.getElementById('sc-work-arc');
+  const workdayEl = document.getElementById('sc-workday');
   if (!timeEl) return;
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const WORK_START = 9 * 3600;   // 09:00
+  const WORK_END   = 19 * 3600;  // 19:00
+  const WORK_SPAN  = WORK_END - WORK_START;
+  const ARC_C      = 314.16;     // 2π × r50
   function weekProgress(now) {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
@@ -1561,6 +1567,21 @@ function startSidebarClock() {
     if (yearPct) yearPct.textContent = `${Math.round(yP)}%`;
     if (monthPct) monthPct.textContent = `${Math.round(mP)}%`;
     if (weekPct) weekPct.textContent = `${Math.round(wP)}%`;
+    // Work-hours arc (9am–7pm): arc reduces as day progresses
+    const nowSecs = h * 3600 + m * 60 + s;
+    const workPct = Math.min(1, Math.max(0, (nowSecs - WORK_START) / WORK_SPAN));
+    if (workArc) workArc.setAttribute('stroke-dashoffset', (workPct * ARC_C).toFixed(2));
+    if (workdayEl) {
+      if (nowSecs < WORK_START) {
+        const rem = WORK_START - nowSecs;
+        workdayEl.textContent = `Work starts in ${Math.floor(rem / 3600)}h ${Math.floor((rem % 3600) / 60)}m`;
+      } else if (nowSecs < WORK_END) {
+        const rem = WORK_END - nowSecs;
+        workdayEl.textContent = `${Math.floor(rem / 3600)}h ${Math.floor((rem % 3600) / 60)}m left today`;
+      } else {
+        workdayEl.textContent = 'Work day ended';
+      }
+    }
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
@@ -3526,6 +3547,12 @@ function markChatChannelRead(channelId) {
   state.chatUnreadChannels.delete(channelId);
   if (state.chatUnreadCounts) delete state.chatUnreadCounts[channelId];
   updateChatUnreadBadge();
+  // Mark DMs as read in the database so sender sees the read receipt
+  if (channelId.startsWith('dm-')) {
+    const otherId = Number(channelId.slice(3));
+    const me = actorId();
+    if (otherId && me) DB.markDMRead?.(otherId, me).catch(() => {});
+  }
   if (state.chatDockOpen && state.chatDockView === 'list') {
     const list = document.getElementById('chat-dock-list');
     if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
@@ -3705,12 +3732,23 @@ function renderChatMessagesHtml(messages, uMap) {
       html += `<div class="chat-date-divider"><span>${msgDate}</span></div>`;
       lastDate = msgDate;
     }
+    const isDirect = m.source === 'direct';
+    let receiptHtml = '';
+    if (mine && isDirect) {
+      if (m.readAt) {
+        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--read" title="Read">✓✓</span>`;
+      } else if (m.deliveredAt) {
+        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--delivered" title="Delivered">✓✓</span>`;
+      } else {
+        receiptHtml = `<span class="chat-msg-receipt" title="Sent">✓</span>`;
+      }
+    }
     html += `<div class="chat-msg-row ${mine ? 'chat-msg-mine' : ''} ${isDiscord ? 'chat-msg-discord' : ''}">
       ${!mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
       <div class="chat-msg-body">
         ${!mine ? `<div class="chat-msg-name">${esc(name)} ${isDiscord ? `<span class="chat-discord-badge">${ICONS.discordMark}</span>` : ''}</div>` : ''}
         <div class="chat-msg-bubble">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
-        <div class="chat-msg-time">${timeAgo(m.createdAt)}</div>
+        <div class="chat-msg-time">${timeAgo(m.createdAt)}${receiptHtml}</div>
       </div>
       ${mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
     </div>`;
@@ -5468,8 +5506,17 @@ async function handleFormSubmit(e) {
         // generic bulk rows so steps are not duplicated without step keys.
         const bulkTitles = isLogisticsCreate ? [] : [...document.querySelectorAll('input[name="bulk_task[]"]')]
           .map(i => i.value.trim()).filter(Boolean);
+        let tasksFailed = 0;
         for (const title of bulkTitles) {
-          await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
+          try {
+            await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
+          } catch (err) {
+            console.warn('Task creation failed:', title, err);
+            tasksFailed++;
+          }
+        }
+        if (tasksFailed > 0) {
+          showToast(`Project created, but ${tasksFailed} of ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''} failed to save. They will retry on next sync.`, 'warning');
         }
         await recordProjectActivity({
           userId: uid, projectId: nid, action: 'created', entityType: 'project', entityId: nid,
@@ -5645,10 +5692,24 @@ async function handleFormSubmit(e) {
       const session = getSession();
       if (channelId?.startsWith('dm-')) {
         const toUserId = Number(channelId.slice(3));
-        await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
+        const uMap = state.chatUsersMap || {};
+        const optimistic = {
+          id: `optimistic-${Date.now()}`,
+          userId: uid,
+          details: content.slice(0, 2000),
+          source: 'direct',
+          createdAt: new Date().toISOString()
+        };
         form.reset();
+        appendChatMessageToPane(optimistic, uMap);
         markChatChannelRead(channelId);
-        await refreshChatPane();
+        try {
+          await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
+        } catch (err) {
+          console.warn('DM send failed:', err);
+          showToast('Message could not be sent. Please try again.', 'warning');
+          await refreshChatPane();
+        }
         return;
       }
       let hook = null;
@@ -6959,6 +7020,11 @@ function setupRealtimeHandlers() {
       const uMap = state.chatUsersMap || {};
       appendChatMessageToPane(message, uMap);
       markChatChannelRead(channelId);
+    } else if (active && e.detail?.eventType === 'INSERT' && isMine) {
+      // Own INSERT: optimistic message already shown — skip to avoid duplicate
+    } else if (active && e.detail?.eventType === 'UPDATE') {
+      // UPDATE fires when delivered_at / read_at changes — refresh to show ticks
+      refreshChatPane().catch(() => {});
     } else if (active) {
       refreshChatPane().catch(() => {});
     }
@@ -6973,6 +7039,18 @@ function setupRealtimeHandlers() {
       showToast(`Edit access requested for "${project.name}"`, 'info');
       refreshNotificationBadge().catch(() => {});
     }).catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-bug-report', (e) => {
+    const { row, eventType } = e.detail || {};
+    if (!row || eventType !== 'INSERT') return;
+    const me = getSession();
+    if (!me?.isAdmin) return;
+    NotificationSounds?.play?.('bug_report');
+    showToast(`Bug report: "${row.title}" (${row.severity})`, 'warning');
+    if (document.querySelector('.admin-bugs-panel, [data-section="bugs"]')) {
+      router().catch(() => {});
+    }
   });
 
   window.addEventListener('wt-realtime-user', () => {

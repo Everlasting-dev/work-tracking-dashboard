@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.2.12
+
+### Added
+- **DM delivered / read receipts** — sent DMs show ✓ (sent), ✓✓ (delivered), ✓✓ blue (read). Delivered fires automatically when recipient's realtime subscription receives the message; read fires when they open the conversation.
+- **Instant DM send** — messages appear immediately in the pane (optimistic UI) before the Supabase round-trip completes. Own-INSERT realtime events are deduped to avoid duplicates.
+- **Work-hours arc on clock** — a shrinking arc on the analog clock face shows remaining time in the 9am–7pm work day. Countdown text ("4h 12m left today") updates live below the digital time.
+- **Bug report realtime** — admins now receive a live toast + notification sound the moment a bug report is submitted, without needing to refresh.
+
+### Fixed
+- **Project task creation resilience** — each bulk task is now wrapped in its own try/catch; partial failures show a clear warning ("3 of 9 tasks failed to save") instead of silently crashing.
+- **DM send no longer re-fetches** — removed the expensive full-pane reload after every DM send.
+- **Own-message dedup** — realtime INSERT events for messages the sender already sees are ignored; UPDATE events (receipt status) trigger a targeted refresh.
+
+### Changed
+- `wt_direct_messages` table: added `delivered_at` and `read_at` columns (**run the schema migration in Supabase SQL editor**).
+- `wt_bug_reports` added to Supabase Realtime subscription.
+
 ## 2.2.11
 
 ### Added

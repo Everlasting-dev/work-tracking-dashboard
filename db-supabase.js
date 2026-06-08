@@ -757,8 +757,29 @@ const SupabaseDB = {
       toUserId: r.to_user_id,
       content: r.content || '',
       createdAt: r.created_at,
-      updatedAt: r.updated_at
+      updatedAt: r.updated_at,
+      deliveredAt: r.delivered_at || null,
+      readAt: r.read_at || null
     })).reverse();
+  },
+
+  async markDMDelivered(messageId) {
+    const { error } = await this._sb()
+      .from('wt_direct_messages')
+      .update({ delivered_at: new Date().toISOString() })
+      .eq('id', Number(messageId))
+      .is('delivered_at', null);
+    if (error) console.warn('markDMDelivered:', error.message);
+  },
+
+  async markDMRead(fromUserId, toUserId) {
+    const { error } = await this._sb()
+      .from('wt_direct_messages')
+      .update({ read_at: new Date().toISOString() })
+      .eq('from_user_id', Number(fromUserId))
+      .eq('to_user_id', Number(toUserId))
+      .is('read_at', null);
+    if (error) console.warn('markDMRead:', error.message);
   },
 
   _defaultDepartments() {

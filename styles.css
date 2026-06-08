@@ -440,6 +440,19 @@ ul,ol { list-style: none; }
 .clock-bar-fill--week { background: #000; }
 .clock-bar-label { font-size: 0.72rem; white-space: nowrap; color: #000; font-weight: 500; min-width: 38px; }
 .clock-bar-pct { font-size: 0.72rem; min-width: 32px; text-align: right; color: #000; font-weight: 600; }
+/* Work-hours arc */
+#sc-work-arc { transition: stroke-dashoffset 0.9s linear; }
+.sc-workday {
+  display: block; font-size: 0.67rem; color: #737373;
+  margin-top: 5px; letter-spacing: 0.01em; font-weight: 500;
+}
+/* DM delivery / read receipts */
+.chat-msg-receipt {
+  display: inline-block; margin-left: 5px; font-size: 0.72rem;
+  color: var(--text-muted); vertical-align: middle; line-height: 1;
+}
+.chat-msg-receipt--delivered { color: var(--text-muted); }
+.chat-msg-receipt--read { color: #1a73e8; }
 
 .sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; padding: 8px 4px 20px; min-height: 0; overflow: hidden; }
 

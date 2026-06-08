@@ -60,6 +60,7 @@
       <div class="sidebar-clock" id="sidebar-clock" aria-live="off" aria-label="Current time">
         <svg class="clock-face" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="clock-face-ring" cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="3.5"/>
+          <circle id="sc-work-arc" cx="60" cy="60" r="50" fill="none" stroke="currentColor" stroke-width="3.5" stroke-dasharray="314.16" stroke-dashoffset="314.16" transform="rotate(-90 60 60)" opacity="0.18"/>
           <g class="clock-ticks"></g>
           <line class="clock-hand clock-hour" x1="60" y1="60" x2="60" y2="34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
           <line class="clock-hand clock-minute" x1="60" y1="60" x2="60" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -69,6 +70,7 @@
         <div class="clock-digital">
           <span class="sc-time" id="sc-time">00:00:00</span>
           <span class="sc-date" id="sc-date">Mon 01 Jan</span>
+          <span class="sc-workday" id="sc-workday"></span>
         </div>
         <div class="clock-progress">
           <div class="clock-bar-row"><span class="clock-bar-label">Year</span><div class="clock-bar"><div class="clock-bar-fill clock-bar-fill--year" id="sc-year-fill"></div></div><b class="clock-bar-pct" id="sc-year-pct">0%</b></div>

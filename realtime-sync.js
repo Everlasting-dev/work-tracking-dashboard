@@ -42,7 +42,18 @@ const RealtimeSync = (() => {
       toUserId: r.to_user_id,
       content: r.content || '',
       createdAt: r.created_at,
-      updatedAt: r.updated_at || r.created_at
+      updatedAt: r.updated_at || r.created_at,
+      deliveredAt: r.delivered_at || null,
+      readAt: r.read_at || null
+    };
+  }
+
+  function _mapBugReport(r) {
+    return {
+      id: r.id, userId: r.user_id, title: r.title || '',
+      description: r.description || '', severity: r.severity || 'normal',
+      status: r.status || 'open', appVersion: r.app_version || '',
+      createdAt: r.created_at
     };
   }
 
@@ -105,6 +116,10 @@ const RealtimeSync = (() => {
     const mapped = _mapDirectMessage(row);
     const ldb = window.LocalDB?.db;
     if (ldb?.directMessages) await _put(ldb.directMessages, mapped);
+    // Auto-mark as delivered when recipient receives a new message via realtime
+    if (eventType === 'INSERT' && row.to_user_id === uid) {
+      window.DB?.markDMDelivered?.(row.id);
+    }
     const channelId = `dm-${row.from_user_id === uid ? row.to_user_id : row.from_user_id}`;
     window.dispatchEvent(new CustomEvent('wt-realtime-chat', {
       detail: {
@@ -114,10 +129,19 @@ const RealtimeSync = (() => {
           userId: mapped.fromUserId,
           details: mapped.content,
           source: 'direct',
-          createdAt: mapped.createdAt
+          createdAt: mapped.createdAt,
+          deliveredAt: mapped.deliveredAt,
+          readAt: mapped.readAt
         },
         eventType
       }
+    }));
+  }
+
+  async function _handleBugReport(row, eventType) {
+    const mapped = _mapBugReport(row);
+    window.dispatchEvent(new CustomEvent('wt-realtime-bug-report', {
+      detail: { row: mapped, eventType }
     }));
   }
 
@@ -246,6 +270,7 @@ const RealtimeSync = (() => {
     _subscribe('wt_activity_log', _handleActivityLog);
     _subscribe('wt_project_access_requests', _handleAccessRequest);
     _subscribe('wt_discord_messages', _handleDiscordMessage);
+    _subscribe('wt_bug_reports', _handleBugReport);
     _subscribe('wt_users', _handleUser);
     _subscribe('wt_projects', _handleProject);
     _subscribe('wt_tasks', _handleTask);

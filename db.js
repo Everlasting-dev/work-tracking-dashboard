@@ -559,6 +559,9 @@ const LocalDB = {
     return rows.slice(-limit);
   },
 
+  async markDMDelivered(_messageId) { return true; },
+  async markDMRead(_fromUserId, _toUserId) { return true; },
+
   _defaultDepartments() {
     return [
       { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },
