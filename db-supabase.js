@@ -782,6 +782,45 @@ const SupabaseDB = {
     if (error) console.warn('markDMRead:', error.message);
   },
 
+  async ensureSupabaseAuth(email, password) {
+    const client = this._sb();
+    if (!client) return null;
+    // Try sign-in with the user's current WorkTracker credentials
+    const { data, error } = await client.auth.signInWithPassword({ email, password });
+    if (!error && data?.user) {
+      this._persistAuthUserId(data.user.id).catch(() => {});
+      return data;
+    }
+    // Not yet in auth.users — sign up (requires email confirmation disabled in Supabase Dashboard)
+    const { data: signupData, error: signupError } = await client.auth.signUp({ email, password });
+    if (signupError) {
+      console.warn('Supabase Auth signUp:', signupError.message);
+      return null;
+    }
+    // Sign in immediately after signup
+    const { data: loginData, error: loginError } = await client.auth.signInWithPassword({ email, password });
+    if (loginError) {
+      console.warn('Supabase Auth signIn after signup:', loginError.message);
+      return signupData;
+    }
+    this._persistAuthUserId(loginData.user.id).catch(() => {});
+    return loginData;
+  },
+
+  async _persistAuthUserId(authUid) {
+    try {
+      const session = JSON.parse(sessionStorage.getItem('wt-session') || 'null');
+      if (!session?.userId) return;
+      await this._sb().from('wt_users').update({ auth_user_id: authUid }).eq('id', Number(session.userId));
+    } catch (e) {
+      console.warn('_persistAuthUserId:', e);
+    }
+  },
+
+  async signOutSupabase() {
+    try { await this._sb()?.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
+  },
+
   _defaultDepartments() {
     return [
       { key: 'it', label: 'IT', color: 'blue', sortOrder: 10 },

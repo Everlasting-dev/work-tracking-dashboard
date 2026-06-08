@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.2.13
+
+### Added
+- **Supabase Auth integration** — WorkTracker now signs users into Supabase Auth (`signInWithPassword` / `signUp`) immediately after PBKDF2 login verification. The resulting JWT enables private Realtime channels and lays the groundwork for JWT-based RLS policies.
+- **Private Realtime channels** — The `wt-live-{userId}` channel is now created with `{ config: { private: true } }`. Private channels require authentication and are more secure than public ones.
+- **`auth_user_id` column on `wt_users`** — links each WorkTracker account to its `auth.users` UUID so RLS policies can use `auth.uid()` in future.
+- **`wt_my_id()` SQL helper** — resolves `auth.uid()` (UUID) → `wt_users.id` (bigint) for use in RLS rules.
+- **`realtime.messages` RLS** — authorises private-channel broadcast; requires a valid JWT.
+
+### Changed
+- Logout now calls `supabase.auth.signOut()` to invalidate the Supabase session alongside clearing the local WorkTracker session.
+- `supabase/schema.sql`: run the new migration block in the Supabase SQL editor (**disable email confirmation first** in Auth → Settings).
+
 ## 2.2.12
 
 ### Added

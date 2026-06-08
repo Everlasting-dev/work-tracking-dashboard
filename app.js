@@ -1342,6 +1342,11 @@ async function handleAuth(e) {
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
+    // Obtain Supabase Auth JWT so private Realtime channels can connect
+    const sbEmail = user.email || `${user.username}@worktracker.app`;
+    await window.SupabaseDB?.ensureSupabaseAuth?.(sbEmail, password).catch(err => {
+      console.warn('Supabase Auth (non-fatal):', err?.message || err);
+    });
     localStorage.removeItem(LOGOUT_FLAG_KEY);
     const prevUserId = localStorage.getItem(LAST_USER_KEY);
     const newUserId = String(user.id);
@@ -6232,6 +6237,7 @@ const actions = {
     localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
     resetClientState();
     clearSession({ trusted: true });
+    window.SupabaseDB?.signOutSupabase?.().catch(() => {});
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();

@@ -457,3 +457,38 @@ begin
     end;
   end loop;
 end $$;
+
+-- ============================================================
+-- Supabase Auth integration (v2.2.13)
+-- ============================================================
+-- PREREQUISITE: In Supabase Dashboard → Authentication → Settings,
+-- set "Confirm email" to OFF so users can sign in immediately after signup.
+-- ============================================================
+
+-- Link wt_users to Supabase auth.users so RLS can use auth.uid()
+alter table public.wt_users add column if not exists auth_user_id uuid references auth.users(id);
+
+-- Helper: resolves the current Supabase Auth user's wt_users.id (bigint)
+create or replace function public.wt_my_id()
+returns bigint
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select id from public.wt_users where auth_user_id = auth.uid() limit 1;
+$$;
+
+grant execute on function public.wt_my_id() to anon, authenticated;
+
+-- Realtime private channel authorization
+-- Required so authenticated users can subscribe to private wt-live-* channels.
+-- Each client only subscribes to its own channel (wt-live-{userId}); this policy
+-- simply gates on having a valid JWT — the channel name is the isolation boundary.
+alter table realtime.messages enable row level security;
+drop policy if exists wt_realtime_select on realtime.messages;
+drop policy if exists wt_realtime_insert on realtime.messages;
+create policy wt_realtime_select on realtime.messages
+  for select using (auth.uid() is not null);
+create policy wt_realtime_insert on realtime.messages
+  for insert with check (auth.uid() is not null);

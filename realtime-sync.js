@@ -263,7 +263,7 @@ const RealtimeSync = (() => {
     if (!_client) return false;
 
     _uid = uid;
-    _channel = _client.channel(`wt-live-${uid}`);
+    _channel = _client.channel(`wt-live-${uid}`, { config: { private: true } });
 
     _subscribe('wt_notifications', _handleNotification, `user_id=eq.${uid}`);
     _subscribe('wt_direct_messages', _handleDirectMessage);
