@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.2.19
+
+### Fixed
+- **DM FK errors — real root cause fixed** — `_persistAuthUserId` was reading `sessionStorage` to find the current user, but `setSession()` is called *after* `ensureSupabaseAuth`, so the session was always stale (previous user or null). The `auth_user_id` link was therefore never written to the correct `wt_users` row, and Supabase had no reliable way to match a WorkTracker user to their Supabase row. The new `_linkAuthUser` looks up the `wt_users` row by **username** (stable, unique), writes `auth_user_id` on it, and returns the canonical bigint `id`. `handleAuth` then patches LocalDB if the local Dexie ID differs from the Supabase ID, so every subsequent operation uses the correct ID.
+- **`_resolveSupabaseUserId` auth-UUID fast path** — if the user's local ID still doesn't match Supabase's ID (e.g. on first login after installing the fix), a fallback looks up the row via `auth_user_id` from the current Supabase Auth session, patches LocalDB, and returns the real ID. Auth fallback runs **only for the logged-in user** — not recipients — so DMs no longer route to yourself when the recipient ID is unresolved.
+- **Project/task FK sync** — `createProject` and `createTask` now resolve `owner_id`, `classroom_id`, `project_id`, and assignee IDs against Supabase (id-map, username/name lookup, push-if-missing) before insert. Sync queue orders classroom → project → task and patches classroom FK references when IDs remap.
+- **DM delivery** — conversation pane pulls fresh from Supabase every poll; receipt labels (`deliveredAt` / `readAt`) persist across refreshes.
+- `ensureSupabaseAuth` now accepts `username` as a third argument so it can link the auth account to the correct `wt_users` row immediately on login.
+
+### Changed
+- **Sync diagnostics reporting** — per-error and bulk "Report to Admin" copy errors to clipboard and file bug reports titled `{username}1`, `{username}2`, etc.
+
+## 2.2.18
+
+### Fixed
+- **DM FK error — actual root cause resolved** — when a user is created while offline or before Supabase syncs, the local Dexie ID may differ from the Supabase auto-generated ID. All previous attempts (push-on-error, bootstrap) still used the local ID for the DM insert. Now `createDirectMessage` calls `_resolveSupabaseUserId` for both sender and recipient before inserting: it first checks Supabase by ID (fast path), then pushes from LocalDB if missing, and if a username conflict (23505) shows the user exists with a *different* Supabase ID, it looks up the real ID, patches LocalDB, and uses that ID for the DM. No more FK errors from ID drift.
+- **"Report to Admin" button in sync details** — every failed sync job now has a one-click "Report to Admin" button that submits the error directly as a bug report without having to open the report form separately.
+
+## 2.2.17
+
+### Fixed
+- **DM FK error — root cause found** — the emergency user-push (`_ensureUserInSupabase`) was silently failing in two ways: (1) the user's avatar photo (sometimes several MB of base64) was included in the payload, causing Supabase's REST endpoint to reject the request with a 413 that was swallowed; (2) if the user existed locally but the push still failed, the code retried the DM insert anyway, producing the same FK error every time. Now: avatar is excluded from emergency pushes (it syncs separately), the real error is surfaced in the console, and the DM retry is skipped when the user push itself failed — so the SyncEngine gets a clean throw and won't spin through three pointless retries.
+- Same avatar-size fix applied to `bootstrapMissingUsers` (startup sync).
+
+## 2.2.16
+
+### Fixed
+- **DM messages now appear within 5 seconds** — the conversation pane now fetches directly from Supabase on every poll tick instead of reading from the local IndexedDB cache. Previously, if Supabase Realtime wasn't delivering events (no JWT, channel error, network hiccup), the local cache stayed stale and new messages wouldn't appear until a full app reload. The polling interval is now a fixed 5 s regardless of realtime connection status.
+- **Receipt ticks disappeared after pane refresh** — `deliveredAt` and `readAt` were not included in the local-cache message mapping, so "Sent / Delivered / Read" labels would vanish every time the conversation refreshed. Now included in all code paths.
+
 ## 2.2.15
 
 ### Fixed

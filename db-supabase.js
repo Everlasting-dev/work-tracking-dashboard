@@ -725,22 +725,208 @@ const SupabaseDB = {
   },
 
   async createDirectMessage({ fromUserId, toUserId, content }) {
-    const insert = {
-      from_user_id: Number(fromUserId),
-      to_user_id: Number(toUserId),
-      content: String(content || '').slice(0, 2000)
-    };
-    let { data, error } = await this._sb().from('wt_direct_messages').insert(insert).select().single();
-    if (error?.code === '23503') {
-      // One or both users not yet in Supabase — push them first then retry
-      await Promise.allSettled([
-        this._ensureUserInSupabase(fromUserId),
-        this._ensureUserInSupabase(toUserId)
-      ]);
-      ({ data, error } = await this._sb().from('wt_direct_messages').insert(insert).select().single());
+    // Resolve REAL Supabase IDs before inserting — local Dexie IDs may differ from
+    // Supabase auto-generated IDs when a user was created while offline, causing FK errors.
+    const [fromId, toId] = await Promise.all([
+      this._resolveSupabaseUserId(fromUserId),
+      this._resolveSupabaseUserId(toUserId)
+    ]);
+    if (fromId === toId) {
+      throw new Error('Cannot send a direct message to yourself — recipient ID could not be resolved');
     }
+    const { data, error } = await this._sb().from('wt_direct_messages').insert({
+      from_user_id: fromId,
+      to_user_id: toId,
+      content: String(content || '').slice(0, 2000)
+    }).select().single();
     if (error) throw error;
     return data.id;
+  },
+
+  _sessionUserId() {
+    try {
+      const raw = sessionStorage.getItem('wt-session');
+      const s = raw ? JSON.parse(raw) : null;
+      return s?.userId != null ? Number(s.userId) : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async _patchLocalUserId(localId, realId, localUser) {
+    if (localId === realId) return;
+    const t = window.LocalDB?.db?.users;
+    if (!t) return;
+    const rec = localUser || await t.get(localId).catch(() => null);
+    if (!rec) return;
+    await t.delete(localId).catch(() => {});
+    await t.put({ ...rec, id: realId }).catch(() => {});
+    console.info(`[ResolveUser] patched local user ${localId} -> Supabase ID ${realId}`);
+  },
+
+  // Returns the Supabase row ID for a user, creating the row if missing and
+  // patching LocalDB when the Supabase ID differs from the local Dexie ID.
+  async _resolveSupabaseUserId(localId) {
+    const uid = Number(localId);
+    // Fast path 1: user already exists in Supabase with this exact ID
+    const { data: byId } = await this._sb().from('wt_users').select('id').eq('id', uid).maybeSingle();
+    if (byId) return uid;
+
+    const localUser = await window.LocalDB?.getUser?.(uid).catch(() => null);
+
+    // Fast path 2: auth session — ONLY for the logged-in user (sender ID drift after login).
+    // Must not run for recipients or every DM would target the current user.
+    if (uid === this._sessionUserId()) {
+      try {
+        const { data: authData } = await this._sb().auth.getUser();
+        if (authData?.user?.id) {
+          const { data: byAuth } = await this._sb()
+            .from('wt_users').select('id').eq('auth_user_id', authData.user.id).maybeSingle();
+          if (byAuth?.id) {
+            const realId = Number(byAuth.id);
+            await this._patchLocalUserId(uid, realId, localUser);
+            return realId;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!localUser?.username) throw new Error(`User ${uid} not found in Supabase or local DB`);
+
+    // Fast path 3: recipient (or sender) may already exist under a different Supabase ID
+    const { data: byUsername } = await this._sb()
+      .from('wt_users').select('id').eq('username', localUser.username.toLowerCase()).maybeSingle();
+    if (byUsername?.id) {
+      const realId = Number(byUsername.id);
+      await this._patchLocalUserId(uid, realId, localUser);
+      return realId;
+    }
+
+    // Not in Supabase — try to push from LocalDB
+    // avatar_base64 omitted — can be several MB and cause a REST 413
+    const { data: inserted, error: insertErr } = await this._sb().from('wt_users').insert({
+      id: uid,
+      username: localUser.username,
+      display_name: localUser.displayName || localUser.username,
+      email: localUser.email || '',
+      password_hash: localUser.passwordHash || '',
+      salt: localUser.salt || '',
+      role: localUser.role || 'user',
+      department: localUser.department || '',
+      color: localUser.color || '',
+      bio: localUser.bio || ''
+    }).select('id').single();
+
+    if (!insertErr) return Number(inserted.id);
+
+    if (insertErr.code === '23505') {
+      // Username already exists in Supabase with a different ID (offline-creation ID drift).
+      const { data: existing } = await this._sb()
+        .from('wt_users').select('id').eq('username', localUser.username.toLowerCase()).maybeSingle();
+      if (existing?.id) {
+        const realId = Number(existing.id);
+        await this._patchLocalUserId(uid, realId, localUser);
+        return realId;
+      }
+    }
+
+    throw insertErr;
+  },
+
+  _localToRemoteId(localId) {
+    const id = Number(localId);
+    try {
+      const raw = localStorage.getItem('wt-sync-idmap-v1');
+      const map = raw ? JSON.parse(raw) : {};
+      const m = map[String(id)];
+      return m != null ? Number(m) : id;
+    } catch (_) {
+      return id;
+    }
+  },
+
+  _isFkError(error, column) {
+    const blob = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+    return error?.code === '23503' && blob.includes(String(column).toLowerCase());
+  },
+
+  async _patchLocalClassroomId(localId, realId, localClassroom) {
+    if (localId === realId) return;
+    const t = window.LocalDB?.db?.classrooms;
+    if (t) {
+      const rec = localClassroom || await t.get(localId).catch(() => null);
+      if (rec) {
+        await t.delete(localId).catch(() => {});
+        await t.put({ ...rec, id: realId }).catch(() => {});
+      }
+    }
+    await window.LocalDB?.db?.projects?.where('classroomId').equals(localId)
+      .modify({ classroomId: realId }).catch(() => {});
+    await window.LocalDB?.db?.userClassrooms?.where('classroomId').equals(localId)
+      .modify({ classroomId: realId }).catch(() => {});
+    try {
+      const raw = localStorage.getItem('wt-sync-idmap-v1');
+      const map = raw ? JSON.parse(raw) : {};
+      map[String(localId)] = realId;
+      localStorage.setItem('wt-sync-idmap-v1', JSON.stringify(map));
+    } catch (_) {}
+    console.info(`[ResolveClassroom] patched ${localId} -> ${realId}`);
+  },
+
+  async _resolveSupabaseClassroomId(localId) {
+    if (localId == null) return null;
+    const cid = Number(localId);
+    if (!Number.isFinite(cid)) return null;
+
+    const { data: byId } = await this._sb().from('wt_classrooms').select('id').eq('id', cid).maybeSingle();
+    if (byId) return cid;
+
+    const mapped = this._localToRemoteId(cid);
+    if (mapped !== cid) {
+      const { data: byMapped } = await this._sb().from('wt_classrooms').select('id').eq('id', mapped).maybeSingle();
+      if (byMapped) return mapped;
+    }
+
+    const local = await window.LocalDB?.db?.classrooms?.get(cid).catch(() => null);
+    if (!local?.name) return null;
+
+    const { data: byName } = await this._sb().from('wt_classrooms').select('id').eq('name', local.name).maybeSingle();
+    if (byName?.id) {
+      const realId = Number(byName.id);
+      await this._patchLocalClassroomId(cid, realId, local);
+      return realId;
+    }
+
+    const newId = await this.createClassroom({
+      name: local.name,
+      description: local.description || '',
+      color: local.color,
+      themePalette: local.themePalette
+    });
+    await this._patchLocalClassroomId(cid, newId, local);
+    return newId;
+  },
+
+  async _resolveSupabaseProjectId(localId) {
+    const pid = Number(localId);
+    const { data: byId } = await this._sb().from('wt_projects').select('id').eq('id', pid).maybeSingle();
+    if (byId) return pid;
+
+    const mapped = this._localToRemoteId(pid);
+    if (mapped !== pid) {
+      const { data: byMapped } = await this._sb().from('wt_projects').select('id').eq('id', mapped).maybeSingle();
+      if (byMapped) return mapped;
+    }
+
+    const local = await window.LocalDB?.getProject?.(pid).catch(() => null);
+    if (!local) throw new Error(`Project ${pid} not found in Supabase or local DB`);
+
+    const ownerId = await this._resolveSupabaseUserId(local.ownerId);
+    const { data: byName } = await this._sb().from('wt_projects').select('id')
+      .eq('name', local.name).eq('owner_id', ownerId).maybeSingle();
+    if (byName?.id) return Number(byName.id);
+
+    return this.createProject({ ...local, id: pid, actorUserId: null });
   },
 
   async getDirectMessages(userA, userB, { limit = 100 } = {}) {
@@ -788,39 +974,61 @@ const SupabaseDB = {
     if (error) console.warn('markDMRead:', error.message);
   },
 
-  async ensureSupabaseAuth(email, password) {
+  // username must be the WorkTracker username (lowercase) so we can find the wt_users row.
+  // Returns { session, canonicalUserId } where canonicalUserId is the bigint wt_users.id
+  // that Supabase actually knows, which may differ from the local Dexie ID.
+  async ensureSupabaseAuth(email, password, username) {
     const client = this._sb();
     if (!client) return null;
-    // Try sign-in with the user's current WorkTracker credentials
-    const { data, error } = await client.auth.signInWithPassword({ email, password });
-    if (!error && data?.user) {
-      this._persistAuthUserId(data.user.id).catch(() => {});
-      return data;
+
+    let authUser = null;
+
+    // Try sign-in first
+    const { data: signInData } = await client.auth.signInWithPassword({ email, password });
+    if (signInData?.user) authUser = signInData.user;
+
+    if (!authUser) {
+      // Not yet in auth.users — create the account
+      const { data: signUpData, error: signUpError } = await client.auth.signUp({ email, password });
+      if (signUpError) { console.warn('Supabase Auth signUp:', signUpError.message); return null; }
+      // Sign in immediately so we have a valid JWT session
+      const { data: loginData, error: loginError } = await client.auth.signInWithPassword({ email, password });
+      if (loginError) { console.warn('Supabase Auth signIn after signUp:', loginError.message); return null; }
+      authUser = loginData?.user;
     }
-    // Not yet in auth.users — sign up (requires email confirmation disabled in Supabase Dashboard)
-    const { data: signupData, error: signupError } = await client.auth.signUp({ email, password });
-    if (signupError) {
-      console.warn('Supabase Auth signUp:', signupError.message);
+
+    if (!authUser) return null;
+
+    // Link the auth UUID to the wt_users row and get the canonical bigint ID
+    const canonicalUserId = await this._linkAuthUser(authUser.id, username).catch(e => {
+      console.warn('[ensureSupabaseAuth] _linkAuthUser:', e?.message);
       return null;
-    }
-    // Sign in immediately after signup
-    const { data: loginData, error: loginError } = await client.auth.signInWithPassword({ email, password });
-    if (loginError) {
-      console.warn('Supabase Auth signIn after signup:', loginError.message);
-      return signupData;
-    }
-    this._persistAuthUserId(loginData.user.id).catch(() => {});
-    return loginData;
+    });
+
+    return { user: authUser, canonicalUserId };
   },
 
-  async _persistAuthUserId(authUid) {
-    try {
-      const session = JSON.parse(sessionStorage.getItem('wt-session') || 'null');
-      if (!session?.userId) return;
-      await this._sb().from('wt_users').update({ auth_user_id: authUid }).eq('id', Number(session.userId));
-    } catch (e) {
-      console.warn('_persistAuthUserId:', e);
-    }
+  // Find the wt_users row by username, write auth_user_id on it, and return its bigint id.
+  // This is the single source of truth for which Supabase row belongs to a WorkTracker user.
+  async _linkAuthUser(authUid, username) {
+    if (!authUid) return null;
+
+    // Already linked — fast path (covers repeated logins)
+    const { data: already } = await this._sb()
+      .from('wt_users').select('id').eq('auth_user_id', authUid).maybeSingle();
+    if (already?.id) return Number(already.id);
+
+    if (!username) return null;
+
+    // Find the row by username (unique, stable) and stamp auth_user_id onto it
+    const { data: byUsername } = await this._sb()
+      .from('wt_users').select('id').eq('username', String(username).toLowerCase()).maybeSingle();
+    if (!byUsername?.id) return null;
+
+    await this._sb()
+      .from('wt_users').update({ auth_user_id: authUid }).eq('id', Number(byUsername.id));
+
+    return Number(byUsername.id);
   },
 
   async signOutSupabase() {
@@ -829,12 +1037,17 @@ const SupabaseDB = {
 
   // Push a single local user to Supabase if they're not there yet (used to recover from FK errors)
   async _ensureUserInSupabase(userId) {
-    const { data: existing } = await this._sb().from('wt_users').select('id').eq('id', Number(userId)).maybeSingle();
+    const uid = Number(userId);
+    const { data: existing } = await this._sb().from('wt_users').select('id').eq('id', uid).maybeSingle();
     if (existing) return;
-    const localUser = await window.LocalDB?.getUser?.(Number(userId)).catch(() => null);
-    if (!localUser?.username) return;
-    await this._sb().from('wt_users').insert({
-      id: Number(userId),
+    const localUser = await window.LocalDB?.getUser?.(uid).catch(() => null);
+    if (!localUser?.username) {
+      throw new Error(`User ${uid} not found in local DB — cannot push to Supabase`);
+    }
+    // avatar_base64 is omitted intentionally: it can be several MB and will cause a 413 on the
+    // Supabase REST endpoint, silently failing the insert. Avatars sync via a separate update.
+    const { error } = await this._sb().from('wt_users').insert({
+      id: uid,
       username: localUser.username,
       display_name: localUser.displayName || localUser.username,
       email: localUser.email || '',
@@ -843,9 +1056,12 @@ const SupabaseDB = {
       role: localUser.role || 'user',
       department: localUser.department || '',
       color: localUser.color || '',
-      bio: localUser.bio || '',
-      avatar_base64: localUser.avatarBase64 || ''
-    }).catch(() => {});
+      bio: localUser.bio || ''
+    });
+    if (error && error.code !== '23505') {
+      // 23505 = unique username conflict — someone else just inserted the same user, treat as success
+      throw error;
+    }
   },
 
   // On startup: silently push any local users that never made it to Supabase.
@@ -859,6 +1075,7 @@ const SupabaseDB = {
       const missing = localUsers.filter(u => u.id && !remoteSet.has(Number(u.id)));
       if (!missing.length) return;
       for (const user of missing) {
+        // avatar_base64 omitted — can be several MB and cause a 413 on the REST endpoint
         await this._sb().from('wt_users').insert({
           id: Number(user.id),
           username: user.username,
@@ -869,9 +1086,10 @@ const SupabaseDB = {
           role: user.role || 'user',
           department: user.department || '',
           color: user.color || '',
-          bio: user.bio || '',
-          avatar_base64: user.avatarBase64 || ''
-        }).catch(() => {});
+          bio: user.bio || ''
+        }).catch(e => {
+          if (e?.code !== '23505') console.warn('[BootstrapSync] insert user', user.id, e?.message);
+        });
       }
       console.log(`[BootstrapSync] pushed ${missing.length} missing user(s) to Supabase`);
     } catch (e) {
@@ -1066,7 +1284,9 @@ const SupabaseDB = {
   },
 
   async getUserClassroomIds(userId) {
-    const { data, error } = await this._sb().from('wt_user_classrooms').select('classroom_id').eq('user_id', Number(userId));
+    let uid = Number(userId);
+    try { uid = await this._resolveSupabaseUserId(userId); } catch (_) {}
+    const { data, error } = await this._sb().from('wt_user_classrooms').select('classroom_id').eq('user_id', uid);
     if (error) {
       const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
       if (!msg.includes('does not exist') && !msg.includes('schema cache')) throw error;
@@ -1272,19 +1492,41 @@ const SupabaseDB = {
       });
       return id;
     }
+    const ownerId = await this._resolveSupabaseUserId(data.ownerId ?? actorUserId ?? 1);
+    let classroomId = null;
+    if (data.classroomId != null) {
+      classroomId = await this._resolveSupabaseClassroomId(data.classroomId).catch(() => null);
+    } else {
+      try {
+        const roomIds = await this.getUserClassroomIds(ownerId);
+        if (roomIds[0]) classroomId = await this._resolveSupabaseClassroomId(roomIds[0]).catch(() => null);
+      } catch (_) {}
+    }
+    const editorIds = [];
+    if (Array.isArray(data.editorIds)) {
+      for (const eid of data.editorIds) {
+        try { editorIds.push(await this._resolveSupabaseUserId(eid)); } catch (_) {}
+      }
+    }
+    const hiddenFromIds = [];
+    if (Array.isArray(data.hiddenFromIds)) {
+      for (const hid of data.hiddenFromIds) {
+        try { hiddenFromIds.push(await this._resolveSupabaseUserId(hid)); } catch (_) {}
+      }
+    }
     const id = data.id ?? await this._nextTableId('wt_projects');
     const payload = {
       id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
-      owner_id: data.ownerId ?? actorUserId ?? 1,
-      classroom_id: data.classroomId != null ? Number(data.classroomId) : (await this.getUserClassroomIds(data.ownerId ?? actorUserId ?? 1))[0] || null,
+      owner_id: ownerId,
+      classroom_id: classroomId,
       department: data.department || '',
       workflow_template: data.workflowTemplate || '',
       completed_at: data.status === 'completed' ? now : null,
       is_ongoing: !!data.isOngoing,
       cadence: data.cadence || '',
-      editor_ids: Array.isArray(data.editorIds) ? data.editorIds.map(Number).filter(Boolean) : [],
-      hidden_from_ids: Array.isArray(data.hiddenFromIds) ? data.hiddenFromIds.map(Number).filter(Boolean) : []
+      editor_ids: editorIds,
+      hidden_from_ids: hiddenFromIds
     };
     let { data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
@@ -1298,10 +1540,16 @@ const SupabaseDB = {
       delete payload.hidden_from_ids;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
-    // FK on classroom_id: classroom not yet synced to Supabase → create without classroom
-    if (error?.code === '23503' && error.message?.includes('classroom_id')) {
+    if (this._isFkError(error, 'classroom_id')) {
       payload.classroom_id = null;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
+    }
+    if (error?.code === '23505') {
+      const { data: existing } = await this._sb().from('wt_projects').select('*').eq('id', id).maybeSingle();
+      if (existing) {
+        this._shadowUpsert('projects', this._mapProject(existing));
+        return existing.id;
+      }
     }
     if (error) throw error;
     this._shadowUpsert('projects', this._mapProject(row));
@@ -1521,9 +1769,14 @@ const SupabaseDB = {
       });
       return id;
     }
+    const projectId = await this._resolveSupabaseProjectId(data.projectId);
+    let resolvedAssignee = assigneeId;
+    if (resolvedAssignee != null) {
+      resolvedAssignee = await this._resolveSupabaseUserId(resolvedAssignee);
+    }
     const id = data.id ?? await this._nextTableId('wt_tasks');
     const { data: row, error } = await this._sb().from('wt_tasks').insert({
-      id, project_id: data.projectId, milestone_id: data.milestoneId || null, assignee_id: assigneeId,
+      id, project_id: projectId, milestone_id: data.milestoneId || null, assignee_id: resolvedAssignee,
       workflow_step_key: data.workflowStepKey || '',
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium',
@@ -1533,10 +1786,10 @@ const SupabaseDB = {
     }).select().single();
     if (error) throw error;
     const updatedAt = new Date().toISOString();
-    await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', data.projectId);
+    await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', projectId);
     this._shadowUpsert('tasks', this._mapTask(row));
-    this._touchShadowProject(data.projectId, updatedAt);
-    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: data.projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title }).catch(() => {});
+    this._touchShadowProject(projectId, updatedAt);
+    if (actorUserId) await this.logActivity({ userId: actorUserId, projectId: projectId, action: 'created', entityType: 'task', entityId: row.id, details: row.title }).catch(() => {});
     return row.id;
   },
 

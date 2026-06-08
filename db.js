@@ -561,7 +561,7 @@ const LocalDB = {
 
   async markDMDelivered(_messageId) { return true; },
   async markDMRead(_fromUserId, _toUserId) { return true; },
-  async ensureSupabaseAuth(_email, _password) { return null; },
+  async ensureSupabaseAuth(_email, _password, _username) { return null; },
   async signOutSupabase() {},
 
   _defaultDepartments() {

@@ -649,6 +649,7 @@ ul,ol { list-style: none; }
 .sync-diag-details { margin-top: 8px; }
 .sync-diag-details summary { cursor: pointer; color: var(--text-muted); }
 .sync-diag-actions { margin-top: 16px; flex-wrap: wrap; gap: 8px; }
+.sync-diag-report-btn { margin-top: 8px; font-size: 0.78rem; padding: 3px 10px; }
 
 .user-avatar {
   width: 34px; height: 34px; border-radius: 50%;

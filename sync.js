@@ -223,17 +223,37 @@ const SyncEngine = (() => {
     'updateProject', 'updateTask', 'upsertDepartment', 'deleteDepartment',
   ]);
 
+  const CREATE_ORDER = {
+    createUser: 0,
+    createClassroom: 10,
+    createProject: 20,
+    createMilestone: 30,
+    createTask: 30,
+    createUpdate: 35,
+    createAttachment: 40,
+    createNotification: 50,
+    createBugReport: 50,
+    createDirectMessage: 50,
+    requestProjectAccess: 50,
+    createWorkflowTemplate: 50,
+    addFavorite: 50,
+    createPersonalNote: 50,
+  };
+
   function _opSortRank(method) {
-    if (_isCreate(method)) return 0;
-    if (/^update/.test(method) || method === 'upsertDepartment') return 1;
-    return 2;
+    if (_isCreate(method) || method === 'requestProjectAccess') return CREATE_ORDER[method] ?? 25;
+    if (/^update/.test(method) || method === 'upsertDepartment') return 60;
+    return 70;
   }
 
   async function flush() {
     if (_syncing || !_client || !navigator.onLine) return;
     const pending = _queue
       .filter(o => o.status === 'pending')
-      .sort((a, b) => _opSortRank(a.method) - _opSortRank(b.method));
+      .sort((a, b) => {
+        const rank = _opSortRank(a.method) - _opSortRank(b.method);
+        return rank !== 0 ? rank : (a.createdAt || '').localeCompare(b.createdAt || '');
+      });
     if (!pending.length) return;
 
     _syncing = true;
@@ -329,7 +349,6 @@ const SyncEngine = (() => {
       await t.delete(Number(localId));
       await t.put({ ...rec, id: Number(remoteId) });
 
-      // Also fix foreign key references for projects
       if (method === 'createProject') {
         await window.LocalDB?.db?.tasks?.where('projectId').equals(Number(localId))
           .modify({ projectId: Number(remoteId) }).catch(() => {});
@@ -339,6 +358,12 @@ const SyncEngine = (() => {
           .modify({ projectId: Number(remoteId) }).catch(() => {});
         await window.LocalDB?.db?.attachments?.where('projectId').equals(Number(localId))
           .modify({ projectId: Number(remoteId) }).catch(() => {});
+      }
+      if (method === 'createClassroom') {
+        await window.LocalDB?.db?.projects?.where('classroomId').equals(Number(localId))
+          .modify({ classroomId: Number(remoteId) }).catch(() => {});
+        await window.LocalDB?.db?.userClassrooms?.where('classroomId').equals(Number(localId))
+          .modify({ classroomId: Number(remoteId) }).catch(() => {});
       }
     } catch (_) {}
   }

@@ -80,7 +80,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.2.10'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.2.19'; }
 
 /* ──── UI v3: Splash ──── */
 let _splashShownAt = Date.now();
@@ -1342,11 +1342,32 @@ async function handleAuth(e) {
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
-    // Obtain Supabase Auth JWT so private Realtime channels can connect
+
+    // Get Supabase Auth JWT and resolve the canonical wt_users.id.
+    // The canonical ID is the bigint Supabase uses in its wt_users table — it may
+    // differ from the local Dexie auto-increment ID when the user was created offline.
     const sbEmail = user.email || `${user.username}@worktracker.app`;
-    await window.SupabaseDB?.ensureSupabaseAuth?.(sbEmail, password).catch(err => {
-      console.warn('Supabase Auth (non-fatal):', err?.message || err);
-    });
+    const sbResult = await window.SupabaseDB?.ensureSupabaseAuth?.(sbEmail, password, user.username)
+      .catch(err => { console.warn('Supabase Auth (non-fatal):', err?.message || err); return null; });
+
+    // If Supabase knows this user under a different ID, patch LocalDB to match.
+    // This fixes all FK errors: session.userId will equal wt_users.id in Supabase.
+    if (sbResult?.canonicalUserId && Number(sbResult.canonicalUserId) !== Number(user.id)) {
+      const oldId = user.id;
+      const newId = Number(sbResult.canonicalUserId);
+      try {
+        const t = window.LocalDB?.db?.users;
+        if (t) {
+          const rec = await t.get(oldId);
+          if (rec) { await t.delete(oldId); await t.put({ ...rec, id: newId }); }
+        }
+        user = { ...user, id: newId };
+        console.info(`[Auth] local user ID ${oldId} → canonical Supabase ID ${newId}`);
+      } catch (patchErr) {
+        console.warn('[Auth] ID patch failed (non-fatal):', patchErr?.message);
+      }
+    }
+
     localStorage.removeItem(LOGOUT_FLAG_KEY);
     const prevUserId = localStorage.getItem(LAST_USER_KEY);
     const newUserId = String(user.id);
@@ -1606,6 +1627,34 @@ function formatSyncJobType(type) {
   })[type] || type || 'Sync job';
 }
 
+async function nextSyncBugReportTitle() {
+  const s = getSession();
+  const base = String(s?.username || 'user').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || 'user';
+  const reports = DB.getBugReports ? await DB.getBugReports({ limit: 500 }) : [];
+  const uid = actorId();
+  let max = 0;
+  for (const r of reports) {
+    if (uid && r.userId !== uid) continue;
+    const t = String(r.title || '');
+    const m = t.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${base}${max + 1}`;
+}
+
+async function fileSyncErrorReport(description) {
+  const title = await nextSyncBugReportTitle();
+  try { await navigator.clipboard.writeText(description); } catch (_) {}
+  await DB.createBugReport({
+    userId: actorId(),
+    title,
+    description,
+    severity: 'medium',
+    appVersion: getAppVersion()
+  });
+  return title;
+}
+
 async function showSyncDiagnosticsModal() {
   const status = _getSyncStatus();
   const jobs = (window.SyncEngine && SyncEngine.getQueueDetails)
@@ -1633,6 +1682,7 @@ async function showSyncDiagnosticsModal() {
         ? `<pre class="sync-diag-error" tabindex="0">${esc(j.lastError)}</pre>`
         : '<p class="text-sm text-muted">No error message yet (still queued or retrying).</p>'}
       ${j.payloadJson ? `<details class="sync-diag-details"><summary class="text-sm">Technical payload</summary><pre class="sync-diag-payload">${esc(j.payloadJson)}</pre></details>` : ''}
+      ${j.lastError ? `<button type="button" class="btn btn-sm btn-ghost sync-diag-report-btn" data-action="sync-report-job" data-job-index="${i}">Report</button>` : ''}
     </article>`).join('')
     : '<p class="text-secondary text-sm">Nothing is waiting to sync right now.</p>';
 
@@ -1652,6 +1702,7 @@ async function showSyncDiagnosticsModal() {
       <button type="button" class="btn btn-primary" data-action="sync-retry-now">Retry now</button>
       <button type="button" class="btn btn-ghost" data-action="sync-force-reload" title="Clear local cache and re-fetch everything from the cloud">Force reload from cloud</button>
       <button type="button" class="btn btn-ghost" data-action="sync-copy-errors"${jobs.some(j => j.lastError) ? '' : ' disabled'}>Copy errors</button>
+      <button type="button" class="btn btn-ghost" data-action="sync-report-all"${jobs.some(j => j.lastError) ? '' : ' disabled'}>Report to Admin</button>
       ${status.failed ? '<button type="button" class="btn btn-ghost btn-danger-text" data-action="sync-clear-failed">Clear failed</button>' : ''}
     </div>`);
 }
@@ -3659,7 +3710,9 @@ async function getChatMessagesForChannel(channelId) {
       userId: m.fromUserId,
       details: m.content,
       source: 'direct',
-      createdAt: m.createdAt
+      createdAt: m.createdAt,
+      deliveredAt: m.deliveredAt || null,
+      readAt: m.readAt || null
     }));
   }
   const [appMsgs, discordMsgs] = await Promise.all([
@@ -3708,7 +3761,30 @@ async function refreshChatPane() {
   if (!pane) return;
   const channelId = state.chatChannel || 'general';
   const uMap = state.chatUsersMap || {};
-  const messages = await getChatMessagesForChannel(channelId);
+  let messages;
+
+  // DM channels: always pull fresh from Supabase so new messages appear even when
+  // realtime isn't delivering events (IndexedDB would stay stale otherwise).
+  if (channelId.startsWith('dm-') && window.SupabaseDB?._sb?.() && navigator.onLine !== false) {
+    try {
+      const otherId = Number(channelId.slice(3));
+      const rows = await window.SupabaseDB.getDirectMessages(actorId(), otherId, { limit: 150 });
+      messages = rows.map(r => ({
+        id: `dm-${r.id}`,
+        userId: r.fromUserId,
+        details: r.content || '',
+        source: 'direct',
+        createdAt: r.createdAt,
+        deliveredAt: r.deliveredAt || null,
+        readAt: r.readAt || null
+      }));
+    } catch (_) {
+      messages = await getChatMessagesForChannel(channelId);
+    }
+  } else {
+    messages = await getChatMessagesForChannel(channelId);
+  }
+
   pane.innerHTML = renderChatMessagesHtml(messages, uMap);
   pane.scrollTop = pane.scrollHeight;
   markChatChannelRead(channelId);
@@ -3795,10 +3871,11 @@ function toggleChatDock() { state.chatDockOpen ? closeChatDock() : openChatDock(
 
 function startChatDockPolling() {
   stopChatDockPolling();
-  const ms = window.RealtimeSync?.isConnected?.() ? 10000 : 4000;
+  // Always poll at 5s for DM conversations — refreshChatPane goes to Supabase directly,
+  // so the interval is the max wait time for a new message when realtime isn't firing.
   _chatDockTimer = setInterval(() => {
     if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
-  }, ms);
+  }, 5000);
 }
 function stopChatDockPolling() {
   if (_chatDockTimer) { clearInterval(_chatDockTimer); _chatDockTimer = null; }
@@ -6231,6 +6308,35 @@ const actions = {
     updateSidebarUser();
     hideModal();
     showToast(removed ? `Cleared ${removed} failed job${removed > 1 ? 's' : ''}` : 'No failed jobs to clear', 'info');
+  },
+  'sync-report-job': async (btn) => {
+    const idx = Number(btn?.dataset?.jobIndex ?? -1);
+    const jobs = (window.SyncEngine && SyncEngine.getQueueDetails)
+      ? SyncEngine.getQueueDetails()
+      : (DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : []);
+    const job = jobs[idx];
+    if (!job?.lastError) return;
+    const description = `[${job.type}] ${job.summary || '—'}\nAttempts: ${job.attempts || 0}\n\n${job.lastError}`;
+    try {
+      const title = await fileSyncErrorReport(description);
+      showToast(`Report "${title}" sent — error copied to clipboard`, 'success');
+    } catch (_) {
+      showToast('Could not send report — try using the Report a Bug button instead', 'warning');
+    }
+  },
+  'sync-report-all': async () => {
+    const jobs = (window.SyncEngine && SyncEngine.getQueueDetails)
+      ? SyncEngine.getQueueDetails()
+      : (DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : []);
+    const lines = jobs.filter(j => j.lastError).map(j => `[${j.type}] ${j.summary}\n${j.lastError}`);
+    if (!lines.length) { showToast('No errors to report', 'info'); return; }
+    const description = `Cloud sync diagnostics (${lines.length} issue${lines.length === 1 ? '' : 's'})\n\n${lines.join('\n\n')}`;
+    try {
+      const title = await fileSyncErrorReport(description);
+      showToast(`Report "${title}" sent — errors copied to clipboard`, 'success');
+    } catch (_) {
+      showToast('Could not send report — try using the Report a Bug button instead', 'warning');
+    }
   },
   'user-logout': async () => {
     const s = getSession();
