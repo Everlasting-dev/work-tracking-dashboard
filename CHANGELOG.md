@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.15
+
+### Fixed
+- **Project creation FK error** — creating a project whose classroom hasn't yet synced to Supabase now automatically retries without the classroom assignment instead of failing entirely. The project (and all its tasks) reach the cloud; the classroom link is a soft loss only.
+- **DM FK error** — sending a DM to a user who isn't in Supabase yet now auto-pushes the recipient (and sender) from local storage to Supabase before retrying the message. No more silent DM delivery failures.
+- **Startup user sync** — on every login, the app now quietly compares local users against Supabase and pushes any that are missing. This prevents the FK errors from occurring at all after the first successful launch.
+
+### Why this was happening
+Users and classrooms created while offline (or before Supabase was fully connected) were stored in the local IndexedDB but never made it to the cloud. When Supabase later tried to write data that referenced those missing rows, it threw foreign key constraint errors, which were silently swallowed by the sync queue.
+
 ## 2.2.14
 
 ### Fixed

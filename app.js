@@ -1430,6 +1430,8 @@ async function showApp() {
   }
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
   else DB.flushPendingSync?.().catch(() => {});
+  // Push any locally-known users that never made it to Supabase (prevents FK sync errors)
+  if (isCloudMode()) window.SupabaseDB?.bootstrapMissingUsers?.().catch(() => {});
   updateOfflineSyncBanner();
   await router();
   wtAppBootstrapped = true;

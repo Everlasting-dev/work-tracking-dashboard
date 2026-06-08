@@ -725,14 +725,20 @@ const SupabaseDB = {
   },
 
   async createDirectMessage({ fromUserId, toUserId, content }) {
-    const { data, error } = await this._sb().from('wt_direct_messages')
-      .insert({
-        from_user_id: Number(fromUserId),
-        to_user_id: Number(toUserId),
-        content: String(content || '').slice(0, 2000)
-      })
-      .select()
-      .single();
+    const insert = {
+      from_user_id: Number(fromUserId),
+      to_user_id: Number(toUserId),
+      content: String(content || '').slice(0, 2000)
+    };
+    let { data, error } = await this._sb().from('wt_direct_messages').insert(insert).select().single();
+    if (error?.code === '23503') {
+      // One or both users not yet in Supabase — push them first then retry
+      await Promise.allSettled([
+        this._ensureUserInSupabase(fromUserId),
+        this._ensureUserInSupabase(toUserId)
+      ]);
+      ({ data, error } = await this._sb().from('wt_direct_messages').insert(insert).select().single());
+    }
     if (error) throw error;
     return data.id;
   },
@@ -819,6 +825,58 @@ const SupabaseDB = {
 
   async signOutSupabase() {
     try { await this._sb()?.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
+  },
+
+  // Push a single local user to Supabase if they're not there yet (used to recover from FK errors)
+  async _ensureUserInSupabase(userId) {
+    const { data: existing } = await this._sb().from('wt_users').select('id').eq('id', Number(userId)).maybeSingle();
+    if (existing) return;
+    const localUser = await window.LocalDB?.getUser?.(Number(userId)).catch(() => null);
+    if (!localUser?.username) return;
+    await this._sb().from('wt_users').insert({
+      id: Number(userId),
+      username: localUser.username,
+      display_name: localUser.displayName || localUser.username,
+      email: localUser.email || '',
+      password_hash: localUser.passwordHash || '',
+      salt: localUser.salt || '',
+      role: localUser.role || 'user',
+      department: localUser.department || '',
+      color: localUser.color || '',
+      bio: localUser.bio || '',
+      avatar_base64: localUser.avatarBase64 || ''
+    }).catch(() => {});
+  },
+
+  // On startup: silently push any local users that never made it to Supabase.
+  // This fixes FK violations when their data is referenced by projects, DMs, etc.
+  async bootstrapMissingUsers() {
+    try {
+      const localUsers = await window.LocalDB?.getUsers?.() || [];
+      if (!localUsers.length) return;
+      const { data: remoteRows } = await this._sb().from('wt_users').select('id');
+      const remoteSet = new Set((remoteRows || []).map(r => Number(r.id)));
+      const missing = localUsers.filter(u => u.id && !remoteSet.has(Number(u.id)));
+      if (!missing.length) return;
+      for (const user of missing) {
+        await this._sb().from('wt_users').insert({
+          id: Number(user.id),
+          username: user.username,
+          display_name: user.displayName || user.username,
+          email: user.email || '',
+          password_hash: user.passwordHash || '',
+          salt: user.salt || '',
+          role: user.role || 'user',
+          department: user.department || '',
+          color: user.color || '',
+          bio: user.bio || '',
+          avatar_base64: user.avatarBase64 || ''
+        }).catch(() => {});
+      }
+      console.log(`[BootstrapSync] pushed ${missing.length} missing user(s) to Supabase`);
+    } catch (e) {
+      console.warn('[BootstrapSync] bootstrapMissingUsers:', e);
+    }
   },
 
   _defaultDepartments() {
@@ -1238,6 +1296,11 @@ const SupabaseDB = {
       delete payload.cadence;
       delete payload.editor_ids;
       delete payload.hidden_from_ids;
+      ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
+    }
+    // FK on classroom_id: classroom not yet synced to Supabase → create without classroom
+    if (error?.code === '23503' && error.message?.includes('classroom_id')) {
+      payload.classroom_id = null;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
     }
     if (error) throw error;
