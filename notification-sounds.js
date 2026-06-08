@@ -54,7 +54,8 @@ const NotificationSounds = (() => {
         break;
       case 'chat':
       case 'mention':
-        _tone(880, t, 0.07, 'triangle', VOLUME * 0.5);
+        _tone(880, t, 0.09, 'triangle', VOLUME * 0.65);
+        _tone(1100, t + 0.13, 0.12, 'triangle', VOLUME * 0.55);
         break;
       case 'task_done':
         _tone(587, t, 0.1);

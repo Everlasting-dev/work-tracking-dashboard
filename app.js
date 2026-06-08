@@ -3524,6 +3524,7 @@ function markChatChannelRead(channelId) {
   saveChatReadMap(map);
   if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
   state.chatUnreadChannels.delete(channelId);
+  if (state.chatUnreadCounts) delete state.chatUnreadCounts[channelId];
   updateChatUnreadBadge();
   if (state.chatDockOpen && state.chatDockView === 'list') {
     const list = document.getElementById('chat-dock-list');
@@ -3564,19 +3565,38 @@ async function refreshChatUnreadState() {
     return;
   }
   if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
-  const unread = new Set();
-  const latestGeneral = await getChannelLatestMessage('general');
-  if (isChannelUnread('general', latestGeneral)) unread.add('general');
+  const prevUnread = new Set(state.chatUnreadChannels);
+
   let users = _chatDockData?.users;
   if (!users) {
     const data = await getWorkspaceData();
     users = data.users || [];
   }
-  for (const u of users.filter(x => x.id !== uid)) {
-    const ch = `dm-${u.id}`;
-    const latest = await getChannelLatestMessage(ch);
-    if (isChannelUnread(ch, latest)) unread.add(ch);
+
+  const channelIds = [
+    'general',
+    ...users.filter(x => x.id !== uid).map(u => `dm-${u.id}`)
+  ];
+
+  const results = await Promise.all(
+    channelIds.map(ch =>
+      getChannelLatestMessage(ch).then(msg => ({ ch, msg })).catch(() => ({ ch, msg: null }))
+    )
+  );
+
+  const unread = new Set();
+  for (const { ch, msg } of results) {
+    if (isChannelUnread(ch, msg)) unread.add(ch);
   }
+
+  // Play sound when polling detects a new unread channel (realtime handler covers live events)
+  for (const ch of unread) {
+    if (!prevUnread.has(ch)) {
+      NotificationSounds?.play?.('chat');
+      break;
+    }
+  }
+
   state.chatUnreadChannels = unread;
   updateChatUnreadBadge();
   if (state.chatDockOpen && state.chatDockView === 'list') {
@@ -3585,7 +3605,7 @@ async function refreshChatUnreadState() {
   }
 }
 function _chatPollMs() {
-  return window.RealtimeSync?.isConnected?.() ? 60000 : 12000;
+  return window.RealtimeSync?.isConnected?.() ? 15000 : 5000;
 }
 function startChatUnreadPolling() {
   stopChatUnreadPolling();
@@ -3730,7 +3750,7 @@ function toggleChatDock() { state.chatDockOpen ? closeChatDock() : openChatDock(
 
 function startChatDockPolling() {
   stopChatDockPolling();
-  const ms = window.RealtimeSync?.isConnected?.() ? 45000 : 8000;
+  const ms = window.RealtimeSync?.isConnected?.() ? 10000 : 4000;
   _chatDockTimer = setInterval(() => {
     if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
   }, ms);
@@ -3758,10 +3778,15 @@ function chatDockContactRow(u, isFav) {
     ? `<img src="${esc(u.avatarBase64)}" alt="${esc(initials)}">`
     : initials;
   const sub = isUserOnline(u) ? 'Online' : (u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Offline');
-  const unreadCls = state.chatUnreadChannels?.has(`dm-${u.id}`) ? ' chat-dock-contact--unread' : '';
-  return `<button type="button" class="chat-dock-contact${unreadCls}" data-action="open-chat-channel" data-channel-id="dm-${u.id}">
+  const channelId = `dm-${u.id}`;
+  const isUnread = state.chatUnreadChannels?.has(channelId);
+  const unreadCount = state.chatUnreadCounts?.[channelId] || 0;
+  const unreadCls = isUnread ? ' chat-dock-contact--unread' : '';
+  const unreadBadge = isUnread ? `<span class="chat-unread-badge">${unreadCount > 99 ? '99+' : unreadCount || ''}</span>` : '';
+  return `<button type="button" class="chat-dock-contact${unreadCls}" data-action="open-chat-channel" data-channel-id="${channelId}">
     <span class="chat-dock-contact-av" ${userColorStyle(u)}>${avatarInner}${presenceDotHtml(u)}</span>
     <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">${esc(u.displayName || u.username)}</span><small>${sub}</small></span>
+    ${unreadBadge}
     <span class="chat-dock-fav ${isFav ? 'is-fav' : ''}" data-action="toggle-chat-favorite" data-user-id="${u.id}" title="${isFav ? 'Unpin contact' : 'Pin contact'}">${isFav ? '★' : '☆'}</span>
   </button>`;
 }
@@ -3773,21 +3798,30 @@ function chatDockListBodyHtml() {
   const q = (state.chatDockSearch || '').trim().toLowerCase();
   const people = d.users.filter(u => u.id !== s?.userId);
   const filtered = q ? people.filter(u => (u.displayName || u.username || '').toLowerCase().includes(q)) : people;
-  const favs = filtered.filter(u => d.favIds.has(u.id));
-  const online = filtered.filter(u => !d.favIds.has(u.id) && isUserOnline(u));
-  const others = filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u))
+
+  // Unread DMs bubble to the top section; remove them from their regular section to avoid duplicates
+  const unreadDMs = filtered.filter(u => state.chatUnreadChannels?.has(`dm-${u.id}`));
+  const unreadIds = new Set(unreadDMs.map(u => u.id));
+
+  const favs = filtered.filter(u => d.favIds.has(u.id) && !unreadIds.has(u.id));
+  const online = filtered.filter(u => !d.favIds.has(u.id) && isUserOnline(u) && !unreadIds.has(u.id));
+  const others = filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u) && !unreadIds.has(u.id))
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
 
-  const generalUnread = state.chatUnreadChannels?.has('general') ? ' chat-dock-contact--unread' : '';
+  const generalIsUnread = state.chatUnreadChannels?.has('general');
+  const generalUnreadCount = state.chatUnreadCounts?.['general'] || 0;
+  const generalBadge = generalIsUnread ? `<span class="chat-unread-badge">${generalUnreadCount > 99 ? '99+' : generalUnreadCount || ''}</span>` : '';
   const channelsHtml = `
-    <button type="button" class="chat-dock-contact${generalUnread}" data-action="open-chat-channel" data-channel-id="general">
+    <button type="button" class="chat-dock-contact${generalIsUnread ? ' chat-dock-contact--unread' : ''}" data-action="open-chat-channel" data-channel-id="general">
       <span class="chat-dock-contact-av chat-dock-channel-ic">#</span>
       <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">general</span><small>${d.generalHook?.url ? 'Discord connected' : 'Team channel'}</small></span>
+      ${generalBadge}
     </button>`;
 
   const section = (label, html) => html ? `<div class="chat-dock-section-label">${label}</div>${html}` : '';
   return `
     ${section('Channels', channelsHtml)}
+    ${section('Unread', unreadDMs.map(u => chatDockContactRow(u, d.favIds.has(u.id))).join(''))}
     ${section('Pinned', favs.map(u => chatDockContactRow(u, true)).join(''))}
     ${section('Online', online.map(u => chatDockContactRow(u, false)).join(''))}
     ${section(q ? 'Results' : 'Everyone', others.map(u => chatDockContactRow(u, false)).join('') || (q ? '<p class="chat-dock-empty">No matches</p>' : ''))}`;
@@ -6910,7 +6944,9 @@ function setupRealtimeHandlers() {
       const chatActive = state.chatDockOpen && state.chatDockView === 'convo' && state.chatChannel === channelId;
       if (!chatActive) NotificationSounds?.play?.('chat');
       if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
+      if (!state.chatUnreadCounts) state.chatUnreadCounts = {};
       state.chatUnreadChannels.add(channelId);
+      state.chatUnreadCounts[channelId] = (state.chatUnreadCounts[channelId] || 0) + 1;
       updateChatUnreadBadge();
       if (state.chatDockOpen && state.chatDockView === 'list') {
         const list = document.getElementById('chat-dock-list');

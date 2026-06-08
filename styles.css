@@ -3163,8 +3163,15 @@ html.splash-lock body {
   pointer-events: none;
 }
 .dock-launcher, .chat-dock-launcher { position: relative; }
+.chat-dock-contact--unread { background: rgba(0,0,0,0.05); border-left: 3px solid #000; padding-left: 5px; }
 .chat-dock-contact--unread .chat-dock-contact-name { font-weight: 800; }
-.chat-dock-contact--unread { background: rgba(0,0,0,0.04); }
+.chat-unread-badge {
+  min-width: 18px; height: 18px; border-radius: 9px;
+  background: #000; color: #fff; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 5px; flex-shrink: 0; line-height: 1;
+}
+.chat-unread-badge:empty { min-width: 10px; height: 10px; border-radius: 5px; padding: 0; }
 .dock-launcher svg, .chat-dock-launcher svg { width: 22px; height: 22px; }
 .chat-dock-panel {
   width: 340px; max-width: calc(100vw - 44px); height: 480px; max-height: calc(100vh - 120px);

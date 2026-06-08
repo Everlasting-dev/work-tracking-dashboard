@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2.11
+
+### Added
+- **Chat unread section** — contacts with unread messages bubble to the top of the chat list with a dedicated "Unread" section; they are removed from their original section to avoid duplicates.
+- **Unread count badges** — each unread contact shows a live count pill (number of messages received since last read); falls back to a dot indicator when the app reconnects after a session gap.
+- **Chat notification sounds** — sounds now fire for polling-detected unreads in addition to real-time events; improved double-ping tone is more distinct.
+
+### Fixed
+- **Chat sync latency** — unread badge now refreshes every 15 s (was 60 s) and conversation view every 10 s (was 45 s) when Supabase Realtime is connected; fallback polling is 5 s / 4 s when offline.
+- **Unread check performance** — all channel latest-message queries now run in parallel (`Promise.all`) instead of sequentially, eliminating N+1 round trips on workspaces with many members.
+
+### Changed
+- Unread contacts show a black left border and bold name for clearer at-a-glance scanning.
+
 ## 2.2.10
 
 ### Added
