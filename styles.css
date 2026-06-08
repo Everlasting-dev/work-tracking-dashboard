@@ -448,13 +448,15 @@ ul,ol { list-style: none; }
 }
 /* DM delivery / read receipts */
 .chat-msg-receipt {
-  display: inline-block; margin-left: 5px; font-size: 0.72rem;
+  display: inline-block; margin-left: 6px; font-size: 0.73rem;
   color: var(--text-muted); vertical-align: middle; line-height: 1;
+  font-weight: 500;
 }
 .chat-msg-receipt--delivered { color: var(--text-muted); }
-.chat-msg-receipt--read { color: #1a73e8; }
+.chat-msg-receipt--read { color: #1a73e8; font-weight: 600; }
 
-.sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; padding: 8px 4px 20px; min-height: 0; overflow: hidden; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; padding: 8px 4px 20px; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.sidebar-nav::-webkit-scrollbar { display: none; }
 
 .nav-item {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px;

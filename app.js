@@ -3741,11 +3741,11 @@ function renderChatMessagesHtml(messages, uMap) {
     let receiptHtml = '';
     if (mine && isDirect) {
       if (m.readAt) {
-        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--read" title="Read">✓✓</span>`;
+        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--read" title="Read">✓✓ Read</span>`;
       } else if (m.deliveredAt) {
-        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--delivered" title="Delivered">✓✓</span>`;
+        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--delivered" title="Delivered">✓✓ Delivered</span>`;
       } else {
-        receiptHtml = `<span class="chat-msg-receipt" title="Sent">✓</span>`;
+        receiptHtml = `<span class="chat-msg-receipt" title="Sent">✓ Sent</span>`;
       }
     }
     html += `<div class="chat-msg-row ${mine ? 'chat-msg-mine' : ''} ${isDiscord ? 'chat-msg-discord' : ''}">

@@ -263,7 +263,11 @@ const RealtimeSync = (() => {
     if (!_client) return false;
 
     _uid = uid;
-    _channel = _client.channel(`wt-live-${uid}`, { config: { private: true } });
+    // Private channels require a Supabase Auth JWT. Trusted-session logins bypass
+    // handleAuth so may not have a JWT yet — check first and fall back to public.
+    let _authSession = null;
+    try { const { data } = await _client.auth.getSession(); _authSession = data?.session || null; } catch {}
+    _channel = _client.channel(`wt-live-${uid}`, _authSession ? { config: { private: true } } : {});
 
     _subscribe('wt_notifications', _handleNotification, `user_id=eq.${uid}`);
     _subscribe('wt_direct_messages', _handleDirectMessage);

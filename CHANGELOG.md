@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.14
+
+### Fixed
+- **Realtime reconnection for trusted sessions** — devices that log in via remembered session no longer fail to subscribe because they don't have a Supabase Auth JWT yet. The channel now checks for an active session first and falls back to a public channel transparently. Once the user explicitly logs in again, the private channel takes over.
+- **Sidebar nav clipping** — nav items on shorter screens were being cut off by `overflow: hidden`. Changed to `overflow-y: auto` (scrollbar hidden) so all items remain reachable without layout breakage.
+
+### Changed
+- **DM receipts now show label text** — sent DMs display "✓ Sent", "✓✓ Delivered", or "✓✓ Read" (blue) instead of just tick marks, making the status unambiguous at a glance.
+
 ## 2.2.13
 
 ### Added
