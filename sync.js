@@ -20,6 +20,8 @@ const SyncEngine = (() => {
   let _initDone      = false;
   let _lastError     = '';
   let _lastPullAt    = 0;
+  let _pullTimer     = null;
+  let _safetyTimer   = null;
 
   // ── Persistence ─────────────────────────────────────────────────────
 
@@ -121,9 +123,8 @@ const SyncEngine = (() => {
     'createNotification','markNotificationRead','markAllNotificationsRead',
     'logActivity',
     'setMasterKey','changePassword',
-    'createAccessRequest','updateAccessRequest',
     'createBugReport','updateBugReport',
-    'sendDirectMessage',
+    'createDirectMessage','requestProjectAccess','respondProjectAccess',
     'saveGeneralWebhook','saveProjectWebhook','deleteWebhook',
     'touchLastSeen','recordLoginSession',
     'createWorkflowTemplate','updateWorkflowTemplate','deleteWorkflowTemplate',
@@ -143,7 +144,10 @@ const SyncEngine = (() => {
     }
   }
 
-  function _isCreate(method) { return method.startsWith('create') || method === 'upsertDepartment' || method === 'setMasterKey'; }
+  function _isCreate(method) {
+    return method.startsWith('create') || method === 'upsertDepartment' || method === 'setMasterKey'
+      || method === 'requestProjectAccess';
+  }
 
   function _serialize(v) {
     try { return JSON.parse(JSON.stringify(v)); } catch (_) { return null; }
@@ -151,6 +155,23 @@ const SyncEngine = (() => {
 
   function _enqueue(method, args, result) {
     if (!_client) return;
+
+    if (method === 'requestProjectAccess' && args[0] && typeof args[0] === 'object') {
+      const data = args[0];
+      const idx = _queue.findLastIndex?.(o =>
+        o.method === 'requestProjectAccess' &&
+        o.args?.[0]?.projectId === data.projectId &&
+        o.args?.[0]?.requesterId === data.requesterId &&
+        o.status === 'pending'
+      );
+      if (idx >= 0) {
+        _queue[idx].args = _serialize([{ ...(_queue[idx].args[0] || {}), ...data }]);
+        _saveQueue();
+        _publish();
+        if (navigator.onLine && !_syncing) _scheduleFlush(400);
+        return;
+      }
+    }
 
     // Deduplicate: collapse rapid update+update for same entity
     if (/^update/.test(method) && typeof args[0] === 'number') {
@@ -293,7 +314,8 @@ const SyncEngine = (() => {
       createMilestone: 'milestones', createUpdate: 'updates',
       createUser: 'users', createClassroom: 'classrooms',
       createAttachment: 'attachments', createNotification: 'notifications',
-      createBugReport: 'bugReports', sendDirectMessage: 'directMessages',
+      createBugReport: 'bugReports', createDirectMessage: 'directMessages',
+      requestProjectAccess: 'projectAccessRequests',
       createWorkflowTemplate: 'workflowTemplates', addFavorite: 'userFavorites',
       createPersonalNote: 'personalNotes',
     };
@@ -447,10 +469,14 @@ const SyncEngine = (() => {
       if (!sb) return;
 
       // Parallel fetch of all collections from Supabase
+      const session = _getSession();
+      const myId = session?.userId;
+
       const [
         users, projects, tasks, departments, classrooms,
         milestones, updates, notifications, accessRequests, bugReports, userClassrooms,
-        attachments, workflowTemplates, favorites, personalNotes
+        attachments, workflowTemplates, favorites, personalNotes,
+        directMessages, chatActivity, discordMessages
       ] = await Promise.allSettled([
         sb.getUsers(),
         sb.getProjects(),
@@ -494,9 +520,45 @@ const SyncEngine = (() => {
           return (data || []).map(r => ({ id: r.id, userId: r.user_id, favoriteUserId: r.favorite_user_id, createdAt: r.created_at }));
         })(),
         (async () => {
-          const session = _getSession();
           if (!session?.userId || !sb.getPersonalNotes) return [];
           return sb.getPersonalNotes(session.userId);
+        })(),
+        (async () => {
+          if (!myId) return [];
+          const { data, error } = await sb._sb().from('wt_direct_messages').select('*')
+            .or(`from_user_id.eq.${myId},to_user_id.eq.${myId}`)
+            .order('created_at', { ascending: false }).limit(300);
+          if (error) throw error;
+          return (data || []).map(r => ({
+            id: r.id,
+            fromUserId: r.from_user_id,
+            toUserId: r.to_user_id,
+            content: r.content || '',
+            createdAt: r.created_at,
+            updatedAt: r.updated_at || r.created_at
+          }));
+        })(),
+        (async () => {
+          const { data, error } = await sb._sb().from('wt_activity_log').select('*')
+            .order('created_at', { ascending: false }).limit(1000);
+          if (error) throw error;
+          return (data || []).map(r => sb._mapActivity(r));
+        })(),
+        (async () => {
+          const { data, error } = await sb._sb().from('wt_discord_messages').select('*')
+            .order('created_at', { ascending: false }).limit(300);
+          if (error) throw error;
+          return (data || []).map(r => ({
+            id: r.id,
+            channelId: r.channel_id,
+            discordMessageId: r.discord_message_id,
+            discordAuthorId: r.author_id,
+            discordAuthorName: r.author_username,
+            discordDisplayName: r.author_display_name || r.author_username,
+            discordAvatar: r.author_avatar || '',
+            content: r.content || '',
+            createdAt: r.created_at
+          }));
         })(),
       ]);
 
@@ -521,6 +583,9 @@ const SyncEngine = (() => {
       if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));
       if (favorites.status     === 'fulfilled' && ldb.userFavorites) await _bulkPut(ldb.userFavorites, favorites.value);
       if (personalNotes.status === 'fulfilled' && ldb.personalNotes) await _bulkPutPersonalNotes(ldb.personalNotes, personalNotes.value);
+      if (directMessages.status === 'fulfilled' && ldb.directMessages) await _bulkPut(ldb.directMessages, directMessages.value);
+      if (chatActivity.status === 'fulfilled' && ldb.activityLog) await _bulkPut(ldb.activityLog, chatActivity.value);
+      if (discordMessages.status === 'fulfilled' && ldb.discordMessages) await _bulkPut(ldb.discordMessages, discordMessages.value);
 
       const criticalFailures = [
         ['projects', projects],
@@ -618,6 +683,23 @@ const SyncEngine = (() => {
 
   // ── Network events ───────────────────────────────────────────────────
 
+  function _startBackgroundPull() {
+    clearInterval(_pullTimer);
+    clearInterval(_safetyTimer);
+    _pullTimer = setInterval(() => {
+      if (!_client || !navigator.onLine || _pullRunning) return;
+      const rtConnected = window.RealtimeSync?.isConnected?.();
+      if (rtConnected) return;
+      pull().catch(() => {});
+    }, 60000);
+    _safetyTimer = setInterval(() => {
+      if (!_client || !navigator.onLine || _pullRunning) return;
+      pull().catch(() => {});
+    }, 300000);
+  }
+
+  function getLastPullAt() { return _lastPullAt; }
+
   function _onOnline() {
     _publish();
     pull().then(() => flush());
@@ -669,9 +751,12 @@ const SyncEngine = (() => {
       await flush();
     }
 
+    _startBackgroundPull();
     _publish();
     return true;
   }
+
+  function getClient() { return _client; }
 
   // ── Queue inspection / management (for diagnostics UI) ───────────────
 
@@ -719,7 +804,7 @@ const SyncEngine = (() => {
     return reset;
   }
 
-  return { init, pull, flush, getStatus, getQueueDetails, clearFailed, retry };
+  return { init, pull, flush, getStatus, getQueueDetails, clearFailed, retry, getClient, getLastPullAt };
 })();
 
 window.SyncEngine = SyncEngine;

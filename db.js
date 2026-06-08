@@ -304,6 +304,30 @@ db.version(14).stores({
   });
 });
 
+db.version(15).stores({
+  projects: '++id, name, type, status, priority, ownerId, classroomId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt',
+  classrooms: '++id, name, createdAt',
+  userClassrooms: '++id, userId, classroomId, &[userId+classroomId]',
+  directMessages: '++id, [fromUserId+toUserId], createdAt',
+  workflowTemplates: '++id, name, createdBy, createdAt, updatedAt',
+  userFavorites: '++id, userId, favoriteUserId, &[userId+favoriteUserId], createdAt',
+  personalNotes: '++id, userId, done, sortOrder, createdAt, updatedAt',
+  discordMessages: '++id, channelId, createdAt'
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -361,7 +385,23 @@ const LocalDB = {
   getSyncQueueDetails() { return []; },
   retrySyncNow() { return Promise.resolve(); },
   clearFailedSyncJobs() { return 0; },
-  async getDiscordMessages() { return []; },
+  async getDiscordMessages(channelId, { limit = 100 } = {}) {
+    if (!channelId) return [];
+    let rows = await db.discordMessages.where('channelId').equals(channelId).toArray()
+      .catch(() => db.discordMessages.toArray().then(all => all.filter(r => r.channelId === channelId)));
+    rows.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    return rows.slice(-limit).map(r => ({
+      id: `discord-${r.id}`,
+      userId: null,
+      discordAuthorId: r.discordAuthorId,
+      discordAuthorName: r.discordAuthorName,
+      discordDisplayName: r.discordDisplayName || r.discordAuthorName,
+      discordAvatar: r.discordAvatar || '',
+      details: r.content || '',
+      source: 'discord',
+      createdAt: r.createdAt
+    }));
+  },
 
   async flushPendingSync() { return; },
 

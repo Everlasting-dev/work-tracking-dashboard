@@ -13,3 +13,4 @@ out/
 # Local data exports / backups
 worktracker-*.json
 node_modules
+release-build/

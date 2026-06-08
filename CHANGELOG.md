@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.10
+
+### Added
+- **Notification sounds** — distinct Web Audio tones per notification type (assignment, access request, chat, task done, etc.); mute toggle in user menu.
+- **Documents panel animation** — smooth slide-in/out when opening the Files side panel.
+
+### Fixed
+- **Activity log** — project events (tasks, files, milestones, updates) now record to the in-app Updates tab, not only Discord backlog.
+- **Full activity sync** — pull and Supabase Realtime hydrate the complete activity log across devices.
+- **Realtime communications** — DMs, chat, notifications, and access requests sync and update live without manual Sync.
+
+### Changed
+- Sidebar shows **Live** when Supabase Realtime is connected; fallback sync every 60s / 5 min safety pull.
+
+## 2.2.9
+
+### Added
+- Supabase Realtime layer (`realtime-sync.js`) for notifications, chat, DMs, access requests, and dashboard data.
+- Extended sync pull for direct messages, chat activity, and Discord mirror messages.
+
+### Fixed
+- Sync queue now pushes `createDirectMessage`, `requestProjectAccess`, and `respondProjectAccess` to the cloud.
+- Access-request owner notifications include the requester's message text.
+
 ## 2.2.8
 
 ### Fixed

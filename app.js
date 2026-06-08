@@ -80,7 +80,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.2.8'; }
+function getAppVersion() { return window.WT_APP_VERSION || '2.2.10'; }
 
 /* ──── UI v3: Splash ──── */
 let _splashShownAt = Date.now();
@@ -883,11 +883,32 @@ async function mirrorBacklogActivity(content) {
   });
 }
 
+async function recordProjectActivity({ userId, projectId = null, action, entityType, entityId = null, details = '', discordLine = null }) {
+  const uid = userId || actorId();
+  if (uid && action) {
+    await DB.logActivity({ userId: uid, projectId, action, entityType, entityId, details }).catch(() => {});
+  }
+  if (discordLine) {
+    const line = discordLine.startsWith('[Backlog]') ? discordLine : `[Backlog] ${discordLine}`;
+    await mirrorBacklogActivity(line).catch(() => {});
+  }
+}
+
 /* ──── In-app notification helper ──── */
 
 async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null, discordContent = null }) {
   if (userId) {
     await DB.createNotification({ userId, type, message, projectId, entityType, entityId, actorUserId });
+  }
+  if (projectId && actorUserId) {
+    await recordProjectActivity({
+      userId: actorUserId,
+      projectId,
+      action: 'notified',
+      entityType: type || 'info',
+      entityId,
+      details: message.slice(0, 200)
+    }).catch(() => {});
   }
   if (discordContent) {
     await fireDiscordEvent({ projectId, content: discordContent });
@@ -1399,6 +1420,9 @@ async function showApp() {
   const dockRoot = document.getElementById('chat-dock-root');
   if (dockRoot) { dockRoot.style.display = ''; renderChatDock(); }
   startChatUnreadPolling();
+  if (isCloudMode() && window.RealtimeSync) {
+    RealtimeSync.init(s.userId).catch(() => {});
+  }
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
   else DB.flushPendingSync?.().catch(() => {});
   updateOfflineSyncBanner();
@@ -1451,6 +1475,8 @@ async function handleNetworkOnline() {
   if (!isCloud) return;
   showToast('Back online. Syncing saved changes...', 'info');
   try {
+    const s = getSession();
+    if (s?.userId && window.RealtimeSync) RealtimeSync.restart().catch(() => {});
     if (window.SyncEngine) {
       await SyncEngine.pull();
       await SyncEngine.flush();
@@ -1646,10 +1672,11 @@ function renderSyncStatusIndicator() {
     return;
   }
   if (!status.pending) {
-    el.textContent = ' · Sync';
-    el.className = 'sync-status-label is-clickable';
-    el.title = 'Sync now';
-    el.setAttribute('aria-label', 'Sync now.');
+    const live = window.RealtimeSync?.isConnected?.();
+    el.textContent = live ? ' · Live' : ' · Sync';
+    el.className = live ? 'sync-status-label is-live is-clickable' : 'sync-status-label is-clickable';
+    el.title = live ? 'Realtime connected — click to sync now' : 'Sync now';
+    el.setAttribute('aria-label', live ? 'Realtime connected. Click to sync now.' : 'Sync now.');
     return;
   }
   el.textContent = status.pending === 1 ? ' · 1 pending sync' : ` · ${status.pending} pending sync`;
@@ -1741,6 +1768,7 @@ function renderUserMenu() {
     </div>` : ''}`;
   menu.innerHTML = `
     ${syncMenuItem}
+    <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '🔇' : '🔔'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
     <button type="button" class="user-menu-item" data-action="app-refresh">${ICONS.refresh} Refresh app</button>
     ${helpSection}
@@ -1776,7 +1804,8 @@ function formatActivityMessage(entry, uMap) {
   const name = who ? (who.displayName || who.username) : 'Someone';
   const actionLabels = {
     created: 'created', updated: 'updated', deleted: 'deleted', uploaded: 'uploaded',
-    noted: 'added a note on', password_changed: 'changed password for', logged_in: 'signed in', logged_out: 'signed out'
+    noted: 'added a note on', notified: 'sent notification about', password_changed: 'changed password for',
+    logged_in: 'signed in', logged_out: 'signed out', sent_message: 'sent a message in'
   };
   const typeLabels = {
     project: 'project', task: 'task', milestone: 'milestone', attachment: 'file',
@@ -1788,6 +1817,8 @@ function formatActivityMessage(entry, uMap) {
   if (entry.action === 'password_changed') return `${esc(name)} ${verb} an account`;
   if (entry.action === 'logged_in' || entry.action === 'logged_out') return `${esc(name)} ${verb}`;
   if (entry.action === 'noted') return `${esc(name)} ${verb} ${type}${detail}`;
+  if (entry.action === 'notified') return `${esc(name)} ${verb} ${type.replace(/_/g, ' ')}${detail}`;
+  if (entry.action === 'sent_message' && entry.entityType === 'chat') return `${esc(name)} ${verb} chat${detail}`;
   return `${esc(name)} ${verb} ${type}${detail}`;
 }
 
@@ -2472,9 +2503,19 @@ function dismissCelebration() {
 /* Shared side-effects when a task's status changes (used by board DnD + status cycle). */
 async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks, projectAttachments) {
   const workflowProjectStatus = await syncWorkflowProjectStatus(p, uid);
-  await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} changed task "${task.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`);
+  const actor = getSession();
+  const who = actor?.displayName || actor?.username || 'Someone';
+  await recordProjectActivity({
+    userId: uid, projectId: p.id, action: 'updated', entityType: 'task', entityId: task.id,
+    details: `${task.title} → ${TSTATUS[nextStatus]?.l || nextStatus}`,
+    discordLine: `${who} changed task "${task.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`
+  });
   if (workflowProjectStatus) {
-    await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} after the logistics workflow changed.`);
+    await recordProjectActivity({
+      userId: uid, projectId: p.id, action: 'updated', entityType: 'project',
+      details: `moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} (workflow)`,
+      discordLine: `"${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} after the logistics workflow changed.`
+    });
   }
   if (!isLogisticsWorkflow(p) && (p.status === 'active' || p.status === 'completed')) {
     const tasksAfterUpdate = (projectTasks || []).map(pt => pt.id === task.id ? { ...pt, status: nextStatus } : pt);
@@ -2482,11 +2523,19 @@ async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks
     if (allDone && p.status !== 'completed') {
       await DB.updateProject(p.id, { status: 'completed' }, uid);
       showToast(`"${p.name}" completed — all tasks done!`, 'success');
-      await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to Completed after all tasks were done.`);
+      await recordProjectActivity({
+        userId: uid, projectId: p.id, action: 'updated', entityType: 'project',
+        details: 'moved to Completed (all tasks done)',
+        discordLine: `"${p.name}" automatically moved to Completed after all tasks were done.`
+      });
       await onProjectCompleted(p, uid).catch(() => {});
     } else if (!allDone && p.status === 'completed') {
       await DB.updateProject(p.id, { status: 'active' }, uid);
-      await mirrorBacklogActivity(`[Backlog] "${p.name}" moved back to Active after a task was reopened.`);
+      await recordProjectActivity({
+        userId: uid, projectId: p.id, action: 'updated', entityType: 'project',
+        details: 'moved back to Active (task reopened)',
+        discordLine: `"${p.name}" moved back to Active after a task was reopened.`
+      });
     }
   }
   if (nextStatus === 'done' && p.ownerId && p.ownerId !== uid) {
@@ -2640,9 +2689,34 @@ async function renderProjectDetail(projectId) {
   await renderTab(tab, projectId, editable);
 }
 
-function hideDocumentPanel() {
+function closeDocumentPanelAnimated(done) {
   const panel = document.getElementById('document-panel');
-  if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+  const main = document.getElementById('main-content');
+  if (!panel || panel.classList.contains('hidden')) { done?.(); return; }
+  panel.classList.remove('is-open');
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    if (main) main.classList.remove('with-doc-panel');
+    done?.();
+  };
+  const onEnd = (e) => { if (e.target === panel && e.propertyName === 'transform') finish(); };
+  panel.addEventListener('transitionend', onEnd, { once: true });
+  setTimeout(finish, 320);
+}
+
+function hideDocumentPanel() {
+  closeDocumentPanelAnimated();
+}
+
+function openDocumentPanelAnimated() {
+  const panel = document.getElementById('document-panel');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  requestAnimationFrame(() => panel.classList.add('is-open'));
 }
 
 async function renderDocumentPanel(projectId, editable) {
@@ -2650,8 +2724,7 @@ async function renderDocumentPanel(projectId, editable) {
   const main = document.getElementById('main-content');
   if (!panel) return;
   if (!state.docPanelOpen) {
-    panel.classList.add('hidden');
-    if (main) main.classList.remove('with-doc-panel');
+    closeDocumentPanelAnimated();
     return;
   }
   // Revoke any previous panel blob URLs
@@ -2662,8 +2735,9 @@ async function renderDocumentPanel(projectId, editable) {
   const projectItems = items.filter(a => !a.taskId); // project-level files only in panel
   const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  panel.classList.remove('hidden');
   if (main) main.classList.add('with-doc-panel');
+  if (!panel.classList.contains('is-open')) openDocumentPanelAnimated();
+  else panel.classList.remove('hidden');
 
   const listHtml = items.length === 0
     ? `<p class="doc-panel-empty">No documents yet.</p>`
@@ -3510,10 +3584,13 @@ async function refreshChatUnreadState() {
     if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
   }
 }
+function _chatPollMs() {
+  return window.RealtimeSync?.isConnected?.() ? 60000 : 12000;
+}
 function startChatUnreadPolling() {
   stopChatUnreadPolling();
   refreshChatUnreadState().catch(() => {});
-  _chatUnreadTimer = setInterval(() => refreshChatUnreadState().catch(() => {}), 12000);
+  _chatUnreadTimer = setInterval(() => refreshChatUnreadState().catch(() => {}), _chatPollMs());
 }
 function stopChatUnreadPolling() {
   if (_chatUnreadTimer) { clearInterval(_chatUnreadTimer); _chatUnreadTimer = null; }
@@ -3653,9 +3730,10 @@ function toggleChatDock() { state.chatDockOpen ? closeChatDock() : openChatDock(
 
 function startChatDockPolling() {
   stopChatDockPolling();
+  const ms = window.RealtimeSync?.isConnected?.() ? 45000 : 8000;
   _chatDockTimer = setInterval(() => {
     if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
-  }, 8000);
+  }, ms);
 }
 function stopChatDockPolling() {
   if (_chatDockTimer) { clearInterval(_chatDockTimer); _chatDockTimer = null; }
@@ -5336,7 +5414,11 @@ async function handleFormSubmit(e) {
         if (updated && existing?.status !== 'completed' && updated.status === 'completed') {
           await onProjectCompleted(updated, uid).catch(() => {});
         }
-        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} updated project "${updated?.name || existing?.name || 'Project'}" (${departmentLabel(projectDepartmentValue(updated || existing))}).`);
+        await recordProjectActivity({
+          userId: uid, projectId: Number(editId), action: 'updated', entityType: 'project',
+          details: updated?.name || existing?.name || 'Project',
+          discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} updated project "${updated?.name || existing?.name || 'Project'}" (${departmentLabel(projectDepartmentValue(updated || existing))}).`
+        });
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, updated);
         if (unsaved.length) showToast(`Project updated, but ${unsaved.join(', ')} could not be saved yet.`, 'warning');
@@ -5355,7 +5437,11 @@ async function handleFormSubmit(e) {
         for (const title of bulkTitles) {
           await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
         }
-        await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))})${bulkTitles.length ? ` with ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''}` : ''}.`);
+        await recordProjectActivity({
+          userId: uid, projectId: nid, action: 'created', entityType: 'project', entityId: nid,
+          details: created?.name || data.name,
+          discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} created project "${created?.name || data.name}" (${departmentLabel(projectDepartmentValue(created))})${bulkTitles.length ? ` with ${bulkTitles.length} task${bulkTitles.length !== 1 ? 's' : ''}` : ''}.`
+        });
         await notifyNewCoEditors(created, [], data.editorIds || [], uid);
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, created);
@@ -5374,7 +5460,11 @@ async function handleFormSubmit(e) {
       if (!data.title || !data.projectId) { if (_taskSubmitBtn) { _taskSubmitBtn.disabled = false; _taskSubmitBtn.textContent = 'Add Task'; } return; }
       const newId = await DB.createTask(data);
       const project = await DB.getProject(data.projectId);
-      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`);
+      await recordProjectActivity({
+        userId: uid, projectId: data.projectId, action: 'created', entityType: 'task', entityId: newId,
+        details: data.title,
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`
+      });
       showToast('Task added', 'success');
       // Notify the assignee (skip if assigning to self)
       if (assigneeId && assigneeId !== uid) {
@@ -5392,10 +5482,12 @@ async function handleFormSubmit(e) {
       const message = fd.get('message')?.trim() || '';
       const reqId = await DB.requestProjectAccess({ projectId, requesterId: uid, message });
       const requester = await DB.getUser(uid);
+      const who = requester?.displayName || requester?.username || 'Someone';
+      const msgSnippet = message ? `: "${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"` : '';
       await notifyUser({
         userId: project.ownerId,
         type: 'access_request',
-        message: `${requester?.displayName || requester?.username || 'Someone'} requested edit access to "${project.name}".`,
+        message: `${who} requested edit access to "${project.name}"${msgSnippet}`,
         projectId,
         entityType: 'project_access_request',
         entityId: reqId,
@@ -5466,7 +5558,11 @@ async function handleFormSubmit(e) {
       const newAssigneeId = newAssigneeRaw ? Number(newAssigneeRaw) : null;
       await DB.updateTask(taskId, { assigneeId: newAssigneeId }, uid);
       const newAssignee = newAssigneeId ? await DB.getUser(newAssigneeId) : null;
-      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} reassigned task "${task.title}" in "${project.name}"${newAssignee ? ` to ${newAssignee.displayName || newAssignee.username}` : ' to nobody'}.`);
+      await recordProjectActivity({
+        userId: uid, projectId: project.id, action: 'updated', entityType: 'task', entityId: taskId,
+        details: `${task.title}${newAssignee ? ` → ${newAssignee.displayName || newAssignee.username}` : ' → unassigned'}`,
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} reassigned task "${task.title}" in "${project.name}"${newAssignee ? ` to ${newAssignee.displayName || newAssignee.username}` : ' to nobody'}.`
+      });
       showToast('Task reassigned', 'success');
       if (newAssigneeId && newAssigneeId !== uid && newAssigneeId !== task.assigneeId) {
         const actor = await DB.getUser(uid);
@@ -5561,13 +5657,21 @@ async function handleFormSubmit(e) {
       if (!data.title) return;
       const project = await DB.getProject(data.projectId);
       await DB.createMilestone(data); showToast('Milestone added', 'success');
-      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added milestone "${data.title}" to "${project?.name || 'a project'}".`);
+      await recordProjectActivity({
+        userId: uid, projectId: data.projectId, action: 'created', entityType: 'milestone',
+        details: data.title,
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added milestone "${data.title}" to "${project?.name || 'a project'}".`
+      });
     } else if (type === 'update') {
       const data = { projectId: Number(form.dataset.projectId), content: fd.get('content')?.trim(), actorUserId: uid };
       if (!data.content) return;
       const project = await DB.getProject(data.projectId);
       await DB.createUpdate(data); showToast('Note added', 'success');
-      await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '…' : ''}`);
+      await recordProjectActivity({
+        userId: uid, projectId: data.projectId, action: 'noted', entityType: 'update',
+        details: data.content.slice(0, 200),
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '…' : ''}`
+      });
     } else if (type === 'add-user') {
       const username = fd.get('username')?.trim();
       const email = fd.get('email')?.trim() || '';
@@ -5785,7 +5889,11 @@ const actions = {
     if (!p) { showToast('Project not found', 'error'); return; }
     if (!confirm('Delete this project and all its data?')) return;
     await DB.deleteProject(p.id, actorId());
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted project "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'project',
+      details: p.name,
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted project "${p.name}".`
+    });
     showToast('Project deleted', 'success');
     bustWorkspaceCache();
     window.location.hash = '#/projects';
@@ -5811,7 +5919,11 @@ const actions = {
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.deleteTask(t.id, actorId());
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted task "${t.title}" from "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'task',
+      details: t.title,
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted task "${t.title}" from "${p.name}".`
+    });
     showToast('Task deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-milestone': async (b) => {
@@ -5821,7 +5933,11 @@ const actions = {
     const p = await DB.getProject(m.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.deleteMilestone(id, actorId());
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted milestone "${m.title}" from "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'milestone',
+      details: m.title,
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted milestone "${m.title}" from "${p.name}".`
+    });
     showToast('Milestone deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'complete-milestone': async (b) => {
@@ -5830,7 +5946,11 @@ const actions = {
     const p = ms ? await DB.getProject(ms.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.updateMilestone(id, { status: 'completed' }, actorId());
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} completed milestone "${ms.title}" in "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'updated', entityType: 'milestone',
+      details: `${ms.title} (completed)`,
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} completed milestone "${ms.title}" in "${p.name}".`
+    });
     showToast('Milestone completed', 'success'); bustWorkspaceCache(); await router();
   },
   'delete-update': async (b) => {
@@ -5838,12 +5958,28 @@ const actions = {
     const p = row ? await DB.getProject(row.projectId) : null;
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.deleteUpdate(Number(b.dataset.id), actorId());
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} deleted a project note from "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'update',
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted a project note from "${p.name}".`
+    });
     showToast('Note deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'toggle-doc-panel': async () => {
     state.docPanelOpen = !state.docPanelOpen;
-    await router();
+    const hash = window.location.hash.slice(1) || '';
+    const m = hash.match(/^\/projects\/(\d+)/);
+    const projectId = m ? Number(m[1]) : null;
+    if (!projectId) return;
+    const project = await DB.getProject(projectId);
+    if (!project) return;
+    if (state.docPanelOpen) await renderDocumentPanel(projectId, canEdit(project));
+    else closeDocumentPanelAnimated();
+  },
+  'toggle-notification-sounds': () => {
+    const muted = NotificationSounds?.isMuted?.() ?? false;
+    NotificationSounds?.setMuted?.(!muted);
+    renderUserMenu();
+    showToast(!muted ? 'Notification sounds muted' : 'Notification sounds on', 'info');
   },
   'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
@@ -5997,6 +6133,7 @@ const actions = {
   'user-logout': async () => {
     const s = getSession();
     if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username }).catch(() => {});
+    window.RealtimeSync?.stop?.();
     localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
     resetClientState();
     clearSession({ trusted: true });
@@ -6204,11 +6341,19 @@ const actions = {
         await DB.updateTask(workflowTask.id, { status: 'doing' }, actorId());
         const workflowProjectStatus = await syncWorkflowProjectStatus(p, actorId());
         if (workflowProjectStatus) {
-          await mirrorBacklogActivity(`[Backlog] "${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} because a required logistics document was removed.`);
+          await recordProjectActivity({
+            userId: actorId(), projectId: p.id, action: 'updated', entityType: 'project',
+            details: `moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} (document removed)`,
+            discordLine: `"${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} because a required logistics document was removed.`
+          });
         }
       }
     }
-    await mirrorBacklogActivity(`[Backlog] ${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`);
+    await recordProjectActivity({
+      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'attachment',
+      details: row.fileName,
+      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`
+    });
     showToast('File removed', 'success');
     bustWorkspaceCache();
     await router();
@@ -6710,6 +6855,121 @@ async function applyRoute() {
   renderLogin();
 }
 
+/* ──── Realtime event handlers ──── */
+
+async function refreshActivityViews() {
+  const hash = window.location.hash.slice(1) || '';
+  if (hash === '/dashboard' && isAdmin()) {
+    await renderAdminDashboard().catch(() => {});
+    return;
+  }
+  const m = hash.match(/^\/projects\/(\d+)/);
+  if (m && state.projectTab === 'updates') {
+    const projectId = Number(m[1]);
+    const project = await DB.getProject(projectId).catch(() => null);
+    if (project) await renderTab('updates', projectId, canEdit(project));
+  }
+}
+
+function setupRealtimeHandlers() {
+  if (window._wtRealtimeHandlersBound) return;
+  window._wtRealtimeHandlersBound = true;
+
+  window.addEventListener('wt-realtime-status', () => {
+    startChatUnreadPolling();
+    if (state.chatDockOpen) startChatDockPolling();
+    renderSyncStatusIndicator();
+  });
+
+  window.addEventListener('wt-realtime-notification', (e) => {
+    const row = e.detail?.row;
+    if (!row || Number(row.userId) !== Number(actorId())) return;
+    refreshNotificationBadge().catch(() => {});
+    const panel = document.getElementById('notif-panel');
+    if (panel && !panel.classList.contains('hidden')) renderNotificationPanel();
+    if (!row.readAt && e.detail?.eventType === 'INSERT') {
+      const actor = Number(row.actorUserId);
+      if (!actor || actor !== Number(actorId())) {
+        NotificationSounds?.play?.(row.type || 'default');
+      }
+      showToast(row.message || 'New notification', 'info');
+    }
+  });
+
+  window.addEventListener('wt-realtime-activity', () => {
+    refreshActivityViews().catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-chat', (e) => {
+    const { channelId, message } = e.detail || {};
+    if (!channelId || !message) return;
+    const me = actorId();
+    const senderId = message.userId ?? message.fromUserId;
+    const isMine = senderId && Number(senderId) === Number(me);
+    if (!isMine && e.detail?.eventType === 'INSERT') {
+      const chatActive = state.chatDockOpen && state.chatDockView === 'convo' && state.chatChannel === channelId;
+      if (!chatActive) NotificationSounds?.play?.('chat');
+      if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
+      state.chatUnreadChannels.add(channelId);
+      updateChatUnreadBadge();
+      if (state.chatDockOpen && state.chatDockView === 'list') {
+        const list = document.getElementById('chat-dock-list');
+        if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
+      }
+    }
+    const active = state.chatChannel === channelId
+      && (state.chatDockOpen && state.chatDockView === 'convo');
+    if (active && e.detail?.eventType === 'INSERT' && !isMine) {
+      const uMap = state.chatUsersMap || {};
+      appendChatMessageToPane(message, uMap);
+      markChatChannelRead(channelId);
+    } else if (active) {
+      refreshChatPane().catch(() => {});
+    }
+  });
+
+  window.addEventListener('wt-realtime-access-request', (e) => {
+    const row = e.detail?.row;
+    if (!row || e.detail?.eventType !== 'INSERT') return;
+    DB.getProject(row.projectId).then(project => {
+      if (!project || Number(project.ownerId) !== Number(actorId())) return;
+      NotificationSounds?.play?.('access_request');
+      showToast(`Edit access requested for "${project.name}"`, 'info');
+      refreshNotificationBadge().catch(() => {});
+    }).catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-user', () => {
+    bustWorkspaceCache();
+    if (wtAppBootstrapped) router().catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-project', () => {
+    bustWorkspaceCache();
+    if (wtAppBootstrapped) router().catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-task', () => {
+    bustWorkspaceCache();
+    if (wtAppBootstrapped) router().catch(() => {});
+  });
+
+  window.addEventListener('wt-realtime-update', () => {
+    bustWorkspaceCache();
+    if (wtAppBootstrapped) router().catch(() => {});
+  });
+}
+
+function onSyncPulled() {
+  if (!wtAppBootstrapped) return;
+  bustWorkspaceCache();
+  refreshNotificationBadge().catch(() => {});
+  refreshChatUnreadState().catch(() => {});
+  refreshActivityViews().catch(() => {});
+  if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
+  router().catch(() => {});
+}
+
 /* ──── Init ──── */
 
 async function init() {
@@ -6732,11 +6992,8 @@ async function init() {
     });
     window.addEventListener('online', () => { handleNetworkOnline(); });
     window.addEventListener('offline', () => { handleNetworkOffline(); });
-    window.addEventListener('wt-sync-pulled', () => {
-      if (!wtAppBootstrapped) return;
-      bustWorkspaceCache();
-      router().catch(() => {});
-    });
+    setupRealtimeHandlers();
+    window.addEventListener('wt-sync-pulled', onSyncPulled);
     document.addEventListener('click', async (e) => {
       const syncBtn = e.target.closest('#sync-status-indicator');
       if (syncBtn && !syncBtn.classList.contains('hidden')) {
@@ -6868,7 +7125,11 @@ async function init() {
             documentType,
             blob: file
           });
-          await mirrorBacklogActivity(`[Backlog] ${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`);
+          await recordProjectActivity({
+            userId: s.userId, projectId: pid, action: 'uploaded', entityType: 'attachment',
+            details: file.name,
+            discordLine: `${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`
+          });
           uploaded++;
           if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
           if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;

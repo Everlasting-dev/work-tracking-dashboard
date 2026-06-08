@@ -438,3 +438,18 @@ grant execute on function public.wt_reset_id_sequences() to anon, authenticated;
 
 -- Reload PostgREST schema cache so new tables are visible immediately
 notify pgrst, 'reload schema';
+
+-- Supabase Realtime: enable live postgres_changes for WorkTracker (run once in SQL Editor)
+do $$ declare t text;
+begin
+  foreach t in array array[
+    'wt_users','wt_projects','wt_tasks','wt_updates','wt_notifications',
+    'wt_direct_messages','wt_activity_log','wt_project_access_requests','wt_discord_messages'
+  ] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then
+      null;
+    end;
+  end loop;
+end $$;
