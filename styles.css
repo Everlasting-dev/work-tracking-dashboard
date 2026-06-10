@@ -3037,6 +3037,17 @@ html.splash-lock body {
 }
 .task-card-drag-handle:hover { background: var(--border); color: var(--accent); }
 .task-card-drag-handle:active { cursor: grabbing; }
+.drag-handle-board {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; cursor: grab;
+  color: var(--text-muted); background: rgba(0,0,0,0.04); border-radius: 4px;
+  opacity: 0; transition: all var(--transition);
+}
+.drag-handle-board:hover { background: rgba(0,0,0,0.1); color: var(--accent); }
+.drag-handle-board:active { cursor: grabbing; }
+.task-board-card-v2:hover .drag-handle-board { opacity: 1; }
+.task-board-card-v2.task-dragging { opacity: 0.5; }
 .task-card-status-stripe {
   width: 4px; flex-shrink: 0;
   background: var(--stripe-color, var(--border));

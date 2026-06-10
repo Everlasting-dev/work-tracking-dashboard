@@ -2375,6 +2375,7 @@ function renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments =
             const notePreview = (t.notes || t.description || '').trim();
             const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
             return `<div class="task-board-card-v2${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}" draggable="${editable ? 'true' : 'false'}" style="--card-color:${col.color}">
+              ${editable ? `<div class="drag-handle drag-handle-board" title="Drag to reorder or change status"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="7" r="1.5"/><circle cx="15" cy="7" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="17" r="1.5"/><circle cx="15" cy="17" r="1.5"/></svg></div>` : ''}
               <button type="button" class="task-board-card-title-v2" data-action="open-task-detail" data-id="${t.id}" title="Open details">${esc(t.title)}</button>
               ${notePreview ? `<button type="button" class="task-card-note-preview task-card-note-preview--board" data-action="open-task-detail" data-id="${t.id}">${esc(notePreview.slice(0, 130))}</button>` : ''}
               ${previewAtt ? taskAttachmentPreviewHtml(previewAtt) : ''}
@@ -8156,6 +8157,7 @@ async function renderUsers() {
     ${heatmapHtml}
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
+  requestAnimationFrame(() => initializeTeamActivityD3());
 }
 
 async function router() {
