@@ -3422,11 +3422,33 @@ html.splash-lock body {
 .td-title-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
 .td-title-view { font-size: 1.05rem; font-weight: 700; color: var(--text); margin: 0; }
 
-.task-board-card-v2:hover { box-shadow: var(--shadow-md); }
-.task-board-card-v2.task-done { opacity: 0.5; }
+.task-board-card-v2 {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--card-color, var(--border));
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: default;
+}
+.task-board-card-v2:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  border-color: var(--accent-light);
+  transform: translateY(-2px);
+}
+.task-board-card-v2.task-done { opacity: 0.55; }
 .task-board-card-v2[draggable=true] { cursor: grab; }
 .task-board-card-v2[draggable=true]:active { cursor: grabbing; }
-.task-board-card-v2.task-dragging { opacity: 0.45; transform: scale(0.98); box-shadow: none; }
+.task-board-card-v2.task-dragging {
+  opacity: 0.45;
+  transform: scale(0.98) rotate(2deg);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.15);
+  z-index: 10;
+}
 .task-board-col-v2.drop-active { outline: 2px dashed var(--col-color, var(--accent)); outline-offset: -4px; background: var(--col-bg); }
 .task-board-col-v2.drop-active .task-board-cards-v2 { min-height: 70px; }
 .task-board-card-title-v2 { font-size: 0.86rem; font-weight: 600; color: var(--text); line-height: 1.3; }
