@@ -28,6 +28,9 @@ const ICONS = {
   externalLink: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>',
   gauge: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>',
   refresh: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></svg>',
+  cloud: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H8a6 6 0 1 1 5.2-9A4.5 4.5 0 1 1 17.5 19Z"/></svg>',
+  sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+  moon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.99 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 20.99 12.79Z"/></svg>',
   send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
   discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
   paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
@@ -80,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '2.2.20'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.0.0'; }
 
 /* ──── UI v3: Splash ──── */
 let _splashShownAt = Date.now();
@@ -88,9 +91,13 @@ function setSplashStatus(msg) {
   const el = document.getElementById('splash-status');
   if (el && msg) el.textContent = msg;
 }
+let _splashDismissPending = false;
+let _splashReady = false;
+
 function hideSplash() {
   const el = document.getElementById('splash');
   if (!el || el.classList.contains('fade-out')) return;
+  window.SplashSphere?.stop?.();
   const minMs = 3200;
   const wait = Math.max(0, minMs - (Date.now() - _splashShownAt));
   setTimeout(() => {
@@ -100,6 +107,16 @@ function hideSplash() {
       document.documentElement.classList.remove('splash-lock');
     }, 500);
   }, wait);
+}
+
+function dismissSplashWhenReady() {
+  _splashReady = true;
+  if (_splashDismissPending) hideSplash();
+}
+
+function requestSplashDismiss() {
+  _splashDismissPending = true;
+  if (_splashReady) hideSplash();
 }
 const _splashDelay = (ms) => new Promise(r => setTimeout(r, ms));
 window.setSplashStatus = setSplashStatus;
@@ -176,19 +193,34 @@ async function renderNotesPanel(focusNoteId = null) {
     return;
   }
   list.innerHTML = notes.map((n, i) => `
-    <div class="notes-sticky-card" data-note-id="${n.id}" style="animation-delay:${Math.min(i * 40, 200)}ms">
+    <div class="note-editor-wrap" data-note-id="${n.id}" style="animation-delay:${Math.min(i * 40, 200)}ms">
       <div class="notes-sticky-top">
         <span class="notes-sticky-time">${esc(formatNoteTime(n.updatedAt || n.createdAt))}</span>
         <button type="button" class="notes-sticky-delete" data-action="delete-personal-note" data-id="${n.id}" title="Delete note" aria-label="Delete note">×</button>
       </div>
-      <textarea class="notes-sticky-text" rows="3" data-note-edit="${n.id}" placeholder="Write a note…">${esc(n.content || '')}</textarea>
+      <div class="note-quill-editor" data-note-id="${n.id}">${n.content || ''}</div>
     </div>`).join('');
-  if (focusNoteId) {
-    requestAnimationFrame(() => {
-      const ta = list.querySelector(`[data-note-edit="${focusNoteId}"]`);
-      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  if (window.Quill) _initNoteEditors(focusNoteId);
+}
+
+function _initNoteEditors(focusNoteId = null) {
+  const list = document.getElementById('notes-panel-list');
+  if (!list) return;
+  list.querySelectorAll('.note-quill-editor:not([data-quill-initialized])').forEach(edEl => {
+    const noteId = Number(edEl.dataset.noteId);
+    edEl.setAttribute('data-quill-initialized', 'true');
+    const editor = new Quill(edEl, {
+      theme: 'snow',
+      modules: { toolbar: ['bold', 'italic', 'underline', { list: 'bullet' }, { list: 'ordered' }, 'link'] }
     });
-  }
+    editor.on('text-change', () => {
+      const html = editor.root.innerHTML;
+      scheduleNoteSave(noteId, html);
+    });
+    if (focusNoteId === noteId) {
+      requestAnimationFrame(() => editor.focus());
+    }
+  });
 }
 function openNotesPanel() {
   const panel = document.getElementById('notes-panel');
@@ -376,8 +408,7 @@ function projectModeBadge(p) {
   return badge(label, 'purple');
 }
 function userColor(user) {
-  const fallback = ['#4f46e5', '#0891b2', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0f766e'];
-  if (user?.color && /^#[0-9a-f]{6}$/i.test(user.color)) return user.color;
+  const fallback = ['#000000', '#1a1a1a', '#333333', '#4d4d4d', '#666666'];
   const seed = String(user?.id ?? user?.username ?? '0').split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
   return fallback[seed % fallback.length];
 }
@@ -518,7 +549,11 @@ let _workspaceFetchPromise = null;
 let initialCloudSyncChecked = false;
 
 function isCloudMode() {
-  return window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid';
+  return window.WT_STORAGE_MODE === 'supabase' || window.WT_STORAGE_MODE === 'hybrid' || window.WT_STORAGE_MODE === 'hybrid-v3';
+}
+
+function isV3Mode() {
+  return window.WT_CONFIG?.supabaseSchemaVersion === 'v3' || window.WT_STORAGE_MODE === 'hybrid-v3';
 }
 
 function isCloudConfigured() {
@@ -1205,6 +1240,8 @@ const state = {
   workspaceScope: 'everyone',
   docPanelOpen: true,
   rankingPanelOpen: true,
+  calendarMonth: null,
+  calendarSelectedDay: null,
   lastMainRoute: '/projects',
   userMenuOpen: false,
   notifOpen: false,
@@ -1216,10 +1253,31 @@ const state = {
   notesSearch: '',
   reportMonth: formatMonthInput(),
   _libraryBlobUrls: [],
-  _previewUrl: null
+  _previewUrl: null,
+  adminTab: 'overview'
 };
 
 let wtAppBootstrapped = false;
+
+const THEME_KEY = 'wt-theme-mode-v1';
+
+function getThemeMode() {
+  const saved = localStorage.getItem(THEME_KEY);
+  return saved === 'black' ? 'black' : 'normal';
+}
+
+function applyTheme(mode = getThemeMode()) {
+  const next = mode === 'black' ? 'black' : 'normal';
+  document.body.classList.toggle('theme-black', next === 'black');
+  document.body.classList.toggle('theme-normal', next !== 'black');
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(THEME_KEY, next);
+  return next;
+}
+
+function toggleThemeMode() {
+  return applyTheme(getThemeMode() === 'black' ? 'normal' : 'black');
+}
 
 const RECOVERY_TTL_MS = 10 * 60 * 1000;
 
@@ -1237,14 +1295,15 @@ function clearRecoveryUnlock() {
 /* ──── Auth Screens ──── */
 
 function renderLogin() {
+  const v3 = isV3Mode();
   document.getElementById('auth-content').innerHTML = `
-    <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Welcome back</h2>
-    <p class="auth-subtitle">Sign in to your account</p>
+    <p class="auth-subtitle">${v3 ? 'Sign in with your Supabase Auth account' : 'Sign in to your account'}</p>
     ${renderAuthCloudSync()}
     <div class="auth-error" id="auth-error"></div>
     <form data-form="login">
-      <div class="form-group"><label for="l-user">Username</label><input id="l-user" name="username" type="text" required autocomplete="username"></div>
+      <div class="form-group"><label for="l-user">${v3 ? 'Username or email' : 'Username'}</label><input id="l-user" name="username" type="text" required autocomplete="username"></div>
       <div class="form-group"><label for="l-pw">Password</label><input id="l-pw" name="password" type="password" required autocomplete="current-password"></div>
       <label class="auth-remember"><input name="rememberDevice" type="checkbox" checked> Keep me signed in on this device</label>
       <div class="form-actions" style="justify-content:stretch"><button type="submit" class="btn btn-primary" style="flex:1;justify-content:center">Sign In</button></div>
@@ -1254,7 +1313,7 @@ function renderLogin() {
 
 function renderAdminSetup() {
   document.getElementById('auth-content').innerHTML = `
-    <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Create administrator</h2>
     <p class="auth-subtitle">No accounts exist yet. Create the admin account and a master recovery key. Other users are added from Admin after you sign in.</p>
     ${renderAuthCloudSync()}
@@ -1277,14 +1336,14 @@ async function renderRecovery() {
   const hasMk = await DB.hasMasterKey();
   if (!hasMk) {
     document.getElementById('auth-content').innerHTML = `
-      <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
+      <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
       <h2>Recovery unavailable</h2>
       <p class="auth-subtitle">No master recovery key was set for this workspace. Sign in as an admin and set one from the Admin panel.</p>
       <div class="form-actions" style="justify-content:stretch;margin-top:20px"><button type="button" class="btn btn-primary" style="flex:1;justify-content:center" data-action="recovery-back-login">Back to sign in</button></div>`;
     return;
   }
   document.getElementById('auth-content').innerHTML = `
-    <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Account recovery</h2>
     <p class="auth-subtitle">Enter your master recovery key to reset a user password.</p>
     <div class="auth-error" id="auth-error"></div>
@@ -1299,7 +1358,7 @@ async function renderRecoveryChooseUser() {
   const users = await DB.getUsers();
   const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} — ${esc(u.displayName || u.username)}</option>`).join('');
   document.getElementById('auth-content').innerHTML = `
-    <div class="auth-brand"><div class="brand-icon">W</div><span class="brand-name">WorkTracker</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Reset password</h2>
     <p class="auth-subtitle">Choose a user and set a new password.</p>
     <div class="auth-error" id="auth-error"></div>
@@ -1325,6 +1384,26 @@ async function handleAuth(e) {
   const type = form.dataset.form;
 
   if (type === 'login') {
+    if (isV3Mode()) {
+      const username = fd.get('username')?.trim();
+      const password = fd.get('password');
+      if (!username || !password) return;
+      try {
+        const user = await window.SyncEngineV3.signIn(username, password);
+        localStorage.removeItem(LOGOUT_FLAG_KEY);
+        const prevUserId = localStorage.getItem(LAST_USER_KEY);
+        const newUserId = String(user.id);
+        if (prevUserId && prevUserId !== newUserId) resetClientState();
+        localStorage.setItem(LAST_USER_KEY, newUserId);
+        setSession(user, { remember: fd.get('rememberDevice') === 'on' });
+        DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: user.username }).catch(() => {});
+        await showApp();
+      } catch (err) {
+        showAuthError(err?.message || 'Invalid username/email or password');
+      }
+      return;
+    }
+
     let hasUsers = await DB.hasUsers();
     if (!hasUsers) {
       await waitForInitialCloudUsers();
@@ -1338,7 +1417,7 @@ async function handleAuth(e) {
     const username = fd.get('username')?.trim();
     const password = fd.get('password');
     if (!username || !password) return;
-    const user = await DB.getUserByUsername(username);
+    let user = await DB.getUserByUsername(username);
     if (!user) { showAuthError('Invalid username or password'); return; }
     const ok = await DB.verifyPassword(password, user);
     if (!ok) { showAuthError('Invalid username or password'); return; }
@@ -1433,9 +1512,7 @@ async function handleAuth(e) {
 
 async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-  document.getElementById('menu-toggle').style.display = '';
-  updateSidebarUser();
+  const appEl = document.getElementById('app');
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
   if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
@@ -1455,7 +1532,11 @@ async function showApp() {
   if (isCloudMode()) window.SupabaseDB?.bootstrapMissingUsers?.().catch(() => {});
   updateOfflineSyncBanner();
   await router();
+  appEl.style.display = 'flex';
+  document.getElementById('menu-toggle').style.display = '';
+  updateSidebarUser();
   wtAppBootstrapped = true;
+  requestSplashDismiss();
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
 }
@@ -1545,7 +1626,10 @@ function initClockTicks() {
     g.appendChild(line);
   }
 }
+let _sidebarClockTimer = null;
+
 function startSidebarClock() {
+  if (_sidebarClockTimer) return;
   initClockTicks();
   const timeEl = document.getElementById('sc-time');
   const dateEl = document.getElementById('sc-date');
@@ -1610,9 +1694,9 @@ function startSidebarClock() {
         workdayEl.textContent = 'Work day ended';
       }
     }
-    requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+  tick();
+  _sidebarClockTimer = setInterval(tick, 1000);
 }
 
 function formatSyncJobType(type) {
@@ -1769,6 +1853,7 @@ function updateSidebarUser() {
   const display = s.displayName || s.username;
   const init = display.charAt(0).toUpperCase();
   const isAdm = s.role === 'admin';
+  const themeMode = getThemeMode();
   const avatarHtml = s.avatarBase64
     ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img sidebar-footer-avatar-img" alt="${esc(display)}">`
     : `<div class="user-avatar sidebar-footer-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}</div>`;
@@ -1792,6 +1877,13 @@ function updateSidebarUser() {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span class="nav-item-badge hidden" id="notif-badge">0</span>
         </button>`;
+    const themeIcon = themeMode === 'black'
+      ? '<svg class="theme-toggle-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>'
+      : '<svg class="theme-toggle-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+    const themeBtn = `
+        <button type="button" class="sidebar-action-btn theme-toggle-btn" data-action="toggle-theme-mode" title="${themeMode === 'black' ? 'Switch to Normal mode' : 'Switch to Black mode'}" aria-label="Switch theme">
+          ${themeIcon}
+        </button>`;
     const adminBtns = isAdm ? `
         <button type="button" class="sidebar-action-btn" data-action="toggle-route-settings" data-nav="settings" title="Settings" aria-label="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1799,7 +1891,7 @@ function updateSidebarUser() {
         <button type="button" class="sidebar-action-btn" data-action="toggle-route-admin" data-nav="admin" title="Admin" aria-label="Admin">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
         </button>` : '';
-    footerActions.innerHTML = bellBtn + adminBtns;
+    footerActions.innerHTML = bellBtn + themeBtn + adminBtns;
     footerActions.style.display = '';
   }
   const adminNav  = document.getElementById('nav-admin');
@@ -1826,31 +1918,21 @@ function renderUserMenu() {
   menu.classList.remove('hidden');
   const syncStatus = _getSyncStatus();
   const isCloud = isCloudMode();
+  const themeMode = getThemeMode();
   const syncMenuItem = isCloud && syncStatus?.enabled
     ? `<button type="button" class="user-menu-item${syncStatus.failed ? ' user-menu-item-warn' : ''}" data-action="sync-now">${syncStatus.failed ? ICONS.alertTriangle : ICONS.refresh} ${syncStatus.failed ? `Cloud sync (${syncStatus.failed} issue${syncStatus.failed === 1 ? '' : 's'})` : 'Sync now'}</button>`
     : '';
   const adminItems = isAdmin() ? `
     <button type="button" class="user-menu-item" data-action="user-export">${ICONS.download} Export Data</button>
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
-  const helpOpen = !!state.helpMenuOpen;
-  const helpSection = `
-    <button type="button" class="user-menu-item user-menu-item-toggle${helpOpen ? ' is-open' : ''}" data-action="toggle-help-menu">
-      ${ICONS.sparkles} Help
-      <svg class="user-menu-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
-    </button>
-    ${helpOpen ? `<div class="user-menu-subgroup">
-      <div class="user-menu-version">v${esc(getAppVersion())} · Black &amp; White Edition</div>
-      <button type="button" class="user-menu-item user-menu-subitem" data-action="user-show-howto">${ICONS.sparkles} How-to guide</button>
-      <button type="button" class="user-menu-item user-menu-subitem" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
-      <button type="button" class="user-menu-item user-menu-subitem" data-action="show-about">${ICONS.target} About WorkTracker</button>
-      <button type="button" class="user-menu-item user-menu-subitem" data-action="check-updates">${ICONS.refresh} Check for updates</button>
-    </div>` : ''}`;
   menu.innerHTML = `
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '🔇' : '🔔'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
+    <button type="button" class="user-menu-item" data-action="toggle-theme-mode">${themeMode === 'black' ? (ICONS.sun || '') : (ICONS.moon || '')} Switch to ${themeMode === 'black' ? 'Normal' : 'Black'} mode</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
+    <button type="button" class="user-menu-item" data-action="goto-support">${ICONS.sparkles} Support</button>
     <button type="button" class="user-menu-item" data-action="app-refresh">${ICONS.refresh} Refresh app</button>
-    ${helpSection}
+    <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
     <hr class="user-menu-divider">
     <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
@@ -1951,7 +2033,7 @@ async function renderProjects() {
   }
 
   // Status → card accent color
-  const STATUS_ACCENT = { active: '#3b82f6', completed: '#10b981', 'on-hold': '#f59e0b', archived: '#9ca3af' };
+  const STATUS_ACCENT = { active: '#000000', completed: '#262626', 'on-hold': '#737373', archived: '#a3a3a3' };
 
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
     ? `<p class="text-muted text-sm workspace-hint" style="margin-bottom:12px">Use <strong>Everyone</strong> to browse teammates' projects (read-only).</p>` : '';
@@ -2091,6 +2173,37 @@ function parseTemplateSteps(raw) {
     .map(title => ({ title, priority: 'medium' }));
 }
 
+function parseTemplateFields(raw) {
+  const allowed = new Set(['text', 'long_text', 'number', 'date', 'checkbox', 'file', 'image']);
+  return String(raw || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      const parts = line.split('|').map(part => part.trim());
+      const label = parts[0] || `Field ${idx + 1}`;
+      const type = allowed.has((parts[1] || '').toLowerCase()) ? parts[1].toLowerCase() : 'text';
+      const flags = parts.slice(2).join(' ').toLowerCase();
+      return {
+        key: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `field_${idx + 1}`,
+        label,
+        type,
+        required: /\brequired\b|\bmandatory\b|\byes\b/.test(flags),
+        showOnCard: /\bcard\b|\bvisible\b|\bshow\b/.test(flags)
+      };
+    });
+}
+
+function taskAttachmentPreviewHtml(att) {
+  if (!att) return '';
+  const isImage = att.mimeType?.startsWith('image/');
+  const url = att.storagePath ? DB.getAttachmentUrl(att.storagePath) : '';
+  if (isImage && url) {
+    return `<button type="button" class="task-thumb" data-action="preview-attachment" data-id="${att.id}" title="${esc(att.fileName || 'Preview file')}"><img src="${esc(url)}" alt="${esc(att.fileName || 'Task image')}"></button>`;
+  }
+  return `<button type="button" class="task-file-chip" data-action="preview-attachment" data-id="${att.id}" title="${esc(att.fileName || 'Open file')}">${ICONS.file}<span>${esc(att.fileName || 'File')}</span></button>`;
+}
+
 /* Board ordering: synced sortOrder ascending, oldest-first as the tiebreaker. */
 function sortTasksByOrder(tasks) {
   return [...tasks].sort((a, b) => {
@@ -2129,6 +2242,8 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = 
     const assignee = uMap[t.assigneeId];
     const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
     const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+    const previewAtt = imgAtt || taskAtts[0];
+    const notePreview = (t.notes || t.description || '').trim();
     const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
     return `<div class="task-card-v2 task-card-v2--${t.status}${t.status === 'done' ? ' task-done' : ''}"
         draggable="${editable ? 'true' : 'false'}" data-task-id="${t.id}">
@@ -2147,6 +2262,8 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = 
           </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete task">${ICONS.trash}</button>` : ''}
         </div>
+        ${notePreview ? `<button type="button" class="task-card-note-preview" data-action="open-task-detail" data-id="${t.id}" title="Edit task description">${esc(notePreview.slice(0, 180))}</button>` : ''}
+        ${previewAtt ? taskAttachmentPreviewHtml(previewAtt) : ''}
         <div class="task-card-bottom">
           ${editable
             ? `<button type="button" class="assignee-chip-btn" data-action="assign-task" data-id="${t.id}" title="Reassign">${assigneeChipHtml(assignee)}</button>`
@@ -2226,11 +2343,18 @@ function customFieldActivitySummary(before = [], after = []) {
   return `${changed.showInProject ? 'pinned to project description - ' : 'custom field added - '}${label}${value}`;
 }
 
+function missingRequiredTaskFields(taskOrFields) {
+  const fields = Array.isArray(taskOrFields) ? taskOrFields : (taskOrFields?.customFields || []);
+  return fields
+    .filter(f => f?.required && !String(f.value ?? '').trim())
+    .map(f => f.label || 'Required field');
+}
+
 function renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments = []) {
   const cols = [
-    { key: 'todo',  label: 'To Do',      color: '#f59e0b', bg: 'rgba(245,158,11,0.05)' },
-    { key: 'doing', label: 'In Progress', color: '#3b82f6', bg: 'rgba(59,130,246,0.05)' },
-    { key: 'done',  label: 'Done',        color: '#10b981', bg: 'rgba(16,185,129,0.05)' },
+    { key: 'todo',  label: 'To Do',      color: '#737373', bg: 'rgba(0,0,0,0.035)' },
+    { key: 'doing', label: 'In Progress', color: '#000000', bg: 'rgba(0,0,0,0.055)' },
+    { key: 'done',  label: 'Done',        color: '#262626', bg: 'rgba(0,0,0,0.025)' },
   ];
   const ordered = sortTasksByOrder(tasks);
   return `<div class="task-board-v2">
@@ -2247,9 +2371,13 @@ function renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments =
             const assignee = uMap[t.assigneeId];
             const taskAtts = attachments.filter(a => Number(a.taskId) === Number(t.id));
             const imgAtt = taskAtts.find(a => a.mimeType?.startsWith('image/'));
+            const previewAtt = imgAtt || taskAtts[0];
+            const notePreview = (t.notes || t.description || '').trim();
             const fileBadge = taskAtts.length ? `<span class="task-attachment-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${imgAtt ? 'IMG' : 'FILE'} ${taskAtts.length}</span>` : '';
             return `<div class="task-board-card-v2${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}" draggable="${editable ? 'true' : 'false'}" style="--card-color:${col.color}">
               <button type="button" class="task-board-card-title-v2" data-action="open-task-detail" data-id="${t.id}" title="Open details">${esc(t.title)}</button>
+              ${notePreview ? `<button type="button" class="task-card-note-preview task-card-note-preview--board" data-action="open-task-detail" data-id="${t.id}">${esc(notePreview.slice(0, 130))}</button>` : ''}
+              ${previewAtt ? taskAttachmentPreviewHtml(previewAtt) : ''}
               <div class="task-board-card-footer-v2">
                 ${assigneeChipHtml(assignee)}
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
@@ -2341,109 +2469,53 @@ function renderTaskTimelineViewHtml(tasks, uMap, projectId) {
 
 function setupTaskDragDropList(projectId) {
   const container = document.getElementById('tab-content');
-  if (!container) return;
-  let draggedId = null;
+  if (!container || !window.Sortable) return;
 
-  container.querySelectorAll('.task-card-v2[draggable=true]').forEach(card => {
-    card.addEventListener('dragstart', e => {
-      draggedId = Number(card.dataset.taskId);
-      card.classList.add('task-dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(draggedId));
-    });
-    card.addEventListener('dragend', () => {
-      card.classList.remove('task-dragging');
-      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
-    });
-  });
+  const statusGroups = ['todo', 'doing', 'done'];
+  statusGroups.forEach(status => {
+    const groupBody = container.querySelector(`.task-group-v2[data-status="${status}"] .task-group-body-v2`);
+    if (!groupBody) return;
 
-  container.querySelectorAll('.task-insert-zone').forEach(zone => {
-    zone.addEventListener('dragover', e => {
-      if (!draggedId) return;
-      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
-      container.querySelectorAll('.task-insert-zone.drop-active').forEach(z => z.classList.remove('drop-active'));
-      zone.classList.add('drop-active');
-    });
-    zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-active'); });
-    zone.addEventListener('drop', async e => {
-      e.preventDefault(); zone.classList.remove('drop-active');
-      if (!draggedId) return;
-      const afterId = zone.dataset.after;
-      const allCards = [...container.querySelectorAll('.task-card-v2')];
-      const orderedIds = allCards.map(c => Number(c.dataset.taskId));
-      const withoutDragged = orderedIds.filter(id => id !== draggedId);
-      let newOrder;
-      if (afterId && afterId.startsWith('top-')) {
-        newOrder = [draggedId, ...withoutDragged];
-      } else {
-        const idx = withoutDragged.indexOf(Number(afterId));
-        if (idx === -1) newOrder = [...withoutDragged, draggedId];
-        else { newOrder = [...withoutDragged]; newOrder.splice(idx + 1, 0, draggedId); }
+    Sortable.create(groupBody, {
+      animation: 150,
+      ghostClass: 'task-drag-ghost',
+      chosenClass: 'task-drag-chosen',
+      dragClass: 'task-dragging',
+      handle: '.task-card-drag-handle',
+      filter: '.task-insert-zone',
+      draggable: '.task-card-v2',
+      onEnd: async (evt) => {
+        const statusContainer = evt.to || evt.from;
+        const cards = [...statusContainer.querySelectorAll('.task-card-v2')];
+        const newOrder = cards.map(c => Number(c.dataset.taskId));
+        await setTaskOrder(projectId, newOrder);
+        const p = await DB.getProject(projectId);
+        if (p) await renderTab('tasks', projectId, canEdit(p));
       }
-      setTaskOrder(projectId, newOrder);
-      draggedId = null;
-      const p = await DB.getProject(projectId);
-      if (p) await renderTab('tasks', projectId, canEdit(p));
     });
   });
 }
 
 /* ──── Board drag-and-drop (status change + reorder) ──── */
 
-function _boardDragAfterElement(container, y) {
-  const cards = [...container.querySelectorAll('.task-board-card-v2:not(.task-dragging)')];
-  let closest = { offset: -Infinity, el: null };
-  for (const card of cards) {
-    const box = card.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset) closest = { offset, el: card };
-  }
-  return closest.el;
-}
-
 function setupTaskBoardDragDrop(projectId) {
   const container = document.getElementById('tab-content');
-  if (!container) return;
-  let draggedId = null;
-
-  container.querySelectorAll('.task-board-card-v2[draggable=true]').forEach(card => {
-    card.addEventListener('dragstart', e => {
-      draggedId = Number(card.dataset.taskId);
-      card.classList.add('task-dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(draggedId));
-    });
-    card.addEventListener('dragend', () => {
-      card.classList.remove('task-dragging');
-      container.querySelectorAll('.task-board-col-v2.drop-active').forEach(c => c.classList.remove('drop-active'));
-    });
-  });
+  if (!container || !window.Sortable) return;
 
   container.querySelectorAll('.task-board-col-v2').forEach(col => {
     const cardsWrap = col.querySelector('.task-board-cards-v2');
     if (!cardsWrap) return;
-    col.addEventListener('dragover', e => {
-      if (draggedId == null) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      container.querySelectorAll('.task-board-col-v2.drop-active').forEach(c => { if (c !== col) c.classList.remove('drop-active'); });
-      col.classList.add('drop-active');
-      const dragging = container.querySelector('.task-board-card-v2.task-dragging');
-      if (!dragging) return;
-      const empty = cardsWrap.querySelector('.task-board-col-empty-v2');
-      if (empty) empty.remove();
-      const afterEl = _boardDragAfterElement(cardsWrap, e.clientY);
-      if (afterEl == null) cardsWrap.appendChild(dragging);
-      else cardsWrap.insertBefore(dragging, afterEl);
-    });
-    col.addEventListener('dragleave', e => { if (!col.contains(e.relatedTarget)) col.classList.remove('drop-active'); });
-    col.addEventListener('drop', async e => {
-      e.preventDefault();
-      col.classList.remove('drop-active');
-      if (draggedId == null) return;
-      const movedId = draggedId;
-      draggedId = null;
-      await persistBoardOrder(projectId, movedId);
+
+    Sortable.create(cardsWrap, {
+      group: 'board-tasks',
+      animation: 150,
+      ghostClass: 'board-drag-ghost',
+      chosenClass: 'board-drag-chosen',
+      handle: '.drag-handle',
+      onEnd: async (evt) => {
+        const movedId = Number(evt.item.dataset.taskId);
+        await persistBoardOrder(projectId, movedId);
+      }
     });
   });
 }
@@ -2473,6 +2545,15 @@ async function persistBoardOrder(projectId, movedId) {
   // Validate the moved card's status change (logistics workflow guards) before committing.
   if (moved && movedTarget && moved.status !== movedTarget.status) {
     const projectAttachments = await DB.getAttachments(projectId);
+    if (movedTarget.status === 'done') {
+      const missing = missingRequiredTaskFields(moved);
+      if (missing.length) {
+        showToast(`Complete required fields first: ${missing.slice(0, 3).join(', ')}`, 'warning');
+        await renderTab('tasks', projectId, canEdit(p));
+        await showTaskDetailModal(moved.id);
+        return;
+      }
+    }
     const blocked = validateLogisticsTaskTransition(moved, movedTarget.status, p, tasks, projectAttachments);
     if (blocked) {
       showToast(blocked, 'warning');
@@ -2545,7 +2626,7 @@ async function onProjectCompleted(project, actorUserId) {
 function showProjectCelebration(project, creditLabel) {
   const existing = document.getElementById('project-celebration');
   if (existing) existing.remove();
-  const confettiColors = ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#ef4444'];
+  const confettiColors = ['#000000', '#262626', '#525252', '#737373', '#a3a3a3', '#d4d4d4'];
   const pieces = Array.from({ length: 36 }, (_, i) => {
     const left = Math.random() * 100;
     const delay = (Math.random() * 0.6).toFixed(2);
@@ -2748,7 +2829,7 @@ async function renderProjectDetail(projectId) {
         ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
       </div>
     </div>
-    <div class="project-hero">
+    <div class="project-hero project-hero-animate">
       <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
       <h1>${esc(project.name)}</h1>
       <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
@@ -2760,6 +2841,7 @@ async function renderProjectDetail(projectId) {
     <div class="tab-bar">
       ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
       ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
+      ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
       <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
       <button class="tab-btn ${tab === 'library' ? 'active' : ''}" data-action="switch-tab" data-tab="library" data-project-id="${projectId}">Library (${attCount})</button>
       <button class="tab-btn ${tab === 'updates' ? 'active' : ''}" data-action="switch-tab" data-tab="updates" data-project-id="${projectId}">Activity</button>
@@ -2940,6 +3022,14 @@ async function renderTab(tab, projectId, editable) {
     const users = cache?.users ?? await getUsersCached();
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `<div style="padding-top:4px">${renderTaskChainTimelineHtml(tasks, uMap)}</div>`;
+  } else if (tab === 'map') {
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
+    const users = cache?.users ?? await getUsersCached();
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+    const deps = await DB.getTaskDependencies(projectId);
+    el.classList.add('tab-content-enter');
+    el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -3356,6 +3446,210 @@ async function renderAdmin() {
 
 /* ──── Settings (admin only) ──── */
 
+function adminActivityBarHtml(label, widthPct) {
+  const w = Math.min(100, Math.max(0, widthPct));
+  const onFill = w >= 22;
+  const labelClass = onFill ? 'admin-bar-label-on-fill' : 'admin-bar-label-on-track';
+  return `<span style="--w:${w}%"><b class="${labelClass}">${esc(label)}</b></span>`;
+}
+
+async function renderAdminTabbed() {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  const content = document.getElementById('content');
+  const active = state.adminTab || 'overview';
+  await ensureDepartmentCfg();
+  const [workspace, bugReports, departments, classrooms, workflowTemplates, activityLog, hasMk] = await Promise.all([
+    getWorkspaceData(),
+    DB.getBugReports ? DB.getBugReports({ limit: 80 }).catch(() => []) : [],
+    DB.getDepartments ? DB.getDepartments().catch(() => []) : [],
+    DB.getClassrooms ? DB.getClassrooms().catch(() => []) : [],
+    DB.getWorkflowTemplates ? DB.getWorkflowTemplates().catch(() => []) : [],
+    DB.getActivityLog ? DB.getActivityLog({ limit: 140 }).catch(() => []) : [],
+    DB.hasMasterKey ? DB.hasMasterKey().catch(() => true) : true
+  ]);
+  const { users = [], projects = [], tasks = [] } = workspace || {};
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const hiddenDocuments = (await Promise.all(projects.map(async p => {
+    const rows = await DB.getAttachments(p.id, { includeHidden: true }).catch(() => []);
+    return rows.filter(a => a.isHidden || a.deletedAt).map(a => ({ ...a, projectName: p.name }));
+  }))).flat().sort((a, b) => (b.deletedAt || b.createdAt || '').localeCompare(a.deletedAt || a.createdAt || ''));
+  const openBugCount = bugReports.filter(r => !['fixed', 'closed', 'wont_fix'].includes(r.status || 'open')).length;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const editsToday = activityLog.filter(a => {
+    const d = new Date(a.createdAt || 0);
+    return Number.isFinite(d.getTime()) && d.toDateString() === new Date().toDateString();
+  }).length;
+  const tabs = [
+    ['overview', 'Overview'],
+    ['bugs', `Bugs${openBugCount ? ` (${openBugCount})` : ''}`],
+    ['users', `Users (${users.length})`],
+    ['workspace', 'Workspace'],
+    ['data', 'Data & Integrations']
+  ];
+  const tabsHtml = `<div class="tab-bar admin-tab-bar">
+    ${tabs.map(([key, label]) => `<button type="button" class="tab-btn ${active === key ? 'active' : ''}" data-action="admin-tab" data-tab="${key}">${label}</button>`).join('')}
+  </div>`;
+  const monthDays = Array.from({ length: 30 }, (_, i) => {
+    const day = new Date();
+    day.setDate(day.getDate() - (29 - i));
+    const count = activityLog.filter(a => {
+      const d = new Date(a.createdAt || 0);
+      return Number.isFinite(d.getTime()) && d.toDateString() === day.toDateString();
+    }).length;
+    return { label: String(day.getDate()), count };
+  });
+  const maxDay = Math.max(1, ...monthDays.map(d => d.count));
+  const calendarHtml = `<div class="admin-mini-calendar">${monthDays.map(d => `<span title="${d.count} activity item${d.count === 1 ? '' : 's'}" style="--heat:${Math.max(0.08, d.count / maxDay)}">${d.label}</span>`).join('')}</div>`;
+  const activityRows = activityLog.slice(0, 16).map(a => {
+    const who = uMap[a.userId];
+    return `<div class="admin-activity-row">
+      <span class="admin-activity-mark">${esc((a.action || 'log').slice(0, 1).toUpperCase())}</span>
+      <div><strong>${esc(who?.displayName || who?.username || 'System')}</strong> ${esc(formatActivityMessage(a, uMap))}<small>${timeAgo(a.createdAt)}</small></div>
+    </div>`;
+  }).join('') || '<p class="text-muted text-sm">No activity yet.</p>';
+  const userActivity = users.map(user => {
+    const rows = activityLog.filter(a => Number(a.userId) === Number(user.id));
+    return {
+      user,
+      edits: rows.filter(a => ['updated', 'created', 'uploaded', 'deleted', 'completed', 'task_done'].includes(a.action)).length,
+      projects: new Set(rows.map(a => a.projectId).filter(Boolean)).size,
+      completed: rows.filter(a => a.action === 'task_done' || (a.entityType === 'task' && /done|completed/i.test(a.details || ''))).length,
+      last: rows[0]?.createdAt || user.lastSeenAt || ''
+    };
+  }).sort((a, b) => (b.edits + b.completed) - (a.edits + a.completed));
+  const overviewHtml = `
+    <div class="admin-tab-grid admin-tab-grid--overview">
+      <section class="dash-panel admin-kpi-panel"><div class="dash-panel-head"><h3>Workspace Pulse</h3><span class="projects-page-count">live</span></div>
+        <div class="admin-kpi-grid">
+          <div class="admin-kpi"><strong>${users.length}</strong><span>Users</span></div>
+          <div class="admin-kpi"><strong>${projects.length}</strong><span>Projects</span></div>
+          <div class="admin-kpi"><strong>${doneCount}/${tasks.length}</strong><span>Tasks done</span></div>
+          <div class="admin-kpi"><strong>${editsToday}</strong><span>Actions today</span></div>
+        </div>
+      </section>
+      <section class="dash-panel"><div class="dash-panel-head"><h3>Activity Histogram</h3><span class="projects-page-count">30 days</span></div>${calendarHtml}</section>
+      <section class="dash-panel admin-wide"><div class="dash-panel-head"><h3>User Activity</h3><span class="projects-page-count">${userActivity.length}</span></div>
+        <div class="admin-user-activity-list">${userActivity.map(row => `<div class="admin-user-activity">
+          <div>${assigneeChipHtml(row.user)}<small>${row.last ? `Last active ${timeAgo(row.last)}` : 'No activity yet'}</small></div>
+          <div class="admin-user-bars">
+            ${adminActivityBarHtml('Edits', Math.min(100, row.edits * 8))}
+            ${adminActivityBarHtml('Projects', Math.min(100, row.projects * 20))}
+            ${adminActivityBarHtml('Completed', Math.min(100, row.completed * 16))}
+          </div>
+        </div>`).join('') || '<p class="text-muted text-sm">No user activity yet.</p>'}</div>
+      </section>
+      <section class="dash-panel"><div class="dash-panel-head"><h3>Recent Trail</h3><a href="#/activity" class="btn btn-sm btn-ghost">Open log</a></div>${activityRows}</section>
+    </div>`;
+  const bugStatus = [['open', 'Open'], ['in_progress', 'In progress'], ['sent', 'Sent'], ['fixed', 'Fixed'], ['closed', 'Closed'], ['wont_fix', "Won't fix"]];
+  const bugsHtml = `<section class="section-card admin-bugs-panel" data-section="bugs">
+    <div class="section-header"><h2>${ICONS.alertTriangle} Bugs &amp; Error Reports</h2><span class="projects-page-count">${bugReports.length}</span></div>
+    <div class="section-body bug-report-list">
+      ${bugReports.length ? bugReports.map(r => {
+        const who = uMap[r.userId];
+        const st = r.status || 'open';
+        const resolved = ['fixed', 'closed', 'wont_fix'].includes(st);
+        return `<div class="bug-report-row ${resolved ? 'bug-report-row--resolved' : ''}">
+          <div class="bug-report-main">
+            <div class="bug-report-titleline"><strong>${esc(r.title || r.message || 'Untitled report')}</strong>${badge(bugStatus.find(s => s[0] === st)?.[1] || st, resolved ? 'green' : 'amber')}</div>
+            <span>${esc(r.description || r.message || '')}</span>
+            ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
+            <small>${esc(who?.displayName || who?.username || 'Unknown')} · ${esc(r.severity || r.kind || 'normal')} · v${esc(r.appVersion || '?')} · ${timeAgo(r.createdAt)}</small>
+            <form data-form="update-bug-report" data-bug-id="${r.id}" class="bug-report-manage">
+              <select name="status" class="bug-report-status-select">${bugStatus.map(s => `<option value="${s[0]}" ${s[0] === st ? 'selected' : ''}>${s[1]}</option>`).join('')}</select>
+              <input type="url" name="githubIssueUrl" placeholder="GitHub issue URL" value="${esc(r.githubIssueUrl || '')}">
+              <input type="text" name="resolutionNote" placeholder="Resolution note" value="${esc(r.resolutionNote || '')}">
+              <button type="submit" class="btn btn-sm btn-primary">Update</button>
+            </form>
+          </div>
+        </div>`;
+      }).join('') : '<p class="text-muted text-sm" style="padding:16px 20px">No bug reports yet.</p>'}
+    </div>
+  </section>`;
+  const usersHtml = `<section class="section-card">
+    <div class="section-header"><h2>Users</h2><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
+    <div class="admin-user-board admin-user-board--tab">
+      ${users.map(u => {
+        const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
+        const avatarHtml = u.avatarBase64
+          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" alt="${esc(init)}">`
+          : `<div class="admin-ucard-avatar admin-ucard-avatar-clickable" ${userColorStyle(u)} data-action="show-user-profile" data-user-id="${u.id}">${init}</div>`;
+        return `<div class="admin-ucard">
+          <div class="admin-ucard-header">${avatarHtml}<div class="admin-ucard-meta">
+            <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
+            <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+            <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
+            <div class="admin-personal-mini">${u.birthDate ? `<span>${ICONS.calendar} ${formatDateShort(u.birthDate)}</span>` : ''}${u.gender ? `<span>${esc(u.gender)}</span>` : ''}${u.hoursLoggedTotal ? `<span>${Number(u.hoursLoggedTotal).toFixed(1)}h</span>` : ''}</div>
+          </div></div>
+          ${u.bio ? `<p class="admin-ucard-bio">${esc(u.bio)}</p>` : ''}
+          <div class="admin-ucard-actions">
+            <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
+            <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
+            <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </section>`;
+  const templateFieldHint = 'Fields: label | type | required | card. Types: text, long_text, number, date, checkbox, file.';
+  const workspaceHtml = `<div class="admin-workspace-grid">
+    <section class="section-card"><div class="section-header"><h2>Departments</h2></div>
+      <div class="section-body admin-pill-list">${departments.map(d => `<span class="admin-data-pill">${esc(d.label || d.key)}</span>`).join('') || '<p class="text-muted text-sm">No departments yet.</p>'}
+        <p class="text-muted text-sm">Use Settings for detailed department editing.</p></div></section>
+    <section class="section-card"><div class="section-header"><h2>Classrooms</h2></div>
+      <div class="section-body admin-pill-list">${classrooms.map(c => `<span class="admin-data-pill">${esc(c.name)}</span>`).join('') || '<p class="text-muted text-sm">No classrooms yet.</p>'}
+        <p class="text-muted text-sm">Classroom creation remains in Settings while this tab is rebuilt.</p></div></section>
+    <section class="section-card admin-wide"><div class="section-header"><h2>Task Templates</h2><a href="#/settings" class="btn btn-sm btn-ghost">Full settings</a></div>
+      <div class="section-body wf-tpl-list" style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+        ${(workflowTemplates || []).map(t => `<form data-form="edit-workflow-template" data-template-id="${t.id}" class="wf-tpl-card">
+          <div class="wf-tpl-head"><input class="wf-tpl-name" type="text" name="name" value="${esc(t.name)}" required><button type="submit" class="btn btn-sm btn-ghost">Save</button><button type="button" class="btn-icon btn-icon-danger" data-action="delete-workflow-template" data-id="${t.id}" title="Delete">${ICONS.trash}</button></div>
+          <input class="wf-tpl-desc" type="text" name="description" value="${esc(t.description || '')}" placeholder="Description">
+          <textarea class="wf-tpl-steps" name="steps" rows="${Math.max(3, (t.steps || []).length + 1)}" placeholder="One task per line">${esc((t.steps || []).map(s => s.title).join('\n'))}</textarea>
+          <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="${esc(templateFieldHint)}">${esc((t.fields || []).map(f => `${f.label || ''} | ${f.type || 'text'} | ${f.required ? 'required' : 'optional'} | ${f.showOnCard ? 'card' : ''}`).join('\n'))}</textarea>
+        </form>`).join('') || '<p class="text-muted text-sm">No templates yet.</p>'}
+        <form data-form="add-workflow-template" class="wf-tpl-card wf-tpl-card--add">
+          <div class="wf-tpl-head"><input class="wf-tpl-name" type="text" name="name" placeholder="New template name" required><button type="submit" class="btn btn-sm btn-primary">Create</button></div>
+          <input class="wf-tpl-desc" type="text" name="description" placeholder="Description">
+          <textarea class="wf-tpl-steps" name="steps" rows="3" placeholder="One task per line"></textarea>
+          <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="${esc(templateFieldHint)}"></textarea>
+        </form>
+      </div>
+    </section>
+  </div>`;
+  const dataHtml = `<div class="admin-data-grid">
+    ${!hasMk ? `<section class="section-card admin-wide"><div class="section-header"><h2>Master recovery key</h2></div><div class="section-body" style="padding:20px"><form data-form="set-master-key"><div class="form-group"><label>Master recovery key</label><input name="masterKey" type="password" required minlength="4"></div><div class="form-group"><label>Confirm recovery key</label><input name="confirmMasterKey" type="password" required minlength="4"></div><button class="btn btn-primary" type="submit">Save recovery key</button></form></div></section>` : ''}
+    <section class="section-card"><div class="section-header"><h2>Data Management</h2></div><div class="section-body admin-action-stack">
+      <button class="btn btn-ghost" data-action="user-export">${ICONS.download} Export local backup</button>
+      <button class="btn btn-ghost" data-action="user-import">${ICONS.upload} Import local backup</button>
+      <button class="btn btn-ghost" data-action="open-sync-diagnostics">${ICONS.refresh} Sync diagnostics</button>
+      <button class="btn btn-ghost" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
+    </div></section>
+    <section class="section-card"><div class="section-header"><h2>Integrations</h2></div><div class="section-body admin-action-stack">
+      <p class="text-muted text-sm">Discord/chat integrations are paused while chat is being rebuilt.</p>
+      <a href="#/settings" class="btn btn-ghost">Open integration settings</a>
+    </div></section>
+    <section class="section-card admin-wide"><div class="section-header"><h2>Hidden Documents</h2><span class="projects-page-count">${hiddenDocuments.length}</span></div>
+      <div class="section-body admin-hidden-doc-list">
+        ${hiddenDocuments.length ? hiddenDocuments.slice(0, 30).map(doc => `<div class="admin-hidden-doc-row">
+          <span>${ICONS.file}</span>
+          <div><strong>${esc(doc.fileName || 'Document')}</strong><small>${esc(doc.projectName || 'Project')} · hidden ${doc.deletedAt ? timeAgo(doc.deletedAt) : 'recently'}</small></div>
+          <em>${doc.deleteReason ? esc(doc.deleteReason) : 'Removed from normal view'}</em>
+        </div>`).join('') : '<p class="text-muted text-sm">No hidden documents.</p>'}
+      </div>
+    </section>
+  </div>`;
+  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : overviewHtml;
+  content.innerHTML = `
+    <div class="view-header admin-suite-header">
+      <div><h1>Admin</h1><p class="view-subtitle">Oversight, people, workspace templates, bugs, and data tools.</p></div>
+      <div class="view-actions">
+        <button class="btn btn-ghost" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
+        <button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button>
+      </div>
+    </div>
+    ${tabsHtml}
+    ${body}`;
+}
+
 async function renderSettings() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
@@ -3388,6 +3682,7 @@ async function renderSettings() {
             </div>
             <input class="wf-tpl-desc" type="text" name="description" value="${esc(t.description || '')}" placeholder="Description (optional)">
             <textarea class="wf-tpl-steps" name="steps" rows="${Math.max(3, (t.steps || []).length + 1)}" placeholder="One task per line…">${esc((t.steps || []).map(s => s.title).join('\n'))}</textarea>
+            <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="Label | type | required | card">${esc((t.fields || []).map(f => `${f.label || ''} | ${f.type || 'text'} | ${f.required ? 'required' : 'optional'} | ${f.showOnCard ? 'card' : ''}`).join('\n'))}</textarea>
           </form>`).join('') || '<p class="text-muted text-sm">No templates yet. Create one below.</p>'}
         <form data-form="add-workflow-template" class="wf-tpl-card wf-tpl-card--add">
           <div class="wf-tpl-head">
@@ -3395,6 +3690,7 @@ async function renderSettings() {
             <button type="submit" class="btn btn-sm btn-primary">Create</button>
           </div>
           <input class="wf-tpl-desc" type="text" name="description" placeholder="Description (optional)">
+          <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="Label | type | required | card"></textarea>
           <textarea class="wf-tpl-steps" name="steps" rows="3" placeholder="One task per line…"></textarea>
         </form>
       </div>
@@ -3694,14 +3990,17 @@ function _chatPollMs() {
 }
 function startChatUnreadPolling() {
   stopChatUnreadPolling();
-  refreshChatUnreadState().catch(() => {});
-  _chatUnreadTimer = setInterval(() => refreshChatUnreadState().catch(() => {}), _chatPollMs());
+  state.chatUnreadChannels = new Set();
+  state.chatUnreadCounts = {};
+  updateChatUnreadBadge();
 }
 function stopChatUnreadPolling() {
   if (_chatUnreadTimer) { clearInterval(_chatUnreadTimer); _chatUnreadTimer = null; }
 }
 
 async function getChatMessagesForChannel(channelId) {
+  return [];
+  /*
   if (channelId?.startsWith('dm-')) {
     const otherId = Number(channelId.slice(3));
     const rows = DB.getDirectMessages ? await DB.getDirectMessages(actorId(), otherId, { limit: 150 }) : [];
@@ -3729,6 +4028,7 @@ async function getChatMessagesForChannel(channelId) {
   const merged = [...appMsgs, ...discordMsgs];
   merged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   return merged.slice(-150);
+  */
 }
 
 function _activeChatPane() {
@@ -3807,7 +4107,7 @@ function renderChatMessagesHtml(messages, uMap) {
     const name = isDiscord ? (m.discordDisplayName || m.discordAuthorName || 'Discord') : (who ? (who.displayName || who.username) : 'Someone');
     const init = name.charAt(0).toUpperCase();
     const mine = !isDiscord && m.userId === meId;
-    const avatarBg = isDiscord ? 'background:#5865f2' : (who ? `background:${userColor(who)}` : '');
+    const avatarBg = isDiscord ? 'background:#000000' : (who ? `background:${userColor(who)}` : '');
     const avatarContent = isDiscord && m.discordAvatar
       ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : init;
     const msgDate = new Date(m.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
@@ -3950,6 +4250,9 @@ function chatDockListBodyHtml() {
 }
 
 async function chatDockPanelHtml() {
+  if (!state.chatDockView) state.chatDockView = 'list';
+  _chatDockData = null;
+
   const s = getSession();
   const [{ users, projects }, allHooks, favRows] = await Promise.all([
     getWorkspaceData(),
@@ -4317,7 +4620,7 @@ async function renderReportsPage() {
           <input type="month" value="${esc(state.reportMonth)}" data-report-input="month">
         </label>
         <button type="button" class="btn btn-primary" data-action="generate-ai-report">${ICONS.sparkles} AI Report</button>
-        <button type="button" class="btn btn-ghost" data-action="export-report-csv">${ICONS.download} Export CSV</button>
+        <button type="button" class="btn btn-ghost" data-action="export-report-pdf">${ICONS.download} Export PDF</button>
       </div>
     </div>
     <div class="stats-grid">
@@ -4336,34 +4639,54 @@ async function renderReportsPage() {
     </section>`;
 }
 
-async function exportMonthlyReportCsv() {
+async function exportMonthlyReportPdf() {
+  if (!window.jspdf?.jsPDF) {
+    showToast('PDF library not loaded', 'error');
+    return;
+  }
   const { users, projects, tasks } = await getWorkspaceData();
-  const { rows, safe } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
+  const { rows, safe, label } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
   const relevantRows = rows.filter(row => row.startedThisMonth || row.completedThisMonth || row.ongoing);
-  const header = ['Project', 'Owner', 'Department', 'Started At', 'Completed At', 'Current Status', 'Progress %', 'Started This Month', 'Completed This Month', 'Ongoing'];
-  const lines = [
-    header.join(','),
-    ...relevantRows.map(row => [
-      row.project.name,
-      row.owner?.displayName || row.owner?.username || '',
-      departmentLabel(row.department || ''),
-      row.project.createdAt || '',
-      row.completedAt || '',
-      row.project.status,
-      String(row.progress),
-      row.startedThisMonth ? 'yes' : 'no',
-      row.completedThisMonth ? 'yes' : 'no',
-      row.ongoing ? 'yes' : 'no'
-    ].map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
-  ];
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `worktracker-report-${safe}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Monthly report exported', 'success');
+
+  const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+
+  // Header with teal gradient
+  doc.setFillColor(13, 148, 136);
+  doc.rect(0, 0, doc.internal.pageSize.getWidth(), 60, 'F');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.text('Orbitask — Monthly Report', 40, 35);
+  doc.setFontSize(12);
+  doc.text(label, 40, 52);
+
+  // Reset text color for body
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'normal');
+
+  const tableData = relevantRows.map(row => [
+    row.project.name,
+    row.owner?.displayName || row.owner?.username || 'Unknown',
+    departmentLabel(row.department || ''),
+    row.project.status,
+    String(Math.round(row.progress)) + '%',
+    row.startedThisMonth ? 'Yes' : 'No',
+    row.completedThisMonth ? 'Yes' : 'No'
+  ]);
+
+  doc.autoTable({
+    head: [['Project', 'Owner', 'Department', 'Status', 'Progress', 'Started', 'Completed']],
+    body: tableData,
+    startY: 75,
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 6 },
+    headStyles: { fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 252, 250] },
+    margin: { left: 30, right: 30 }
+  });
+
+  doc.save(`orbitask-report-${safe}.pdf`);
+  showToast('Monthly report exported as PDF', 'success');
 }
 
 async function generateAIReport() {
@@ -4454,6 +4777,11 @@ function showAIReportModal(html, label) {
       </div>
     </div>`;
   ov.classList.remove('hidden');
+  ov.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="close-modal"]') || e.target === ov) {
+      URL.revokeObjectURL(blobUrl);
+    }
+  }, { once: true });
 }
 
 async function refreshNotificationBadge() {
@@ -4621,6 +4949,7 @@ async function showProjectModal(editId = null) {
 
   showModal(isE ? 'Edit Project' : 'New Project', `
     <form data-form="project" data-edit-id="${isE ? parsedId : ''}" class="project-form-v2">
+      <input type="hidden" name="templateFields" id="workflow-template-fields" value="">
       <div class="pf-name-block">
         <input class="pf-name-input" name="name" type="text" value="${esc(p?.name || '')}" placeholder="Project name *" required autofocus>
         <textarea class="pf-desc-input" name="notes" placeholder="Short description (optional)…" rows="2">${esc(p?.notes || '')}</textarea>
@@ -4739,13 +5068,16 @@ async function showProjectModal(editId = null) {
 
     // Selecting a workflow template (built-in or saved) auto-fills editable starting tasks.
     const wfSelect = document.querySelector('form[data-form="project"] select[name="workflowTemplate"]');
+    const wfFields = document.getElementById('workflow-template-fields');
     wfSelect?.addEventListener('change', () => {
       let stepTitles = null;
       let label = '';
+      let templateFields = [];
       if (wfSelect.value.startsWith('tpl:')) {
         const tpl = templates.find(t => String(t.id) === wfSelect.value.slice(4));
         if (!tpl) return;
         stepTitles = (tpl.steps || []).map(s => s.title || '');
+        templateFields = tpl.fields || [];
         label = tpl.name;
       } else if (wfSelect.value === 'logistics-shipment') {
         stepTitles = LOGISTICS_WORKFLOW_STEPS.map(s => s.title);
@@ -4754,8 +5086,10 @@ async function showProjectModal(editId = null) {
         stepTitles = BUILTIN_TEMPLATE_STEPS[wfSelect.value].slice();
         label = WORKFLOW_TEMPLATE_CFG[wfSelect.value]?.l || 'template';
       } else {
+        if (wfFields) wfFields.value = '[]';
         return;
       }
+      if (wfFields) wfFields.value = JSON.stringify(templateFields || []);
       list.innerHTML = '';
       stepTitles.forEach(title => {
         addBulkRow(false);
@@ -5057,6 +5391,13 @@ async function showUserProfileModal(userId) {
         <div><strong>${stats.coediting}</strong><span>Co-editing</span></div>
         <div><strong>${stats.completedTasks}</strong><span>Tasks completed</span></div>
       </div>
+      <div class="profile-personal-grid">
+        ${user.birthDate ? `<div><span>Birthday</span><strong>${formatDateShort(user.birthDate)}</strong></div>` : ''}
+        ${user.gender ? `<div><span>Gender</span><strong>${esc(user.gender.replace(/_/g, ' '))}</strong></div>` : ''}
+        ${user.phone ? `<div><span>Phone</span><strong>${esc(user.phone)}</strong></div>` : ''}
+        ${user.hoursLoggedTotal ? `<div><span>Hours</span><strong>${Number(user.hoursLoggedTotal).toFixed(1)}</strong></div>` : ''}
+        ${user.address ? `<div class="profile-personal-wide"><span>Address</span><strong>${esc(user.address)}</strong></div>` : ''}
+      </div>
       <div class="profile-rank-track">
         <div class="profile-rank-track-fill" style="width:${Math.min(100, Math.round((stats.score / (stats.score + (stats.rank.next || 0) || 1)) * 100))}%"></div>
       </div>
@@ -5099,7 +5440,18 @@ function showAddUserModal() {
         <option value="">Unassigned</option>
         ${departmentOptionsHtml()}
       </select></div>
-      <div class="form-group"><label>Color</label><input name="color" type="color" value="#4f46e5"></div>
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Birth date</label><input name="birthDate" type="date"></div>
+        <div class="form-group"><label>Gender</label><select name="gender">
+          <option value="">Not set</option>
+          <option value="female">Female</option>
+          <option value="male">Male</option>
+          <option value="non_binary">Non-binary</option>
+          <option value="prefer_not_to_say">Prefer not to say</option>
+        </select></div>
+      </div>
+      <div class="form-group"><label>Phone</label><input name="phone" type="tel" placeholder="+971..."></div>
+      <input name="color" type="hidden" value="#000000">
       <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
@@ -5137,6 +5489,153 @@ async function showEditUserModal(uid) {
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save changes</button></div>
     </form>`);
+}
+
+async function showEditUserModalBlack(uid) {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const [u, workspace] = await Promise.all([
+    DB.getUser(uid),
+    getWorkspaceData().catch(() => ({ projects: [], tasks: [] }))
+  ]);
+  if (!u) { showToast('User not found', 'error'); return; }
+  const s = getSession();
+  const isSelf = u.id === s.userId;
+  const initials = (u.displayName || u.username || '?').trim().charAt(0).toUpperCase();
+  const ownedCount = (workspace.projects || []).filter(p => Number(p.ownerId) === Number(u.id)).length;
+  const assignedCount = (workspace.tasks || []).filter(t => Number(t.assigneeId) === Number(u.id)).length;
+  const doneCount = (workspace.tasks || []).filter(t => Number(t.assigneeId) === Number(u.id) && t.status === 'done').length;
+  const avatar = u.avatarBase64
+    ? `<img src="${esc(u.avatarBase64)}" class="user-edit-avatar-img" alt="${esc(initials)}">`
+    : `<div class="user-edit-avatar-initials">${esc(initials)}</div>`;
+
+  showModal('Edit User', `
+    <form data-form="edit-user" data-user-id="${u.id}" class="user-edit-form">
+      <input name="color" type="hidden" value="#000000">
+      <input name="discordId" type="hidden" value="${esc(u.discordId || '')}">
+      <div class="user-edit-shell">
+        <section class="user-edit-hero">
+          <div class="user-edit-avatar" id="user-edit-avatar-preview">${avatar}</div>
+          <div class="user-edit-identity">
+            <span class="user-edit-kicker">${isSelf ? 'Current admin account' : 'Team account'}</span>
+            <strong id="user-edit-name-preview">${esc(u.displayName || u.username)}</strong>
+            <small id="user-edit-username-preview">@${esc(u.username)}</small>
+          </div>
+          <div class="user-edit-status">
+            <span>${isUserOnline(u) ? 'Online' : 'Offline'}</span>
+            <small>${u.lastSeenAt ? `Last seen ${timeAgo(u.lastSeenAt)}` : 'No recent session'}</small>
+          </div>
+        </section>
+
+        <section class="user-edit-grid">
+          <label class="user-edit-field">
+            <span>Username</span>
+            <input name="username" type="text" value="${esc(u.username)}" required autocomplete="off" data-user-edit-username>
+          </label>
+          <label class="user-edit-field">
+            <span>Display name</span>
+            <input name="displayName" type="text" value="${esc(u.displayName || '')}" required data-user-edit-display>
+          </label>
+          <label class="user-edit-field user-edit-field-wide">
+            <span>Email</span>
+            <input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com">
+          </label>
+          <label class="user-edit-field user-edit-field-wide">
+            <span>Department</span>
+            <select name="department">
+              <option value="" ${!u.department ? 'selected' : ''}>Unassigned</option>
+              ${departmentOptionsHtml(u.department || '')}
+            </select>
+          </label>
+          <label class="user-edit-field">
+            <span>Birth date</span>
+            <input name="birthDate" type="date" value="${esc(u.birthDate || '')}">
+          </label>
+          <label class="user-edit-field">
+            <span>Gender</span>
+            <select name="gender">
+              <option value="" ${!u.gender ? 'selected' : ''}>Not set</option>
+              <option value="female" ${u.gender === 'female' ? 'selected' : ''}>Female</option>
+              <option value="male" ${u.gender === 'male' ? 'selected' : ''}>Male</option>
+              <option value="non_binary" ${u.gender === 'non_binary' ? 'selected' : ''}>Non-binary</option>
+              <option value="prefer_not_to_say" ${u.gender === 'prefer_not_to_say' ? 'selected' : ''}>Prefer not to say</option>
+            </select>
+          </label>
+          <label class="user-edit-field">
+            <span>Phone</span>
+            <input name="phone" type="tel" value="${esc(u.phone || '')}" placeholder="+971...">
+          </label>
+          <label class="user-edit-field">
+            <span>Hours logged</span>
+            <input name="hoursLoggedTotal" type="number" min="0" step="0.25" value="${Number(u.hoursLoggedTotal || 0)}">
+          </label>
+          <label class="user-edit-field user-edit-field-wide">
+            <span>Address</span>
+            <input name="address" type="text" value="${esc(u.address || '')}" placeholder="Optional">
+          </label>
+        </section>
+
+        <section class="user-edit-role-panel">
+          <div>
+            <span class="user-edit-section-label">Role</span>
+            <p>${isSelf ? 'Your own role is locked for safety.' : 'Role controls what this person can see and manage.'}</p>
+          </div>
+          <div class="user-edit-role-options">
+            <label class="user-edit-role-card">
+              <input type="radio" name="role" value="user" ${u.role !== 'admin' ? 'checked' : ''} ${isSelf ? 'disabled' : ''}>
+              <span>Member</span>
+              <small>Work on assigned projects and tasks</small>
+            </label>
+            <label class="user-edit-role-card">
+              <input type="radio" name="role" value="admin" ${u.role === 'admin' ? 'checked' : ''} ${isSelf ? 'disabled' : ''}>
+              <span>Admin</span>
+              <small>Manage users, settings, and reports</small>
+            </label>
+          </div>
+        </section>
+
+        <section class="user-edit-inspector">
+          <div class="user-edit-stat"><strong>${ownedCount}</strong><span>owned projects</span></div>
+          <div class="user-edit-stat"><strong>${assignedCount}</strong><span>assigned tasks</span></div>
+          <div class="user-edit-stat"><strong>${doneCount}</strong><span>completed tasks</span></div>
+        </section>
+
+        <section class="user-edit-permissions">
+          <span class="user-edit-section-label">Permission Preview</span>
+          <div id="user-edit-permission-preview" class="user-edit-permission-preview"></div>
+        </section>
+      </div>
+
+      <div class="form-actions user-edit-actions">
+        <button type="reset" class="btn btn-ghost">Reset</button>
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save user</button>
+      </div>
+    </form>`);
+
+  const form = document.querySelector('form[data-form="edit-user"]');
+  const nameInput = form?.querySelector('[data-user-edit-display]');
+  const usernameInput = form?.querySelector('[data-user-edit-username]');
+  const namePreview = document.getElementById('user-edit-name-preview');
+  const usernamePreview = document.getElementById('user-edit-username-preview');
+  const avatarPreview = document.getElementById('user-edit-avatar-preview');
+  const rolePreview = document.getElementById('user-edit-permission-preview');
+  const updatePreview = () => {
+    const nextName = nameInput?.value?.trim() || usernameInput?.value?.trim() || 'User';
+    const nextUsername = usernameInput?.value?.trim() || 'username';
+    const nextInitial = nextName.charAt(0).toUpperCase();
+    if (namePreview) namePreview.textContent = nextName;
+    if (usernamePreview) usernamePreview.textContent = `@${nextUsername}`;
+    if (avatarPreview && !u.avatarBase64) avatarPreview.innerHTML = `<div class="user-edit-avatar-initials">${esc(nextInitial)}</div>`;
+    const role = form?.querySelector('input[name="role"]:checked')?.value || u.role || 'user';
+    if (rolePreview) {
+      rolePreview.innerHTML = role === 'admin'
+        ? '<strong>Admin access</strong><span>Can manage users, projects, reports, settings, and workspace controls.</span>'
+        : '<strong>Member access</strong><span>Can work inside permitted projects, update assigned tasks, upload documents, and view their own activity.</span>';
+    }
+  };
+  form?.addEventListener('input', updatePreview);
+  form?.addEventListener('reset', () => setTimeout(updatePreview, 0));
+  updatePreview();
 }
 
 async function showUserClassroomsModal(uid) {
@@ -5199,6 +5698,18 @@ async function showProfileModal() {
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
       <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Project lead at Everlasting">${esc(user.bio || '')}</textarea></div>
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Birth date</label><input name="birthDate" type="date" value="${esc(user.birthDate || '')}"></div>
+        <div class="form-group"><label>Gender</label><select name="gender">
+          <option value="" ${!user.gender ? 'selected' : ''}>Not set</option>
+          <option value="female" ${user.gender === 'female' ? 'selected' : ''}>Female</option>
+          <option value="male" ${user.gender === 'male' ? 'selected' : ''}>Male</option>
+          <option value="non_binary" ${user.gender === 'non_binary' ? 'selected' : ''}>Non-binary</option>
+          <option value="prefer_not_to_say" ${user.gender === 'prefer_not_to_say' ? 'selected' : ''}>Prefer not to say</option>
+        </select></div>
+      </div>
+      <div class="form-group"><label>Phone</label><input name="phone" type="tel" value="${esc(user.phone || '')}" placeholder="+971..."></div>
+      <div class="form-group"><label>Address</label><input name="address" type="text" value="${esc(user.address || '')}" placeholder="Optional"></div>
       ${isAdm ? `<div class="form-group"><label>Department</label><select name="department">
         <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(user.department || '')}
@@ -5206,7 +5717,7 @@ async function showProfileModal() {
         <div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div>
         <p class="text-muted text-sm" style="margin-top:6px">Assigned by an admin. Project tags (e.g. R&amp;D) come from the project, not your profile.</p>
       </div>`}
-      <div class="form-group"><label>Accent Color</label><div style="display:flex;gap:8px;align-items:center"><input name="color" type="color" value="${esc(user.color||'#4f46e5')}" style="height:36px;width:60px;border-radius:6px;border:1px solid var(--border);cursor:pointer"><span class="text-muted text-sm">Used for your avatar and highlights</span></div></div>
+      <input name="color" type="hidden" value="#000000">
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
     </form>`);
   // Avatar preview
@@ -5241,7 +5752,7 @@ function showOnboardingModal(force = false) {
   ov.innerHTML = `
     <div class="modal modal-howto">
       <div class="modal-header">
-        <h2>${ICONS.sparkles} Welcome to WorkTracker${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
+        <h2>${ICONS.sparkles} Welcome to Orbitask${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
         <button class="btn-icon" data-action="close-howto">${ICONS.x}</button>
       </div>
       <div class="modal-body">
@@ -5285,6 +5796,396 @@ function showOnboardingModal(force = false) {
 }
 
 
+const SUPPORT_CHANGELOG = [
+  { version: '2.2.22', date: '2026-06-10', items: ['Support hub & calendar', 'Activity heatmap on Team page', 'Project task dependency map', 'Theme toggle animation', 'Boot screen flash fix'] },
+  { version: '2.2.20', date: '2026-06-05', items: ['Black Edition UI refresh', 'User profile fields (birthday, gender)', 'Admin activity histogram'] },
+];
+
+async function renderSupportPage() {
+  const content = document.getElementById('content');
+  const isDesktop = !!window.workTrackerDesktop?.isDesktop;
+  const changelogHtml = SUPPORT_CHANGELOG.map(rel => `
+    <div class="support-changelog-item">
+      <div class="support-changelog-head"><strong>v${esc(rel.version)}</strong><span class="text-muted text-sm">${esc(rel.date)}</span></div>
+      <ul>${rel.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+    </div>`).join('');
+  content.innerHTML = `
+    <div class="view-page support-page">
+      <div class="projects-page-header">
+        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help · Updates · Feedback</span></div>
+      </div>
+      <div class="support-grid">
+        <section class="dash-panel support-card">
+          <div class="dash-panel-head"><h3>Help</h3></div>
+          <p class="text-muted text-sm">Guides and onboarding for Orbitask.</p>
+          <div class="support-actions">
+            <button type="button" class="btn btn-primary" data-action="user-show-howto">${ICONS.sparkles} How-to guide</button>
+            <button type="button" class="btn btn-ghost" data-action="show-about">${ICONS.target} About Orbitask</button>
+          </div>
+        </section>
+        <section class="dash-panel support-card">
+          <div class="dash-panel-head"><h3>Feedback</h3></div>
+          <p class="text-muted text-sm">Report issues or request improvements.</p>
+          <div class="support-actions">
+            <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
+          </div>
+        </section>
+        <section class="dash-panel support-card">
+          <div class="dash-panel-head"><h3>Updates</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
+          <p class="text-muted text-sm">${isDesktop ? 'Check for desktop app updates.' : 'Install the desktop app for automatic updates.'}</p>
+          <div class="support-actions">
+            <button type="button" class="btn btn-primary" data-action="check-updates">${ICONS.refresh} Check for updates</button>
+            ${isAdmin() ? '<a href="#/activity" class="btn btn-ghost">Project activity log</a>' : ''}
+          </div>
+        </section>
+        <section class="dash-panel support-card support-card-wide">
+          <div class="dash-panel-head"><h3>Release notes</h3></div>
+          <div class="support-changelog">${changelogHtml}</div>
+        </section>
+      </div>
+    </div>`;
+}
+
+function _calendarMonthKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function _parseCalendarMonth(key) {
+  const [y, m] = String(key || '').split('-').map(Number);
+  if (!y || !m) return new Date();
+  return new Date(y, m - 1, 1);
+}
+
+function _pentPoints(cx, cy, r, rot = -Math.PI / 2) {
+  const pts = [];
+  for (let i = 0; i < 5; i++) {
+    const a = rot + (2 * Math.PI * i) / 5;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(2)},${(cy + r * Math.sin(a)).toFixed(2)}`);
+  }
+  return pts.join(' ');
+}
+
+async function buildTeamActivityHeatmapHtml(users) {
+  const activityByUser = await DB.getTeamActivitySummary({ days: 7 });
+  const vibrant = getThemeMode() === 'normal';
+
+  // Store data for D3 initialization
+  const mapId = `team-map-${Date.now()}`;
+  window._teamActivityData = window._teamActivityData || {};
+  window._teamActivityData[mapId] = { users, activityByUser, vibrant };
+
+  const legend = vibrant
+    ? `<span><i style="background:linear-gradient(135deg,#06b6d4,#38bdf8)"></i> Low</span><span><i style="background:linear-gradient(135deg,#a855f7,#7c3aed)"></i> Medium</span><span><i style="background:linear-gradient(135deg,#f97316,#ec4899)"></i> High</span>`
+    : `<span><i style="background:#e5e5e5"></i> Low</span><span><i style="background:#737373"></i> Medium</span><span><i style="background:#1a1a1a"></i> High</span>`;
+
+  return `<section class="dash-panel team-activity-map">
+    <div class="dash-panel-head"><h3>Team Activity Map</h3><span class="projects-page-count">Interactive · 7-day activity</span></div>
+    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:380px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
+    <div class="activity-pent-legend">${legend}</div>
+  </section>`;
+}
+
+function initializeTeamActivityD3() {
+  if (!window.d3) return;
+  document.querySelectorAll('[data-map-id]').forEach(el => {
+    const mapId = el.dataset.mapId;
+    const data = window._teamActivityData?.[mapId];
+    if (!data || el.querySelector('svg')) return;
+
+    const { users, activityByUser, vibrant } = data;
+    const maxMin = Math.max(1, ...users.map(u => activityByUser[u.id]?.activeMinutes || 0));
+
+    const width = el.offsetWidth || 800;
+    const height = el.offsetHeight || 380;
+
+    const nodes = users.map(u => ({
+      id: u.id, name: u.displayName || u.username,
+      initials: (u.displayName || u.username || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+      activity: activityByUser[u.id]?.activeMinutes || 0,
+      online: isUserOnline(u),
+      lastSeen: u.lastSeenAt,
+      user: u
+    }));
+
+    const heat = (min) => Math.max(0.08, min / maxMin);
+    const colorByHeat = (h) => {
+      if (vibrant) {
+        if (h < 0.34) return '#06b6d4';
+        if (h < 0.67) return '#a855f7';
+        return '#f97316';
+      } else {
+        if (h < 0.34) return '#e5e5e5';
+        if (h < 0.67) return '#737373';
+        return '#1a1a1a';
+      }
+    };
+
+    const svg = d3.select(el).append('svg').attr('width', width).attr('height', height)
+      .style('background', 'var(--bg)').style('cursor', 'grab');
+
+    const g = svg.append('g');
+    const zoomBehavior = d3.zoom().on('zoom', (e) => g.attr('transform', e.transform));
+    svg.call(zoomBehavior);
+
+    const simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink().distance(80))
+      .force('charge', d3.forceManyBody().strength(-200))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collide', d3.forceCollide(40));
+
+    const circles = g.selectAll('.team-node')
+      .data(nodes).enter().append('g').attr('class', 'team-node')
+      .call(d3.drag()
+        .on('start', (e, d) => { simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+        .on('end', (e, d) => { simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+    circles.append('circle').attr('r', 28)
+      .attr('fill', d => colorByHeat(heat(d.activity)))
+      .attr('stroke', vibrant ? '#0f766e' : '#525252').attr('stroke-width', 2)
+      .style('cursor', 'pointer').style('filter', d => d.online ? '' : 'opacity(0.6)')
+      .on('click', (e, d) => { e.stopPropagation(); dispatchAction('show-user-profile', d.user.id); });
+
+    circles.append('text').attr('text-anchor', 'middle').attr('dy', '0.35em')
+      .attr('font-size', '10px').attr('font-weight', '800')
+      .attr('fill', d => heat(d.activity) > 0.5 ? '#fff' : '#000')
+      .attr('pointer-events', 'none').text(d => d.initials);
+
+    circles.append('circle').attr('r', 6).attr('fill', '#22c55e')
+      .attr('cx', 18).attr('cy', -18).attr('stroke', 'white').attr('stroke-width', 1.5)
+      .attr('display', d => d.online ? 'block' : 'none');
+
+    circles.append('text').attr('y', 45).attr('text-anchor', 'middle')
+      .attr('font-size', '11px').attr('font-weight', '600')
+      .attr('fill', vibrant ? '#0f766e' : '#525252')
+      .attr('pointer-events', 'none')
+      .text(d => d.name.length > 12 ? d.name.slice(0, 10) + '…' : d.name);
+
+    circles.append('title')
+      .text(d => `${d.name} · ${(d.activity / 60).toFixed(1)}h this week · ${d.online ? 'Online' : (d.lastSeen ? 'Last active ' + timeAgo(d.lastSeen) : 'Offline')}`);
+
+    simulation.on('tick', () => {
+      circles.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+  });
+}
+
+function layoutTaskGraph(tasks, deps) {
+  const ids = tasks.map(t => t.id);
+  const idSet = new Set(ids);
+  const incoming = Object.fromEntries(ids.map(id => [id, 0]));
+  deps.forEach(d => {
+    if (idSet.has(d.toTaskId) && idSet.has(d.fromTaskId) && d.type === 'blocks') incoming[d.toTaskId]++;
+  });
+  const levels = {};
+  const queue = ids.filter(id => incoming[id] === 0);
+  queue.forEach(id => { levels[id] = 0; });
+  const edges = deps.filter(d => d.type === 'blocks' && idSet.has(d.fromTaskId) && idSet.has(d.toTaskId));
+  let guard = 0;
+  while (queue.length && guard++ < 500) {
+    const id = queue.shift();
+    edges.filter(e => e.fromTaskId === id).forEach(e => {
+      levels[e.toTaskId] = Math.max(levels[e.toTaskId] || 0, (levels[id] || 0) + 1);
+      incoming[e.toTaskId]--;
+      if (incoming[e.toTaskId] === 0) queue.push(e.toTaskId);
+    });
+  }
+  ids.forEach((id, i) => { if (levels[id] == null) levels[id] = i % 4; });
+  const byLevel = {};
+  ids.forEach(id => {
+    const lv = levels[id] || 0;
+    if (!byLevel[lv]) byLevel[lv] = [];
+    byLevel[lv].push(id);
+  });
+  const positions = {};
+  Object.keys(byLevel).sort((a, b) => a - b).forEach(lv => {
+    byLevel[lv].forEach((id, i) => {
+      positions[id] = { x: 56 + Number(lv) * 260, y: 48 + i * 108 };
+    });
+  });
+  return { positions, edges };
+}
+
+const FLOW_STATUS = {
+  todo: { header: '#64748b', label: 'To Do' },
+  doing: { header: '#0ea5e9', label: 'In Progress' },
+  done: { header: '#10b981', label: 'Done' },
+  blocked: { header: '#f59e0b', label: 'Blocked' }
+};
+
+function _flowBezier(x1, y1, x2, y2) {
+  const mx = (x1 + x2) / 2;
+  return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+}
+
+function renderTaskMapViewHtml(tasks, deps, uMap, editable) {
+  if (!tasks.length) return emptyState({ icon: 'target', title: 'No tasks to map', description: 'Add tasks first, then link dependencies in task details.' });
+  const { positions, edges } = layoutTaskGraph(tasks, deps);
+  const nodeW = 210;
+  const nodeH = 80;
+  const headerH = 24;
+  const pad = 16;
+  const maxX = Math.max(520, ...Object.values(positions).map(p => p.x)) + nodeW + 60;
+  const maxY = Math.max(340, ...Object.values(positions).map(p => p.y)) + nodeH + 60;
+  const edgeLines = edges.map(e => {
+    const a = positions[e.fromTaskId];
+    const b = positions[e.toTaskId];
+    if (!a || !b) return '';
+    const x1 = a.x + nodeW;
+    const y1 = a.y + nodeH / 2;
+    const x2 = b.x;
+    const y2 = b.y + nodeH / 2;
+    return `<path d="${_flowBezier(x1, y1, x2, y2)}" class="task-map-edge task-map-edge--solid" marker-end="url(#flow-arrow)" />`;
+  }).join('');
+  const nodes = tasks.map(t => {
+    const p = positions[t.id] || { x: 28, y: 28 };
+    const assignee = uMap[t.assigneeId];
+    const who = assignee ? (assignee.displayName || assignee.username) : 'Unassigned';
+    const st = FLOW_STATUS[t.status] || FLOW_STATUS.todo;
+    const title = (t.title || 'Task').slice(0, 30);
+    const whoShort = who.slice(0, 26);
+    const inX = p.x;
+    const outX = p.x + nodeW;
+    const midY = p.y + nodeH / 2;
+    return `<g class="flow-node" data-action="open-task-detail" data-id="${t.id}" role="button" tabindex="0">
+      <g class="flow-node-body">
+        <rect x="${p.x}" y="${p.y}" width="${nodeW}" height="${nodeH}" rx="14" class="flow-node-card" />
+        <rect x="${p.x}" y="${p.y}" width="${nodeW}" height="${headerH}" rx="14" class="flow-node-header" fill="${st.header}" />
+        <rect x="${p.x}" y="${p.y + headerH - 7}" width="${nodeW}" height="7" class="flow-node-header" fill="${st.header}" />
+        <text x="${p.x + pad}" y="${p.y + 15}" class="flow-node-type">${esc(st.label)}</text>
+        <text x="${p.x + pad}" y="${p.y + 44}" class="flow-node-title">${esc(title)}</text>
+        <text x="${p.x + pad}" y="${p.y + 62}" class="flow-node-sub">${esc(whoShort)}</text>
+        <circle cx="${inX}" cy="${midY}" r="5" class="flow-port" />
+        <circle cx="${outX}" cy="${midY}" r="5" class="flow-port" />
+      </g>
+    </g>`;
+  }).join('');
+  return `<div class="task-map-panel">
+    <p class="text-muted text-sm tab-hint">${editable ? 'Click a node to open task. Link dependencies via "Blocked by" in task details.' : 'Task dependency flow diagram.'}</p>
+    <div class="task-map-scroll">
+      <svg class="task-map-svg" viewBox="0 0 ${maxX} ${maxY}" preserveAspectRatio="xMinYMin meet">
+        <defs>
+          <pattern id="flow-grid" width="28" height="28" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="1.5" fill="rgba(148,163,184,0.28)" />
+          </pattern>
+          <marker id="flow-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3.5" orient="auto">
+            <path d="M0,0 L8,3.5 L0,7 Z" fill="rgba(56,189,248,0.9)" />
+          </marker>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#flow-grid)" />
+        ${edgeLines}${nodes}
+      </svg>
+    </div>
+  </div>`;
+}
+
+async function renderCalendarPage() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  const monthDate = _parseCalendarMonth(state.calendarMonth || _calendarMonthKey(new Date()));
+  state.calendarMonth = _calendarMonthKey(monthDate);
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthLabel = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const rangeStart = new Date(year, month, 1).toISOString();
+  const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+  const [events, { tasks, projects }, users] = await Promise.all([
+    DB.getCalendarEvents({ from: rangeStart, to: rangeEnd }),
+    getWorkspaceData(),
+    getUsersCached()
+  ]);
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const dayMap = {};
+  const addToDay = (key, item) => {
+    if (!dayMap[key]) dayMap[key] = [];
+    dayMap[key].push(item);
+  };
+  events.forEach(ev => {
+    const key = (ev.startsAt || '').slice(0, 10);
+    if (key) addToDay(key, { kind: 'event', ...ev });
+  });
+  tasks.filter(t => t.dueDate).forEach(t => {
+    const key = t.dueDate.slice(0, 10);
+    const p = projects.find(pr => pr.id === t.projectId);
+    addToDay(key, { kind: 'due', title: t.title, projectName: p?.name || 'Project', id: t.id, projectId: t.projectId });
+  });
+  users.filter(u => u.birthDate).forEach(u => {
+    const bd = u.birthDate.slice(5);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      if (key.slice(5) === bd) addToDay(key, { kind: 'birthday', title: `${u.displayName || u.username}'s birthday`, userId: u.id });
+    }
+  });
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push('<div class="cal-cell cal-cell-empty"></div>');
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const items = dayMap[key] || [];
+    const isToday = key === todayKey;
+    const isSelected = state.calendarSelectedDay === key;
+    cells.push(`<button type="button" class="cal-cell${isToday ? ' cal-cell-today' : ''}${isSelected ? ' cal-cell-selected' : ''}" data-action="calendar-select-day" data-day="${key}">
+      <span class="cal-day-num">${d}</span>
+      <div class="cal-day-dots">${items.slice(0, 3).map(it => `<span class="cal-dot cal-dot--${it.kind}"></span>`).join('')}</div>
+    </button>`);
+  }
+  const selectedItems = state.calendarSelectedDay ? (dayMap[state.calendarSelectedDay] || []) : [];
+  const sideHtml = state.calendarSelectedDay ? `
+    <section class="dash-panel cal-side-panel">
+      <div class="dash-panel-head"><h3>${formatDateShort(state.calendarSelectedDay)}</h3>
+        <button type="button" class="btn btn-sm btn-primary" data-action="add-calendar-event" data-day="${state.calendarSelectedDay}">${ICONS.plus} Event</button>
+      </div>
+      <div class="cal-side-list">
+        ${selectedItems.length ? selectedItems.map(it => {
+          if (it.kind === 'event') {
+            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">${esc(it.description || 'Team event')}</span>
+              <button type="button" class="btn-icon" data-action="delete-calendar-event" data-id="${it.id}" title="Delete">${ICONS.trash}</button></div>`;
+          }
+          if (it.kind === 'due') {
+            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">Due · ${esc(it.projectName)}</span>
+              <a href="#/projects/${it.projectId}" class="btn btn-sm btn-ghost">Open</a></div>`;
+          }
+          if (it.kind === 'birthday') {
+            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong>
+              <button type="button" class="btn btn-sm btn-ghost" data-action="show-user-profile" data-user-id="${it.userId}">Profile</button></div>`;
+          }
+          return '';
+        }).join('') : '<p class="text-muted text-sm">Nothing scheduled this day.</p>'}
+      </div>
+    </section>` : '';
+  content.innerHTML = `
+    <div class="view-page calendar-page">
+      <div class="projects-page-header">
+        <div class="projects-page-title"><h1>Calendar</h1><span class="projects-page-count">${monthLabel}</span></div>
+        <div class="cal-toolbar">
+          <button type="button" class="btn btn-ghost" data-action="calendar-prev-month">${ICONS.arrowLeft}</button>
+          <button type="button" class="btn btn-ghost" data-action="calendar-today">Today</button>
+          <button type="button" class="btn btn-ghost" data-action="calendar-next-month">→</button>
+        </div>
+      </div>
+      <div class="calendar-layout">
+        <section class="dash-panel cal-grid-panel">
+          <div class="cal-weekdays"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+          <div class="cal-grid">${cells.join('')}</div>
+        </section>
+        ${sideHtml}
+      </div>
+    </div>`;
+}
+
+function showAddCalendarEventModal(dayKey) {
+  showModal('Add calendar event', `
+    <form data-form="add-calendar-event" data-day="${esc(dayKey)}">
+      <div class="form-group"><label>Title</label><input name="title" type="text" required placeholder="Team meeting"></div>
+      <div class="form-group"><label>Description</label><textarea name="description" rows="2" class="fixed-textarea" placeholder="Optional details"></textarea></div>
+      <div class="form-group"><label><input name="allDay" type="checkbox" checked> All day</label></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save event</button></div>
+    </form>`);
+}
+
 async function renderActivityPage() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
@@ -5315,8 +6216,122 @@ async function renderActivityPage() {
     </div>`;
 }
 
+async function renderAboutPage() {
+  const content = document.getElementById('content');
+  const version = getAppVersion();
+  const ascii = `
+ ██████╗ ██████╗ ██████╗ ██╗████████╗ █████╗ ███████╗██╗  ██╗
+██╔═══██╗██╔══██╗██╔══██╗██║╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝
+██║   ██║██████╔╝██████╔╝██║   ██║   ███████║███████╗█████╔╝
+██║   ██║██╔══██╗██╔══██╗██║   ██║   ██╔══██║╚════██║██╔═██╗
+╚██████╔╝██║  ██║██████╔╝██║   ██║   ██║  ██║███████║██║  ██╗
+ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝`;
+
+  const releases = [
+    { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
+    { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
+    { version: '2.2.21', date: 'May 2026', features: ['Fixed self-DM routing bug', 'Enhanced message delivery tracking'] },
+    { version: '2.2.20', date: 'May 2026', features: ['Branding updated to Orbitask', 'UI refinements'] }
+  ];
+
+  content.innerHTML = `
+    <div class="about-page">
+      <div class="about-hero" style="background: linear-gradient(135deg, rgba(15,118,110,0.1) 0%, rgba(34,197,94,0.05) 100%); padding: 40px 30px; border-radius: var(--radius-lg); margin-bottom: 30px; text-align: center">
+        <pre style="font-family:monospace;font-size:11px;margin:0 0 20px;color:var(--text-muted);overflow-x:auto">${ascii}</pre>
+        <h1 style="margin:0 0 8px">Orbitask</h1>
+        <p style="margin:0;color:var(--text-secondary)">Team Project & Task Management Platform</p>
+        <p style="margin:6px 0 0;font-size:0.9rem;color:var(--text-muted)">Version ${esc(version)} · Designed for fast-moving teams</p>
+      </div>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>About Orbitask</h3></div>
+        <p>Orbitask is a powerful, open-source team project and task management platform designed from the ground up for teams that move fast. Built with vanilla JavaScript and Supabase, it combines the speed of local-first databases with secure cloud synchronization.</p>
+        <p>Whether you're managing software projects, coordinating team workflows, or tracking department initiatives, Orbitask provides the tools you need without the bloat of enterprise platforms.</p>
+      </section>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>Core Features</h3></div>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon">📁</div>
+            <strong>Projects</strong>
+            <p>Create projects, track status from planning to completion, set milestones, and filter by department.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">✅</div>
+            <strong>Tasks</strong>
+            <p>List, Board, Timeline, and Flow diagram views. Drag-to-reorder, priority sorting, and dependency tracking.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📝</div>
+            <strong>Rich Notes</strong>
+            <p>Add formatted notes to tasks with bold, italics, lists, and links. Persistent, auto-saved editing.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📎</div>
+            <strong>File Attachments</strong>
+            <p>Drag & drop files, image previews, and full document support on projects and individual tasks.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📊</div>
+            <strong>Dashboard & Reports</strong>
+            <p>Admin telemetry, monthly reports with PDF export, activity logs, and team analytics.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">👥</div>
+            <strong>Team Activity Map</strong>
+            <p>Interactive D3.js visualization showing team member activity, online status, and engagement levels.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💬</div>
+            <strong>Real-time Chat</strong>
+            <p>Team channels and direct messaging with Discord webhook integration for notifications.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🔔</div>
+            <strong>Smart Notifications</strong>
+            <p>Get notified of assignments, completions, and project updates with customizable preferences.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>Latest Updates</h3></div>
+        <div class="releases-timeline">
+          ${releases.map((r, i) => `
+            <div class="release-item${i === 0 ? ' release-latest' : ''}">
+              <div class="release-badge">v${r.version}</div>
+              <div class="release-content">
+                <h4>${r.version} · ${r.date}</h4>
+                <ul>${r.features.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>Technology Stack</h3></div>
+        <div class="tech-stack">
+          <div class="tech-item"><strong>Frontend:</strong> Vanilla HTML/CSS/JavaScript</div>
+          <div class="tech-item"><strong>Database:</strong> Dexie.js (IndexedDB) + Supabase (cloud sync)</div>
+          <div class="tech-item"><strong>Libraries:</strong> D3.js (visualizations), Quill.js (rich text), SortableJS (drag-drop), jsPDF (reports)</div>
+          <div class="tech-item"><strong>Desktop:</strong> Electron</div>
+          <div class="tech-item"><strong>Design:</strong> Custom CSS with theme support (Black & Normal)</div>
+        </div>
+      </section>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>Credits</h3></div>
+        <p><strong>Created by:</strong> Everlasting</p>
+        <p><strong>Email:</strong> <a href="mailto:procurement@subzeromotors.com">procurement@subzeromotors.com</a></p>
+        <p><strong>Built with:</strong> ❤️ for teams that get things done</p>
+      </section>
+    </div>`;
+}
+
 function showAboutModal() {
-  showModal('About WorkTracker', `
+  showModal('About Orbitask', `
     <div class="about-modal">
       <div class="about-logo-row">
         <div class="about-logo-mark">
@@ -5329,7 +6344,7 @@ function showAboutModal() {
           </svg>
         </div>
         <div>
-          <div class="about-app-name">WorkTracker</div>
+          <div class="about-app-name">Orbitask</div>
           <div class="about-version">Version ${esc(getAppVersion())} · Built by Everlasting</div>
         </div>
       </div>
@@ -5361,6 +6376,8 @@ async function showTaskDetailModal(taskId) {
   const assignee = uMap[task.assigneeId];
   const attachments = await DB.getAttachments(task.projectId);
   const taskAtts = attachments.filter(a => Number(a.taskId) === Number(taskId));
+  const siblingTasks = (await DB.getTasks({ projectId: task.projectId })).filter(t => t.id !== taskId);
+  const blockers = await DB.getTaskBlockers(taskId);
 
   const blobUrls = [];
   const filesHtml = taskAtts.map(a => {
@@ -5416,6 +6433,14 @@ async function showTaskDetailModal(taskId) {
           ? `<textarea class="td-notes" data-td="notes" placeholder="Add notes, context, or any details…" rows="2">${esc(task.notes || '')}</textarea>`
           : `<p class="td-notes-view">${task.notes ? esc(task.notes) : '<span class="text-muted">No notes.</span>'}</p>`}
       </div>
+      ${editable && siblingTasks.length ? `
+      <div class="td-section">
+        <span class="td-section-label">Blocked by</span>
+        <select class="td-select" data-td="blockedBy" multiple size="${Math.min(5, siblingTasks.length)}">
+          ${siblingTasks.map(st => `<option value="${st.id}" ${blockers.includes(st.id) ? 'selected' : ''}>${esc(st.title)} (${st.status})</option>`).join('')}
+        </select>
+        <p class="text-muted text-sm" style="margin-top:6px">Hold Ctrl/Cmd to select multiple predecessor tasks.</p>
+      </div>` : ''}
       ${editable ? `
       <div class="td-section" id="td-custom-fields-section">
         <div class="td-section-header">
@@ -5426,12 +6451,15 @@ async function showTaskDetailModal(taskId) {
           ${(task.customFields||[]).map((f,i) => `
             <div class="td-cf-row" data-cf-index="${i}">
               <input class="td-cf-label" type="text" value="${esc(f.label)}" placeholder="Field name" data-cf="label" data-idx="${i}">
-              <input class="td-cf-value" type="text" value="${esc(f.value)}" placeholder="Value" data-cf="value" data-idx="${i}">
+              ${f.type === 'checkbox'
+                ? `<input class="td-cf-value" type="checkbox" value="true" ${String(f.value) === 'true' || f.value === true ? 'checked' : ''} data-cf="value" data-idx="${i}">`
+                : `<input class="td-cf-value" type="${f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}" value="${esc(f.value)}" placeholder="${f.required ? 'Required value' : 'Value'}" data-cf="value" data-idx="${i}">`}
               <label class="td-cf-pin" title="Show this field in the main project description">
                 <input type="checkbox" data-cf="showInProject" data-idx="${i}" ${f.showInProject ? 'checked' : ''}>
                 <span class="td-cf-pin-box">${ICONS.checkCircle}</span>
                 <span class="td-cf-pin-text">Show in project</span>
               </label>
+              ${f.required ? '<span class="td-cf-required">Required</span>' : ''}
               <button type="button" class="btn-icon td-cf-del" data-cf-del="${i}" title="Remove field">${ICONS.trash}</button>
             </div>`).join('')}
         </div>
@@ -5590,10 +6618,20 @@ async function handleFormSubmit(e) {
         // generic bulk rows so steps are not duplicated without step keys.
         const bulkTitles = isLogisticsCreate ? [] : [...document.querySelectorAll('input[name="bulk_task[]"]')]
           .map(i => i.value.trim()).filter(Boolean);
+        let templateFields = [];
+        try { templateFields = JSON.parse(fd.get('templateFields') || '[]'); } catch (_) { templateFields = []; }
+        const seededFields = (templateFields || []).map(field => ({
+          key: field.key || '',
+          label: field.label || 'Field',
+          type: field.type || 'text',
+          value: '',
+          required: !!field.required,
+          showInProject: !!field.showOnCard
+        }));
         let tasksFailed = 0;
         for (const title of bulkTitles) {
           try {
-            await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, actorUserId: uid });
+            await DB.createTask({ projectId: nid, title, status: 'todo', priority: 'medium', assigneeId: data.ownerId || uid, customFields: seededFields, actorUserId: uid });
           } catch (err) {
             console.warn('Task creation failed:', title, err);
             tasksFailed++;
@@ -5712,7 +6750,7 @@ async function handleFormSubmit(e) {
         const msg = `Your bug report "${existing.title}" was marked ${STATUS_LABEL[status] || status}.${resolutionNote ? ` Note: ${resolutionNote}` : ''}`;
         await notifyUser({ userId: existing.userId, type: 'bug_report', message: msg, entityType: 'bug_report', entityId: bugId, actorUserId: uid }).catch(() => {});
       }
-      await renderAdmin();
+      await renderAdminTabbed();
       showToast('Bug ticket updated', 'success');
     } else if (type === 'reassign-task') {
       const taskId = Number(form.dataset.taskId);
@@ -5859,12 +6897,28 @@ async function handleFormSubmit(e) {
       const role = fd.get('role');
       const department = fd.get('department') || '';
       const color = fd.get('color') || '';
+      const birthDate = fd.get('birthDate') || '';
+      const gender = fd.get('gender') || '';
+      const phone = (fd.get('phone') || '').toString().trim();
       if (!username || !password || password.length < 4) { showToast('Fill all fields (pw min 4 chars)', 'warning'); return; }
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
-      await DB.createUser({ username, displayName, email, password, role, department, color });
+      await DB.createUser({ username, displayName, email, password, role, department, color, birthDate, gender, phone });
       bustWorkspaceCache();
       showToast('User created', 'success');
+    } else if (type === 'add-calendar-event') {
+      const dayKey = form.dataset.day;
+      const title = fd.get('title')?.trim();
+      const description = fd.get('description')?.trim() || '';
+      const allDay = !!fd.get('allDay');
+      if (!title || !dayKey) { showToast('Title required', 'warning'); return; }
+      const startsAt = allDay ? `${dayKey}T00:00:00.000Z` : `${dayKey}T09:00:00.000Z`;
+      await DB.createCalendarEvent({ title, description, startsAt, allDay, createdBy: actorId(), visibility: 'team' }, actorId());
+      state.calendarSelectedDay = dayKey;
+      showToast('Event added', 'success');
+      hideModal();
+      if (window.location.hash.slice(1) === '/calendar') await renderCalendarPage();
+      return;
     } else if (type === 'reset-pw') {
       const pw = fd.get('password'); const confirm = fd.get('confirm');
       if (!pw || pw.length < 4) { showToast('Password min 4 characters', 'warning'); return; }
@@ -5880,6 +6934,11 @@ async function handleFormSubmit(e) {
       const department = fd.get('department') || '';
       const discordId = (fd.get('discordId') || '').toString().trim();
       const color = (fd.get('color') || '').toString().trim();
+      const birthDate = fd.get('birthDate') || '';
+      const gender = fd.get('gender') || '';
+      const phone = (fd.get('phone') || '').toString().trim();
+      const address = (fd.get('address') || '').toString().trim();
+      const hoursLoggedTotal = Math.max(0, Number(fd.get('hoursLoggedTotal') || 0));
       const role = fd.get('role');
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
@@ -5887,7 +6946,7 @@ async function handleFormSubmit(e) {
       if (discordId && !/^\d{6,30}$/.test(discordId)) { showToast('Discord ID must be a numeric snowflake (e.g. 123456789012345678)', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
-      const changes = { username, displayName, email, department, discordId, color };
+      const changes = { username, displayName, email, department, discordId, color, birthDate, gender, phone, address, hoursLoggedTotal };
       if (!isSelf && role) changes.role = role;
       try {
         await DB.updateUser(targetId, changes, s.userId);
@@ -5909,8 +6968,12 @@ async function handleFormSubmit(e) {
       const bio = fd.get('bio')?.trim() || '';
       const color = fd.get('color') || '';
       const avatarBase64 = fd.get('avatarBase64') || '';
+      const birthDate = fd.get('birthDate') || '';
+      const gender = fd.get('gender') || '';
+      const phone = (fd.get('phone') || '').toString().trim();
+      const address = (fd.get('address') || '').toString().trim();
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, bio, avatarBase64, ...(color && { color }) };
+      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, ...(color && { color }) };
       if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
@@ -5948,9 +7011,10 @@ async function handleFormSubmit(e) {
       const name = fd.get('name')?.trim();
       if (!name) return;
       const steps = parseTemplateSteps(fd.get('steps'));
-      await DB.createWorkflowTemplate({ name, description: fd.get('description')?.trim() || '', steps, createdBy: actorId(), actorUserId: actorId() });
+      const fields = parseTemplateFields(fd.get('fields'));
+      await DB.createWorkflowTemplate({ name, description: fd.get('description')?.trim() || '', steps, fields, createdBy: actorId(), actorUserId: actorId() });
       showToast('Template created', 'success');
-      await renderSettings();
+      await (window.location.hash.slice(1).startsWith('/admin') ? renderAdminTabbed() : renderSettings());
       return;
     } else if (type === 'edit-workflow-template') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5958,9 +7022,10 @@ async function handleFormSubmit(e) {
       const name = fd.get('name')?.trim();
       if (!id || !name) return;
       const steps = parseTemplateSteps(fd.get('steps'));
-      await DB.updateWorkflowTemplate(id, { name, description: fd.get('description')?.trim() || '', steps });
+      const fields = parseTemplateFields(fd.get('fields'));
+      await DB.updateWorkflowTemplate(id, { name, description: fd.get('description')?.trim() || '', steps, fields });
       showToast('Template saved', 'success');
-      await renderSettings();
+      await (window.location.hash.slice(1).startsWith('/admin') ? renderAdminTabbed() : renderSettings());
       return;
     } else if (type === 'add-classroom') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -5983,7 +7048,7 @@ async function handleFormSubmit(e) {
       if (!p) return;
       const tasks = sortTasksByOrder(await DB.getTasks({ projectId: pid }));
       const steps = tasks.map(t => ({ title: t.title, priority: t.priority || 'medium' }));
-      await DB.createWorkflowTemplate({ name, description: `Saved from "${p.name}"`, steps, createdBy: actorId(), actorUserId: actorId() });
+      await DB.createWorkflowTemplate({ name, description: `Saved from "${p.name}"`, steps, fields: [], createdBy: actorId(), actorUserId: actorId() });
       hideModal();
       showToast(`Saved "${name}" with ${steps.length} task${steps.length === 1 ? '' : 's'}`, 'success');
       return;
@@ -5994,7 +7059,7 @@ async function handleFormSubmit(e) {
       hideModal();
       bustWorkspaceCache();
       showToast('Classrooms updated', 'success');
-      await renderAdmin();
+      await renderAdminTabbed();
       return;
     } else if (type === 'set-master-key') {
       if (!isAdmin()) { showToast('Permission denied', 'error'); return; }
@@ -6024,6 +7089,39 @@ const actions = {
   'open-notes': () => (_notesPanelOpen ? closeNotesPanel() : openNotesPanel()),
   'close-notes': () => closeNotesPanel(),
   'app-refresh': () => { closeUserMenu(); location.reload(); },
+  'reload-and-sync': async () => {
+    closeUserMenu();
+    if (isCloudMode()) {
+      showToast('Syncing before reload...', 'info');
+      try {
+        if (window.SyncEngineV3) await SyncEngineV3.pull();
+        else if (window.SyncEngine) {
+          await SyncEngine.pull();
+          if (SyncEngine.flush) await SyncEngine.flush();
+        } else if (DB.retrySyncNow) {
+          await DB.retrySyncNow();
+        }
+      } catch (err) {
+        console.warn('[reload-and-sync] sync failed before reload', err);
+      }
+    }
+    location.reload();
+  },
+  'toggle-theme-mode': (btn) => {
+    toggleThemeMode();
+    closeUserMenu();
+    updateSidebarUser();
+    const themeBtn = btn?.closest?.('[data-action="toggle-theme-mode"]') || document.querySelector('[data-action="toggle-theme-mode"]');
+    if (themeBtn) {
+      themeBtn.classList.remove('theme-toggle-spin');
+      void themeBtn.offsetWidth;
+      themeBtn.classList.add('theme-toggle-spin');
+    }
+    const hash = window.location.hash.slice(1) || '/projects';
+    if (hash === '/users' || hash.startsWith('/projects/') || hash === '/admin') {
+      router().catch(() => {});
+    }
+  },
   'toggle-route-settings': () => {
     const route = window.location.hash.slice(1) || '/projects';
     window.location.hash = route === '/settings' ? `#${state.lastMainRoute || '/projects'}` : '#/settings';
@@ -6035,6 +7133,10 @@ const actions = {
   'toggle-route-admin': () => {
     const route = window.location.hash.slice(1) || '/projects';
     window.location.hash = route === '/admin' ? `#${state.lastMainRoute || '/projects'}` : '#/admin';
+  },
+  'admin-tab': async (b) => {
+    state.adminTab = b.dataset.tab || 'overview';
+    await renderAdminTabbed();
   },
   'add-personal-note': async () => {
     const uid = getSession()?.userId;
@@ -6085,6 +7187,19 @@ const actions = {
     const uid = actorId();
     const projectTasks = await DB.getTasks({ projectId: t.projectId });
     const projectAttachments = await DB.getAttachments(t.projectId);
+    if (nextStatus === 'done') {
+      const missing = missingRequiredTaskFields(t);
+      if (missing.length) {
+        showToast(`Complete required fields first: ${missing.slice(0, 3).join(', ')}`, 'warning');
+        await showTaskDetailModal(t.id);
+        return;
+      }
+      const blockersDone = await DB.areTaskBlockersDone(t.id);
+      if (!blockersDone) {
+        showToast('Complete blocking tasks first', 'warning');
+        return;
+      }
+    }
     const blockedReason = validateLogisticsTaskTransition(t, nextStatus, p, projectTasks, projectAttachments);
     if (blockedReason) { showToast(blockedReason, 'warning'); return; }
     await DB.updateTask(t.id, { status: nextStatus }, uid);
@@ -6167,7 +7282,36 @@ const actions = {
   'edit-my-profile': async () => { await showProfileModal(); },
   'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
-  'toggle-help-menu': () => { state.helpMenuOpen = !state.helpMenuOpen; updateSidebarUser(); },
+  'goto-support': () => { closeUserMenu(); window.location.hash = '#/support'; },
+  'calendar-prev-month': async () => {
+    const d = _parseCalendarMonth(state.calendarMonth);
+    d.setMonth(d.getMonth() - 1);
+    state.calendarMonth = _calendarMonthKey(d);
+    await renderCalendarPage();
+  },
+  'calendar-next-month': async () => {
+    const d = _parseCalendarMonth(state.calendarMonth);
+    d.setMonth(d.getMonth() + 1);
+    state.calendarMonth = _calendarMonthKey(d);
+    await renderCalendarPage();
+  },
+  'calendar-today': async () => {
+    const now = new Date();
+    state.calendarMonth = _calendarMonthKey(now);
+    state.calendarSelectedDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    await renderCalendarPage();
+  },
+  'calendar-select-day': async (b) => {
+    state.calendarSelectedDay = b.dataset.day;
+    await renderCalendarPage();
+  },
+  'add-calendar-event': (b) => showAddCalendarEventModal(b.dataset.day || state.calendarSelectedDay || _calendarMonthKey(new Date()) + '-01'),
+  'delete-calendar-event': async (b) => {
+    if (!confirm('Delete this event?')) return;
+    await DB.deleteCalendarEvent(Number(b.dataset.id), actorId());
+    showToast('Event deleted', 'success');
+    await renderCalendarPage();
+  },
   'check-updates': () => {
     closeUserMenu();
     if (window.workTrackerDesktop?.checkForUpdates) {
@@ -6345,7 +7489,8 @@ const actions = {
     localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
     resetClientState();
     clearSession({ trusted: true });
-    window.SupabaseDB?.signOutSupabase?.().catch(() => {});
+    if (isV3Mode()) window.SyncEngineV3?.signOut?.().catch(() => {});
+    else window.SupabaseDB?.signOutSupabase?.().catch(() => {});
     wtAppBootstrapped = false;
     window.location.hash = '';
     await applyRoute();
@@ -6371,14 +7516,41 @@ const actions = {
       const assigneeIdRaw = document.querySelector('[data-td="assigneeId"]')?.value;
       const assigneeId = assigneeIdRaw ? Number(assigneeIdRaw) : null;
       const notes = document.querySelector('[data-td="notes"]')?.value?.trim() || '';
-      const cfRows = document.querySelectorAll('.td-cf-row');
-      const customFields = [...cfRows].map(row => ({
-        label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
-        value: row.querySelector('[data-cf="value"]')?.value?.trim() || '',
-        showInProject: !!row.querySelector('[data-cf="showInProject"]')?.checked
-      })).filter(f => f.label || f.value);
       const uid = actorId();
       const oldTask = await DB.getTask(taskId);
+      const cfRows = document.querySelectorAll('.td-cf-row');
+      const customFields = [...cfRows].map(row => {
+        const idx = Number(row.dataset.cfIndex || row.querySelector('[data-cf="label"]')?.dataset.idx || 0);
+        const prev = oldTask?.customFields?.[idx] || {};
+        const valueEl = row.querySelector('[data-cf="value"]');
+        return {
+          ...prev,
+          label: row.querySelector('[data-cf="label"]')?.value?.trim() || '',
+          value: valueEl?.type === 'checkbox' ? (valueEl.checked ? 'true' : '') : (valueEl?.value?.trim() || ''),
+          showInProject: !!row.querySelector('[data-cf="showInProject"]')?.checked
+        };
+      }).filter(f => f.label || f.value || f.required);
+      const blockerSel = document.querySelector('[data-td="blockedBy"]');
+      if (blockerSel) {
+        const blockerIds = [...blockerSel.selectedOptions].map(o => Number(o.value));
+        await DB.setTaskBlockedBy(taskId, blockerIds, uid);
+      }
+      if (status === 'done') {
+        const missing = missingRequiredTaskFields(customFields);
+        if (missing.length) {
+          showToast(`Complete required fields first: ${missing.slice(0, 3).join(', ')}`, 'warning');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Changes';
+          return;
+        }
+        const blockersDone = await DB.areTaskBlockersDone(taskId);
+        if (!blockersDone) {
+          showToast('Complete blocking tasks before marking done', 'warning');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Changes';
+          return;
+        }
+      }
       const activityDetails = customFieldActivitySummary(oldTask?.customFields || [], customFields);
       const changes = { dueDate, notes, customFields };
       if (activityDetails) changes.activityDetails = activityDetails;
@@ -6568,7 +7740,7 @@ const actions = {
     await router();
   },
   'add-user': () => showAddUserModal(),
-  'edit-user': (b) => showEditUserModal(Number(b.dataset.id)),
+  'edit-user': (b) => showEditUserModalBlack(Number(b.dataset.id)),
   'edit-user-classrooms': (b) => showUserClassroomsModal(Number(b.dataset.id)),
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
   'delete-user': async (b) => {
@@ -6587,7 +7759,7 @@ const actions = {
     if (!confirm('Delete this workflow template? Projects already created keep their tasks.')) return;
     await DB.deleteWorkflowTemplate(id);
     showToast('Template deleted', 'success');
-    await renderSettings();
+    await (window.location.hash.slice(1).startsWith('/admin') ? renderAdminTabbed() : renderSettings());
   },
   'delete-department': async (b) => {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -6683,7 +7855,7 @@ const actions = {
       if (list) list.innerHTML = chatDockListBodyHtml();
     }
   },
-  'export-report-csv': async () => { await exportMonthlyReportCsv(); },
+  'export-report-pdf': async () => { await exportMonthlyReportPdf(); },
   'generate-ai-report': async () => { await generateAIReport(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
   'test-webhook': async (b) => {
@@ -6726,6 +7898,88 @@ function showToast(msg, type = 'info') {
   setTimeout(() => { t.classList.remove('toast-visible'); setTimeout(() => t.remove(), 300); }, 3200);
 }
 
+let _lastAutoErrorAt = 0;
+
+async function reportClientError(kind, error, context = {}) {
+  const now = Date.now();
+  if (now - _lastAutoErrorAt < 8000) return;
+  _lastAutoErrorAt = now;
+
+  const session = getSession?.();
+  const payload = {
+    user_id: session?.userId || null,
+    kind: kind || 'client_error',
+    message: String(error?.message || error || 'Unknown error').slice(0, 1000),
+    stack: String(error?.stack || '').slice(0, 8000),
+    route: window.location.hash || '',
+    app_version: window.WT_APP_VERSION || '',
+    user_agent: navigator.userAgent || '',
+    context
+  };
+
+  try {
+    const client = window.SyncEngineV3?.getClient?.() || window.SyncEngine?.getClient?.() || window.SupabaseDB?._client;
+    if (client?.from) {
+      let result = await client.from('error_reports').insert(payload);
+      if (!result.error) return;
+      result = await client.from('wt_error_reports').insert(payload);
+      if (!result.error) return;
+    }
+  } catch (_) {}
+
+  try {
+    if (DB?.createBugReport) {
+      const reportId = await DB.createBugReport({
+        userId: payload.user_id,
+        title: `Auto error: ${payload.message.slice(0, 80)}`,
+        description: [
+          payload.message,
+          '',
+          payload.stack,
+          '',
+          `Route: ${payload.route}`,
+          `Version: ${payload.app_version}`,
+          `Context: ${JSON.stringify(context).slice(0, 1500)}`
+        ].join('\n'),
+        severity: 'high',
+        appVersion: payload.app_version,
+        screenshots: []
+      });
+      const users = DB.getUsers ? await DB.getUsers().catch(() => []) : [];
+      for (const admin of users.filter(u => u.role === 'admin')) {
+        await DB.createNotification?.({
+          userId: admin.id,
+          actorUserId: payload.user_id,
+          type: 'bug_report',
+          entityType: 'bug_report',
+          entityId: reportId,
+          message: `Automatic error report: ${payload.message.slice(0, 120)}`
+        }).catch(() => {});
+      }
+    }
+  } catch (fallbackError) {
+    console.warn('[error-report] failed', fallbackError);
+  }
+}
+
+function installGlobalErrorReporting() {
+  if (window._wtErrorReportingInstalled) return;
+  window._wtErrorReportingInstalled = true;
+  window.addEventListener('error', (event) => {
+    reportClientError('window_error', event.error || event.message, {
+      source: event.filename,
+      line: event.lineno,
+      column: event.colno
+    });
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    reportClientError('unhandled_rejection', event.reason, {});
+  });
+  window.addEventListener('wt-sync-error', (event) => {
+    reportClientError('sync_error', event.detail?.error || 'Cloud sync failed', event.detail || {});
+  });
+}
+
 function revokeLibraryPreviewUrls() {
   if (state._libraryBlobUrls?.length) {
     state._libraryBlobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
@@ -6743,11 +7997,20 @@ let _presenceTimer = null;
 function startPresenceHeartbeat() {
   stopPresenceHeartbeat();
   const beat = () => {
+    if (document.visibilityState === 'hidden') return;
     const uid = actorId();
     if (uid && DB.touchLastSeen) DB.touchLastSeen(uid).catch(() => {});
   };
   beat();
   _presenceTimer = setInterval(beat, 60 * 1000);
+  if (!window._wtPresenceVisHook) {
+    window._wtPresenceVisHook = true;
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(); });
+    window.addEventListener('beforeunload', () => {
+      const uid = actorId();
+      if (uid && DB.recordActiveMinute) DB.recordActiveMinute(uid, 1).catch(() => {});
+    });
+  }
 }
 function stopPresenceHeartbeat() {
   if (_presenceTimer) { clearInterval(_presenceTimer); _presenceTimer = null; }
@@ -6866,11 +8129,13 @@ async function renderUsers() {
     </div>`;
   }).join('');
 
+  const heatmapHtml = users.length ? await buildTeamActivityHeatmapHtml(users) : '';
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} · ranked by contribution</p></div>
       <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
     </div>
+    ${heatmapHtml}
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
 }
@@ -6895,8 +8160,10 @@ async function router() {
   if (content) content.classList.add('content-fade');
   if (hash === '/' || hash === '/projects') await renderProjects();
   else if (hash === '/dashboard') {
-    if (isAdmin()) await renderAdminDashboard();
-    else await renderProjects();
+    if (isAdmin()) {
+      await renderAdminDashboard();
+      requestAnimationFrame(() => initializeTeamActivityD3());
+    } else await renderProjects();
   }
   else if (hash === '/reports') {
     if (isAdmin()) await renderReportsPage();
@@ -6914,7 +8181,10 @@ async function router() {
   else if (hash === '/chat') await renderChat();
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/activity') await renderActivityPage();
-  else if (hash === '/admin') await renderAdmin();
+  else if (hash === '/support') await renderSupportPage();
+  else if (hash === '/calendar') await renderCalendarPage();
+  else if (hash === '/about') await renderAboutPage();
+  else if (hash === '/admin') await renderAdminTabbed();
   else if (hash === '/settings') await renderSettings();
   else window.location.hash = '#/projects';
   requestAnimationFrame(() => {
@@ -6998,7 +8268,7 @@ async function applyRoute() {
     savedSession = getActiveSession();
   }
 
-  if (!savedSession || !isOffline()) {
+  if ((!savedSession || !isOffline()) && !isV3Mode()) {
     let hasUsers = true;
     try {
       hasUsers = await DB.hasUsers();
@@ -7013,6 +8283,7 @@ async function applyRoute() {
         document.getElementById('auth-screen').style.display = 'flex';
         renderLogin();
         showAuthError('You are offline. Sign in once while online to keep this device remembered.');
+        requestSplashDismiss();
         return;
       }
       if (!savedSession || !isOffline()) throw err;
@@ -7022,6 +8293,7 @@ async function applyRoute() {
       document.getElementById('menu-toggle').style.display = 'none';
       document.getElementById('auth-screen').style.display = 'flex';
       renderAdminSetup();
+      requestSplashDismiss();
       return;
     }
   }
@@ -7031,6 +8303,7 @@ async function applyRoute() {
     document.getElementById('menu-toggle').style.display = 'none';
     document.getElementById('auth-screen').style.display = 'flex';
     await renderRecovery();
+    requestSplashDismiss();
     return;
   }
   const s = savedSession;
@@ -7043,6 +8316,7 @@ async function applyRoute() {
       document.getElementById('menu-toggle').style.display = 'none';
       document.getElementById('auth-screen').style.display = 'flex';
       renderLogin();
+      requestSplashDismiss();
       return;
     }
     if (!isOffline()) setSession(user, { remember: !!getTrustedSession() });
@@ -7062,6 +8336,7 @@ async function applyRoute() {
   document.getElementById('menu-toggle').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
   renderLogin();
+  requestSplashDismiss();
 }
 
 /* ──── Realtime event handlers ──── */
@@ -7158,8 +8433,7 @@ function setupRealtimeHandlers() {
   window.addEventListener('wt-realtime-bug-report', (e) => {
     const { row, eventType } = e.detail || {};
     if (!row || eventType !== 'INSERT') return;
-    const me = getSession();
-    if (!me?.isAdmin) return;
+    if (!isAdmin()) return;
     NotificationSounds?.play?.('bug_report');
     showToast(`Bug report: "${row.title}" (${row.severity})`, 'warning');
     if (document.querySelector('.admin-bugs-panel, [data-section="bugs"]')) {
@@ -7225,6 +8499,7 @@ function onSyncPulled() {
 
 async function init() {
   try {
+    installGlobalErrorReporting();
     if (window.WT_SUPABASE_ERROR) {
       showToast('Cloud database unavailable — using browser-only storage for now.', 'warning');
     }
@@ -7425,9 +8700,10 @@ async function init() {
   }
 }
 
-// Safety net: never leave the splash up longer than 6 s
-setTimeout(hideSplash, 6000);
+// Safety net: force dismiss after 12s if boot hangs (error path only)
+setTimeout(() => { if (!_splashReady) { _splashReady = true; hideSplash(); } }, 12000);
 
+applyTheme();
 document.documentElement.classList.add('splash-lock');
 document.getElementById('splash')?.classList.add('is-visible');
 
@@ -7436,7 +8712,7 @@ document.getElementById('splash')?.classList.add('is-visible');
     setSplashStatus('Loading local database…');
     await _splashDelay(800);
     await bootstrapDB();
-    if (window.WT_STORAGE_MODE === 'hybrid') {
+    if (window.WT_STORAGE_MODE === 'hybrid' || window.WT_STORAGE_MODE === 'hybrid-v3') {
       setSplashStatus('Connecting to cloud…');
       await _splashDelay(700);
     }
@@ -7450,7 +8726,8 @@ document.getElementById('splash')?.classList.add('is-visible');
     await init();
   } catch (err) {
     console.error('Bootstrap failed:', err);
+    requestSplashDismiss();
   } finally {
-    hideSplash();
+    dismissSplashWhenReady();
   }
 })();
