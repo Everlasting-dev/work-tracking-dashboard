@@ -2512,10 +2512,17 @@ function setupTaskBoardDragDrop(projectId) {
       animation: 150,
       ghostClass: 'board-drag-ghost',
       chosenClass: 'board-drag-chosen',
+      dragClass: 'task-dragging',
       handle: '.drag-handle',
       onEnd: async (evt) => {
+        if (!evt.item || !evt.item.dataset.taskId) return;
         const movedId = Number(evt.item.dataset.taskId);
-        await persistBoardOrder(projectId, movedId);
+        try {
+          await persistBoardOrder(projectId, movedId);
+        } catch (err) {
+          console.error('[Board DnD] persistBoardOrder failed:', err);
+          showToast('Failed to save task order. Please try again.', 'error');
+        }
       }
     });
   });
@@ -2523,20 +2530,39 @@ function setupTaskBoardDragDrop(projectId) {
 
 async function persistBoardOrder(projectId, movedId) {
   const container = document.getElementById('tab-content');
-  if (!container) return;
+  if (!container) {
+    console.warn('[persistBoardOrder] tab-content not found');
+    return;
+  }
   const p = await DB.getProject(projectId);
-  if (!p || !canEdit(p)) return;
+  if (!p || !canEdit(p)) {
+    console.warn('[persistBoardOrder] project not editable or not found');
+    return;
+  }
   const uid = actorId();
 
   // Read the resulting visual order across all columns → assign small 1-based sortOrder.
   const desired = [];
   let order = 1;
-  container.querySelectorAll('.task-board-col-v2').forEach(col => {
+  const cols = container.querySelectorAll('.task-board-col-v2');
+  if (!cols.length) {
+    console.warn('[persistBoardOrder] no task-board-col-v2 found');
+    return;
+  }
+
+  cols.forEach(col => {
     const status = col.dataset.status;
-    col.querySelectorAll('.task-board-card-v2').forEach(card => {
-      desired.push({ id: Number(card.dataset.taskId), status, sortOrder: order++ });
+    const cards = col.querySelectorAll('.task-board-card-v2');
+    cards.forEach(card => {
+      const taskId = Number(card.dataset.taskId);
+      if (taskId) desired.push({ id: taskId, status, sortOrder: order++ });
     });
   });
+
+  if (!desired.length) {
+    console.warn('[persistBoardOrder] no tasks found in desired order');
+    return;
+  }
 
   const tasks = await DB.getTasks({ projectId });
   const byId = Object.fromEntries(tasks.map(t => [t.id, t]));
@@ -2564,6 +2590,7 @@ async function persistBoardOrder(projectId, movedId) {
   }
 
   let movedStatusChanged = false;
+  let updateCount = 0;
   for (const d of desired) {
     const t = byId[d.id];
     if (!t) continue;
@@ -2571,16 +2598,32 @@ async function persistBoardOrder(projectId, movedId) {
     if (t.status !== d.status) changes.status = d.status;
     if ((t.sortOrder ?? 0) !== d.sortOrder) changes.sortOrder = d.sortOrder;
     if (!Object.keys(changes).length) continue;
-    await DB.updateTask(d.id, changes, uid);
-    if (d.id === movedId && changes.status) movedStatusChanged = true;
+
+    try {
+      await DB.updateTask(d.id, changes, uid);
+      updateCount++;
+      if (d.id === movedId && changes.status) {
+        movedStatusChanged = true;
+        console.log(`[persistBoardOrder] Task ${movedId} moved from ${t.status} to ${d.status}`);
+      }
+    } catch (err) {
+      console.error(`[persistBoardOrder] Failed to update task ${d.id}:`, err);
+    }
   }
 
+  console.log(`[persistBoardOrder] Updated ${updateCount} tasks, movedStatusChanged=${movedStatusChanged}`);
+
   if (movedStatusChanged && moved && movedTarget) {
-    await applyTaskStatusSideEffects(p, moved, movedTarget.status, uid, tasks, await DB.getAttachments(projectId));
+    try {
+      await applyTaskStatusSideEffects(p, moved, movedTarget.status, uid, tasks, await DB.getAttachments(projectId));
+    } catch (err) {
+      console.error('[persistBoardOrder] applyTaskStatusSideEffects failed:', err);
+    }
   }
 
   bustWorkspaceCache();
   await renderTab('tasks', projectId, canEdit(p));
+  showToast(`Task${updateCount > 1 ? 's' : ''} saved (${updateCount} updated)`, 'success');
 }
 
 /* Hook fired when a project transitions into the completed state (Phase 6):
