@@ -3014,6 +3014,7 @@ async function renderTab(tab, projectId, editable) {
 
     if (editable) {
       setupTaskBoardDragDrop(projectId);
+      setupTaskDragDropList(projectId);
     }
   } else if (tab === 'timeline') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
@@ -3467,7 +3468,8 @@ async function renderAdminTabbed() {
     DB.getActivityLog ? DB.getActivityLog({ limit: 140 }).catch(() => []) : [],
     DB.hasMasterKey ? DB.hasMasterKey().catch(() => true) : true
   ]);
-  const { users = [], projects = [], tasks = [] } = workspace || {};
+  let { users = [], projects = [], tasks = [] } = workspace || {};
+  users = sortUsersByPresence(users);
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const hiddenDocuments = (await Promise.all(projects.map(async p => {
     const rows = await DB.getAttachments(p.id, { includeHidden: true }).catch(() => []);
@@ -3999,12 +4001,14 @@ function stopChatUnreadPolling() {
 }
 
 async function getChatMessagesForChannel(channelId) {
-  return [];
-  /*
-  if (channelId?.startsWith('dm-')) {
+  if (!channelId) return [];
+  if (channelId.startsWith('dm-')) {
     const otherId = Number(channelId.slice(3));
-    const rows = DB.getDirectMessages ? await DB.getDirectMessages(actorId(), otherId, { limit: 150 }) : [];
-    return rows.map(m => ({
+    const uid = actorId();
+    if (!uid || !otherId) return [];
+    const db = (window.SupabaseDB && !isOffline()) ? window.SupabaseDB : DB;
+    const rows = await db.getDirectMessages(uid, otherId, { limit: 150 }).catch(() => []);
+    return (rows || []).map(m => ({
       id: `dm-${m.id}`,
       userId: m.fromUserId,
       details: m.content,
@@ -4014,21 +4018,12 @@ async function getChatMessagesForChannel(channelId) {
       readAt: m.readAt || null
     }));
   }
-  const [appMsgs, discordMsgs] = await Promise.all([
-    DB.getChatActivityLog ? DB.getChatActivityLog(channelId, { limit: 100 }) : (async () => {
-      const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
-      const log = await DB.getActivityLog({ limit: 200 });
-      let rows = log.filter(e => e.action === 'sent_message' && e.entityType === 'chat');
-      if (channelId === 'general') rows = rows.filter(e => e.projectId == null);
-      else if (Number.isFinite(projectId)) rows = rows.filter(e => e.projectId === projectId);
-      return rows.reverse();
-    })(),
-    DB.getDiscordMessages ? DB.getDiscordMessages(channelId, { limit: 100 }) : Promise.resolve([])
+  const [activity, discord] = await Promise.all([
+    DB.getChatActivityLog(channelId).catch(() => []),
+    DB.getDiscordMessages(channelId).catch(() => [])
   ]);
-  const merged = [...appMsgs, ...discordMsgs];
-  merged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-  return merged.slice(-150);
-  */
+  return [...(activity || []), ...(discord || [])]
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
 }
 
 function _activeChatPane() {
@@ -4222,13 +4217,12 @@ function chatDockListBodyHtml() {
   const filtered = q ? people.filter(u => (u.displayName || u.username || '').toLowerCase().includes(q)) : people;
 
   // Unread DMs bubble to the top section; remove them from their regular section to avoid duplicates
-  const unreadDMs = filtered.filter(u => state.chatUnreadChannels?.has(`dm-${u.id}`));
+  const unreadDMs = sortUsersByPresence(filtered.filter(u => state.chatUnreadChannels?.has(`dm-${u.id}`)));
   const unreadIds = new Set(unreadDMs.map(u => u.id));
 
-  const favs = filtered.filter(u => d.favIds.has(u.id) && !unreadIds.has(u.id));
-  const online = filtered.filter(u => !d.favIds.has(u.id) && isUserOnline(u) && !unreadIds.has(u.id));
-  const others = filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u) && !unreadIds.has(u.id))
-    .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
+  const favs = sortUsersByPresence(filtered.filter(u => d.favIds.has(u.id) && !unreadIds.has(u.id)));
+  const online = sortUsersByPresence(filtered.filter(u => !d.favIds.has(u.id) && isUserOnline(u) && !unreadIds.has(u.id)));
+  const others = sortUsersByPresence(filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u) && !unreadIds.has(u.id)));
 
   const generalIsUnread = state.chatUnreadChannels?.has('general');
   const generalUnreadCount = state.chatUnreadCounts?.['general'] || 0;
@@ -4422,7 +4416,7 @@ async function renderAdminDashboard() {
   const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
 
   content.innerHTML = `
-    <div class="projects-page-header" style="margin-bottom:18px">
+    <div class="projects-page-header">
       <div class="projects-page-title"><h1>Dashboard</h1><span class="projects-page-count">Admin</span></div>
     </div>
     <div class="dash-stats-row">
@@ -4454,7 +4448,7 @@ async function renderAdminDashboard() {
       </div>
     </div>
     <div class="dash-two-col">
-      <div>
+      <div class="dash-left-col">
         <div class="dash-panel">
           <div class="dash-panel-head"><h3>Team</h3><span class="projects-page-count">${users.length} members</span></div>
           ${users.map(u => userRow(u)).join('')}
@@ -4474,7 +4468,7 @@ async function renderAdminDashboard() {
           </div>
         </div>
         ${sessions.length ? `
-        <div class="dash-panel" style="margin-top:14px">
+        <div class="dash-panel">
           <div class="dash-panel-head"><h3>Devices</h3><span class="projects-page-count">${sessions.length}</span></div>
           ${sessions.slice(0, 6).map(row => {
             const u = uMap[row.userId];
@@ -6194,7 +6188,7 @@ async function renderActivityPage() {
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const ACTION_ICON = { created:'🟢', updated:'✏️', deleted:'🗑️', uploaded:'📎', logged_in:'🔑', logged_out:'🚪', noted:'📝', completed:'✅', assigned:'👤', task_done:'✅' };
   content.innerHTML = `
-    <div class="projects-page-header" style="margin-bottom:20px">
+    <div class="projects-page-header">
       <div class="projects-page-title"><h1>Activity Log</h1><span class="projects-page-count">${log.length} entries</span></div>
       <a href="#/dashboard" class="btn btn-ghost">${ICONS.arrowLeft} Back to Dashboard</a>
     </div>
@@ -8015,6 +8009,16 @@ function startPresenceHeartbeat() {
 function stopPresenceHeartbeat() {
   if (_presenceTimer) { clearInterval(_presenceTimer); _presenceTimer = null; }
 }
+function sortUsersByPresence(users) {
+  return [...users].sort((a, b) => {
+    const aOnline = isUserOnline(a) ? 1 : 0;
+    const bOnline = isUserOnline(b) ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+    const aT = a.lastSeenAt ? Date.parse(a.lastSeenAt) : 0;
+    const bT = b.lastSeenAt ? Date.parse(b.lastSeenAt) : 0;
+    return bT - aT;
+  });
+}
 function isUserOnline(user) {
   if (!user?.lastSeenAt) return false;
   const t = Date.parse(user.lastSeenAt);
@@ -8097,7 +8101,15 @@ async function renderUsers() {
     getWorkspaceData(),
   ]);
   const enriched = users.map(u => ({ u, stats: userProfileStats(u.id, projects, tasks) }))
-    .sort((a, b) => b.stats.score - a.stats.score);
+    .sort((a, b) => {
+      const aOnline = isUserOnline(a.u) ? 1 : 0;
+      const bOnline = isUserOnline(b.u) ? 1 : 0;
+      if (aOnline !== bOnline) return bOnline - aOnline;
+      const aT = a.u.lastSeenAt ? Date.parse(a.u.lastSeenAt) : 0;
+      const bT = b.u.lastSeenAt ? Date.parse(b.u.lastSeenAt) : 0;
+      if (aT !== bT) return bT - aT;
+      return b.stats.score - a.stats.score;
+    });
 
   const cards = enriched.map(({ u, stats }, i) => {
     const initials = (u.displayName || u.username || '?').charAt(0).toUpperCase();
