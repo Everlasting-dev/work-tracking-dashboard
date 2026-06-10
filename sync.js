@@ -501,7 +501,7 @@ const SyncEngine = (() => {
         users, projects, tasks, departments, classrooms,
         milestones, updates, notifications, accessRequests, bugReports, userClassrooms,
         attachments, workflowTemplates, favorites, personalNotes,
-        directMessages, chatActivity, discordMessages
+        directMessages, chatActivity, discordMessages, calendarEvents
       ] = await Promise.allSettled([
         sb.getUsers(),
         sb.getProjects(),
@@ -585,6 +585,29 @@ const SyncEngine = (() => {
             createdAt: r.created_at
           }));
         })(),
+        (async () => {
+          const now = new Date();
+          const rangeStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+          const rangeEnd = new Date(now.getFullYear(), now.getMonth() + 3, 0, 23, 59, 59).toISOString();
+          const { data, error } = await sb._sb().from('wt_calendar_events').select('*')
+            .gte('starts_at', rangeStart).lte('starts_at', rangeEnd)
+            .order('starts_at', { ascending: true });
+          if (error) throw error;
+          return (data || []).map(r => ({
+            id: r.id,
+            title: r.title || '',
+            description: r.description || '',
+            startsAt: r.starts_at,
+            endsAt: r.ends_at,
+            allDay: r.all_day || false,
+            createdBy: r.created_by,
+            visibility: r.visibility || 'team',
+            classroomId: r.classroom_id,
+            relatedProjectId: r.related_project_id,
+            relatedTaskId: r.related_task_id,
+            createdAt: r.created_at
+          }));
+        })(),
       ]);
 
       const ldb = window.LocalDB?.db;
@@ -611,6 +634,7 @@ const SyncEngine = (() => {
       if (directMessages.status === 'fulfilled' && ldb.directMessages) await _bulkPut(ldb.directMessages, directMessages.value);
       if (chatActivity.status === 'fulfilled' && ldb.activityLog) await _bulkPut(ldb.activityLog, chatActivity.value);
       if (discordMessages.status === 'fulfilled' && ldb.discordMessages) await _bulkPut(ldb.discordMessages, discordMessages.value);
+      if (calendarEvents.status === 'fulfilled' && ldb.calendarEvents) await _bulkPut(ldb.calendarEvents, calendarEvents.value);
 
       const criticalFailures = [
         ['projects', projects],

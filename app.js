@@ -6168,6 +6168,12 @@ async function renderCalendarPage() {
         ${sideHtml}
       </div>
     </div>`;
+  if (!window._calendarChangeListener) {
+    window._calendarChangeListener = true;
+    window.addEventListener('wt-calendar-changed', () => {
+      if (state.currentPage === 'calendar') renderCalendarPage();
+    });
+  }
 }
 
 function showAddCalendarEventModal(dayKey) {

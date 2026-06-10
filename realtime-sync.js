@@ -5,6 +5,7 @@ const RealtimeSync = (() => {
   let _client = null;
   let _uid = null;
   let _connected = false;
+  let _v3PullTimer = null;
 
   function _getSession() {
     try {
@@ -95,6 +96,38 @@ const RealtimeSync = (() => {
     return window.SupabaseDB?._mapUpdate?.(r) || null;
   }
 
+  function _mapCalendarEvent(r) {
+    return {
+      id: r.id,
+      title: r.title || '',
+      description: r.description || '',
+      startsAt: r.starts_at,
+      endsAt: r.ends_at,
+      allDay: r.all_day || false,
+      createdBy: r.created_by,
+      visibility: r.visibility || 'team',
+      classroomId: r.classroom_id,
+      relatedProjectId: r.related_project_id,
+      relatedTaskId: r.related_task_id,
+      createdAt: r.created_at
+    };
+  }
+
+  async function _handleCalendarEvent(row, eventType) {
+    const mapped = _mapCalendarEvent(row);
+    const ldb = window.LocalDB?.db;
+    if (ldb?.calendarEvents) {
+      if (eventType === 'DELETE' && row.id) {
+        try { await ldb.calendarEvents.delete(row.id); } catch (_) {}
+      } else {
+        await _put(ldb.calendarEvents, mapped);
+      }
+    }
+    window.dispatchEvent(new CustomEvent('wt-calendar-changed', {
+      detail: { row: mapped, eventType }
+    }));
+  }
+
   function _channelIdFromActivity(row) {
     if (row.projectId == null) return 'general';
     return `project-${row.projectId}`;
@@ -152,21 +185,6 @@ const RealtimeSync = (() => {
     window.dispatchEvent(new CustomEvent('wt-realtime-activity', {
       detail: { row: mapped, eventType }
     }));
-    if (row.action === 'sent_message' && row.entity_type === 'chat') {
-      window.dispatchEvent(new CustomEvent('wt-realtime-chat', {
-        detail: {
-          channelId: _channelIdFromActivity(mapped),
-          message: {
-            id: mapped.id,
-            userId: mapped.userId,
-            details: mapped.details,
-            source: 'app',
-            createdAt: mapped.createdAt
-          },
-          eventType
-        }
-      }));
-    }
   }
 
   async function _handleAccessRequest(row, eventType) {
@@ -242,6 +260,17 @@ const RealtimeSync = (() => {
     });
   }
 
+  function _subscribeV3(table) {
+    _channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+      clearTimeout(_v3PullTimer);
+      _v3PullTimer = setTimeout(() => {
+        window.SyncEngineV3?.pull?.().then(() => {
+          window.dispatchEvent(new CustomEvent('wt-realtime-v3-refresh', { detail: { table } }));
+        }).catch(err => console.warn('[RealtimeSync] v3 pull failed', err));
+      }, 250);
+    });
+  }
+
   function stop() {
     if (_channel) {
       try { _channel.unsubscribe(); } catch (_) {}
@@ -259,7 +288,8 @@ const RealtimeSync = (() => {
     const uid = Number(userId);
     if (!uid || !navigator.onLine) return false;
 
-    _client = window.SyncEngine?.getClient?.() || window.SupabaseDB?._client;
+    const isV3 = window.WT_CONFIG?.supabaseSchemaVersion === 'v3' || window.WT_STORAGE_MODE === 'hybrid-v3';
+    _client = isV3 ? window.SyncEngineV3?.getClient?.() : (window.SyncEngine?.getClient?.() || window.SupabaseDB?._client);
     if (!_client) return false;
 
     _uid = uid;
@@ -269,16 +299,22 @@ const RealtimeSync = (() => {
     try { const { data } = await _client.auth.getSession(); _authSession = data?.session || null; } catch {}
     _channel = _client.channel(`wt-live-${uid}`, _authSession ? { config: { private: true } } : {});
 
-    _subscribe('wt_notifications', _handleNotification, `user_id=eq.${uid}`);
-    _subscribe('wt_direct_messages', _handleDirectMessage);
-    _subscribe('wt_activity_log', _handleActivityLog);
-    _subscribe('wt_project_access_requests', _handleAccessRequest);
-    _subscribe('wt_discord_messages', _handleDiscordMessage);
-    _subscribe('wt_bug_reports', _handleBugReport);
-    _subscribe('wt_users', _handleUser);
-    _subscribe('wt_projects', _handleProject);
-    _subscribe('wt_tasks', _handleTask);
-    _subscribe('wt_updates', _handleUpdate);
+    if (isV3) {
+      [
+        'profiles', 'projects', 'project_members', 'tasks', 'project_updates',
+        'documents', 'notifications', 'activity_log', 'error_reports'
+      ].forEach(_subscribeV3);
+    } else {
+      _subscribe('wt_notifications', _handleNotification, `user_id=eq.${uid}`);
+      _subscribe('wt_activity_log', _handleActivityLog);
+      _subscribe('wt_project_access_requests', _handleAccessRequest);
+      _subscribe('wt_bug_reports', _handleBugReport);
+      _subscribe('wt_users', _handleUser);
+      _subscribe('wt_projects', _handleProject);
+      _subscribe('wt_tasks', _handleTask);
+      _subscribe('wt_updates', _handleUpdate);
+      _subscribe('wt_calendar_events', _handleCalendarEvent);
+    }
 
     return new Promise((resolve) => {
       _channel.subscribe((status) => {
