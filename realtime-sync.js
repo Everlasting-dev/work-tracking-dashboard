@@ -279,9 +279,12 @@ const RealtimeSync = (() => {
     _channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
       clearTimeout(_v3PullTimer);
       _v3PullTimer = setTimeout(() => {
-        window.SyncEngineV3?.pull?.().then(() => {
-          window.dispatchEvent(new CustomEvent('wt-realtime-v3-refresh', { detail: { table } }));
-        }).catch(err => console.warn('[RealtimeSync] v3 pull failed', err));
+        const pullPromise = window.SyncEngineV3?.pull?.();
+        if (pullPromise && typeof pullPromise.then === 'function') {
+          pullPromise.then(() => {
+            window.dispatchEvent(new CustomEvent('wt-realtime-v3-refresh', { detail: { table } }));
+          }).catch(err => console.warn('[RealtimeSync] v3 pull failed', err));
+        }
       }, 250);
     });
   }

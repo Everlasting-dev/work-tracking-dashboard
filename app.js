@@ -160,12 +160,17 @@ async function applyClassroomTheme(classroomId) {
     main.removeAttribute('data-classroom-id');
     return;
   }
-  const room = (await DB.getClassrooms()).find(c => Number(c.id) === id);
-  const pal = classroomPaletteOf(room || { id });
-  main.style.setProperty('--classroom-tint', pal.tint);
-  main.style.setProperty('--classroom-accent', pal.primary);
-  main.style.setProperty('--classroom-muted', pal.muted);
-  main.dataset.classroomId = String(id);
+  try {
+    const classrooms = await DB.getClassrooms().catch(() => []);
+    const room = classrooms.find(c => Number(c.id) === id);
+    const pal = classroomPaletteOf(room || { id });
+    main.style.setProperty('--classroom-tint', pal.tint);
+    main.style.setProperty('--classroom-accent', pal.primary);
+    main.style.setProperty('--classroom-muted', pal.muted);
+    main.dataset.classroomId = String(id);
+  } catch (err) {
+    console.warn('[Theme] classroom theme application failed:', err);
+  }
 }
 
 /* ──── UI v3: Personal notes panel ──── */
@@ -5216,9 +5221,10 @@ async function showRequestProjectAccessModal(projectId) {
   const project = await DB.getProject(projectId);
   if (!project) { showToast('Project not found', 'error'); return; }
   if (canEdit(project)) { showToast('You already have edit access', 'info'); return; }
-  const pending = DB.getProjectAccessRequests
-    ? (await DB.getProjectAccessRequests({ projectId, requesterId: actorId(), status: 'pending' }))[0]
-    : null;
+  const requests = DB.getProjectAccessRequests
+    ? (await DB.getProjectAccessRequests({ projectId, requesterId: actorId(), status: 'pending' }))
+    : [];
+  const pending = requests && requests.length > 0 ? requests[0] : null;
   showModal('Request Edit Access', `
     <form data-form="project-access-request" data-project-id="${project.id}">
       <p class="text-muted text-sm" style="margin-bottom:14px">Ask the project owner for permission to edit <strong>${esc(project.name)}</strong>.</p>
