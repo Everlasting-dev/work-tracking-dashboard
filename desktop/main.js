@@ -1,8 +1,10 @@
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell } = require('electron');
 
 let mainWindow;
 let checkingForUpdates = false;
+let autoCheckDone = false;
 let autoUpdater;
 
 const isDev = !app.isPackaged;
@@ -35,11 +37,11 @@ function createWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    title: 'WorkTracker',
-    backgroundColor: '#f6f7fb',
+    title: 'Orbitask',
+    backgroundColor: '#000000',
     autoHideMenuBar: true,
     show: false,
-    icon: path.join(__dirname, '..', 'favicon.svg'),
+    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -150,7 +152,7 @@ function configureAutoUpdater() {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
   autoUpdater.verifyUpdateCodeSignature = false;
 
@@ -179,6 +181,10 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    if (info.version === app.getVersion()) {
+      sendUpdateStatus({ state: 'idle', message: 'WorkTracker is up to date.' });
+      return;
+    }
     sendUpdateStatus({
       state: 'downloaded',
       version: info.version,
@@ -197,7 +203,13 @@ function configureAutoUpdater() {
 ipcMain.handle('app:get-version', () => app.getVersion());
 ipcMain.handle('updater:check', () => checkForUpdates({ manual: true }));
 ipcMain.handle('updater:install', () => {
-  if (!isDev && autoUpdater) autoUpdater.quitAndInstall(false, true);
+  if (!isDev && autoUpdater) {
+    try {
+      const verPath = path.join(app.getPath('userData'), 'last-installed-version');
+      fs.writeFileSync(verPath, app.getVersion(), 'utf8');
+    } catch (_) {}
+    autoUpdater.quitAndInstall(false, true);
+  }
 });
 
 app.whenReady().then(() => {
@@ -207,7 +219,8 @@ app.whenReady().then(() => {
   createMenu();
   configureAutoUpdater();
 
-  if (!isDev) {
+  if (!isDev && !autoCheckDone) {
+    autoCheckDone = true;
     setTimeout(() => checkForUpdates({ manual: false }), 10000);
   }
 });

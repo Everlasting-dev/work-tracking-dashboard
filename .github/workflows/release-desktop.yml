@@ -37,6 +37,21 @@ jobs:
           };
           "@ | Set-Content -Encoding utf8 config.js
 
+      - name: Verify packaged version and required assets
+        shell: pwsh
+        run: |
+          npm run pack
+          $asarList = npx --yes asar list release/win-unpacked/resources/app.asar
+          if (-not ($asarList -match 'splash-sphere\.js')) {
+            throw 'splash-sphere.js missing from app.asar'
+          }
+          $pkgJson = npx --yes asar extract-file release/win-unpacked/resources/app.asar package.json
+          $pkg = $pkgJson | ConvertFrom-Json
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          if ($pkg.version -ne $tag) {
+            throw "Version mismatch: asar=$($pkg.version) tag=$tag"
+          }
+
       - name: Build NSIS installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

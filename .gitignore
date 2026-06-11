@@ -14,3 +14,5 @@ out/
 worktracker-*.json
 node_modules
 release-build/
+*.rar
+release.rar

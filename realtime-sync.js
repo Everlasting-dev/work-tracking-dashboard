@@ -260,7 +260,12 @@ const RealtimeSync = (() => {
     const ldb = window.LocalDB?.db;
     if (ldb?.userClassrooms) {
       if (eventType === 'DELETE') {
-        try { await ldb.userClassrooms.where('classroomId').equals(Number(row.classroom_id)).delete(); } catch (_) {}
+        try {
+          await ldb.userClassrooms
+            .where(['userId', 'classroomId'])
+            .equals([uid, Number(row.classroom_id)])
+            .delete();
+        } catch (_) {}
       } else {
         await _put(ldb.userClassrooms, { id: row.id, userId: Number(row.user_id), classroomId: Number(row.classroom_id), createdAt: row.created_at });
       }

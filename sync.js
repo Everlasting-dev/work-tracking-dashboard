@@ -117,7 +117,7 @@ const SyncEngine = (() => {
     'createUpdate','deleteUpdate',
     'createUser','updateUser','deleteUser',
     'createClassroom','updateClassroom','deleteClassroom',
-    'addUserToClassroom','removeUserFromClassroom',
+    'setUserClassrooms',
     'upsertDepartment','deleteDepartment',
     'createAttachment','deleteAttachment',
     'createNotification','markNotificationRead','markAllNotificationsRead',

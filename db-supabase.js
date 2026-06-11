@@ -1339,7 +1339,8 @@ const SupabaseDB = {
   },
 
   async setUserClassrooms(userId, classroomIds = []) {
-    const uid = Number(userId);
+    let uid = Number(userId);
+    try { uid = await this._resolveSupabaseUserId(userId); } catch (_) {}
     const ids = [...new Set((classroomIds || []).map(Number).filter(Boolean))];
     const finalIds = ids.length ? ids : [await this.ensureDefaultClassroom()];
     await this._sb().from('wt_user_classrooms').delete().eq('user_id', uid);

@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const { version: PKG_VERSION } = require('../package.json');
 
 contextBridge.exposeInMainWorld('workTrackerDesktop', {
   isDesktop: true,
@@ -17,5 +18,5 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
 ipcRenderer.invoke('app:get-version').then(version => {
   window.WT_APP_VERSION = version;
 }).catch(() => {
-  window.WT_APP_VERSION = '3.0.3';
+  window.WT_APP_VERSION = PKG_VERSION;
 });
