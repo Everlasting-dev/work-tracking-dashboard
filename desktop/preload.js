@@ -12,3 +12,10 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
     return () => ipcRenderer.removeListener('updater:status', listener);
   }
 });
+
+// Inject app version into window for the app to read
+ipcRenderer.invoke('app:get-version').then(version => {
+  window.WT_APP_VERSION = version;
+}).catch(() => {
+  window.WT_APP_VERSION = '3.0.3';
+});
