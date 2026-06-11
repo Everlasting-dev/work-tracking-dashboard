@@ -5409,6 +5409,11 @@ async function showUserProfileModal(userId) {
   const avatar = user.avatarBase64
     ? `<img src="${esc(user.avatarBase64)}" class="profile-view-avatar-img" alt="${esc(initials)}">`
     : `<div class="profile-view-avatar" ${userColorStyle(user)}>${initials}</div>`;
+
+  // Fetch user's classroom access
+  const userClassroomIds = DB.getUserClassroomIds ? await DB.getUserClassroomIds(user.id) : [];
+  const allClassrooms = DB.getClassrooms ? await DB.getClassrooms() : [];
+  const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
   showModal(esc(user.displayName || user.username), `
     <div class="profile-view-card profile-view-card-rich">
       <div class="profile-view-hero" style="--profile-color:${esc(user.color || userColor(user))}">
@@ -5436,6 +5441,14 @@ async function showUserProfileModal(userId) {
         ${user.hoursLoggedTotal ? `<div><span>Hours</span><strong>${Number(user.hoursLoggedTotal).toFixed(1)}</strong></div>` : ''}
         ${user.address ? `<div class="profile-personal-wide"><span>Address</span><strong>${esc(user.address)}</strong></div>` : ''}
       </div>
+      ${userClassrooms.length ? `<div class="profile-classrooms-section">
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+          <p style="font-size:0.85rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px">Classroom Access</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${userClassrooms.map(c => `<span style="display:inline-flex;align-items:center;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:999px;font-size:0.82rem">${esc(c.name)}</span>`).join('')}
+          </div>
+        </div>
+      </div>` : ''}
       <div class="profile-rank-track">
         <div class="profile-rank-track-fill" style="width:${Math.min(100, Math.round((stats.score / (stats.score + (stats.rank.next || 0) || 1)) * 100))}%"></div>
       </div>
