@@ -514,6 +514,8 @@ const SupabaseDB = {
     if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
     if (job.type === 'upsertDepartment') return this.upsertDepartment(job.payload, true);
     if (job.type === 'deleteDepartment') return this.deleteDepartment(job.payload.key, true);
+    // Non-critical background jobs that can safely fail silently (no handler needed)
+    if (job.type === 'touchLastSeen' || job.type === 'recordLoginSession' || job.type === 'logActivity') return null;
     throw new Error(`Unsupported sync job: ${job.type}`);
   },
 
