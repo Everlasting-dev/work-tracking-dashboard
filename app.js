@@ -83,7 +83,12 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.0.1'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.0.3'; }
+// Update splash screen version display
+window.addEventListener('load', () => {
+  const splashVer = document.getElementById('splash-app-version');
+  if (splashVer) splashVer.textContent = 'v' + getAppVersion();
+});
 
 /* ──── UI v3: Splash ──── */
 let _splashShownAt = Date.now();
