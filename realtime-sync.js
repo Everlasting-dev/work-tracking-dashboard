@@ -250,6 +250,21 @@ const RealtimeSync = (() => {
     window.dispatchEvent(new CustomEvent('wt-realtime-update', { detail: { row: mapped, eventType } }));
   }
 
+  async function _handleUserClassroom(row, eventType) {
+    const uid = _uid;
+    if (!uid) return;
+    // Only process changes to current user's classroom assignments
+    if (Number(row.user_id) !== uid) return;
+
+    // When user's classrooms change, trigger a workspace cache bust to refresh projects
+    window.dispatchEvent(new CustomEvent('wt-user-classroom-changed', {
+      detail: { userId: row.user_id, classroomId: row.classroom_id, eventType }
+    }));
+
+    // Log the change for debugging
+    console.log('[RealtimeSync] User classroom changed:', { userId: row.user_id, classroomId: row.classroom_id, eventType });
+  }
+
   function _subscribe(table, handler, filter) {
     const cfg = { event: '*', schema: 'public', table };
     if (filter) cfg.filter = filter;
@@ -314,6 +329,7 @@ const RealtimeSync = (() => {
       _subscribe('wt_tasks', _handleTask);
       _subscribe('wt_updates', _handleUpdate);
       _subscribe('wt_calendar_events', _handleCalendarEvent);
+      _subscribe('wt_user_classrooms', _handleUserClassroom, `user_id=eq.${uid}`);
     }
 
     return new Promise((resolve) => {

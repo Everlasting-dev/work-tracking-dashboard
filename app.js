@@ -8517,6 +8517,24 @@ function setupRealtimeHandlers() {
     }
   });
 
+  // When user's classroom assignments change via realtime subscription,
+  // bust the cache so projects are re-filtered with updated classroom access
+  window.addEventListener('wt-user-classroom-changed', (e) => {
+    const { userId, classroomId, eventType } = e.detail || {};
+    const session = getSession();
+    if (!session || Number(userId) !== Number(session.userId)) return;
+
+    // Bust workspace cache to refresh project visibility
+    bustWorkspaceCache();
+
+    // If viewing projects, re-render to show newly accessible classrooms
+    const currentPage = window.location.hash.slice(1) || '/projects';
+    if (currentPage === '/projects' || currentPage === '/') {
+      showToast('Classroom access updated', 'info');
+      router().catch(() => {});
+    }
+  });
+
   // When SupabaseDB resolves a stale local user ID to a canonical Supabase ID,
   // update any open DM channel that still references the stale ID so the next
   // send uses the correct channel and doesn't hit "User X not found".
