@@ -45,8 +45,10 @@ jobs:
           if (-not ($asarList -match 'splash-sphere\.js')) {
             throw 'splash-sphere.js missing from app.asar'
           }
-          $pkgJson = npx --yes asar extract-file release/win-unpacked/resources/app.asar package.json
-          $pkg = $pkgJson | ConvertFrom-Json
+          $tmp = Join-Path $env:RUNNER_TEMP 'asar-check'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          npx --yes asar extract release/win-unpacked/resources/app.asar $tmp
+          $pkg = Get-Content (Join-Path $tmp 'package.json') -Raw | ConvertFrom-Json
           $tag = "${{ github.ref_name }}".TrimStart('v')
           if ($pkg.version -ne $tag) {
             throw "Version mismatch: asar=$($pkg.version) tag=$tag"
