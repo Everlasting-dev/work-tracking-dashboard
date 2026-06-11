@@ -109,6 +109,11 @@ const SupabaseDB = {
     return msg.includes('pgrst204') || msg.includes('schema cache') || msg.includes('column') || msg.includes('could not find');
   },
 
+  _isMissingTable(error) {
+    const msg = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+    return msg.includes('pgrst205') || msg.includes('relation') || msg.includes('does not exist') || msg.includes('could not find the table');
+  },
+
   _clone(value) {
     return value == null ? value : JSON.parse(JSON.stringify(value));
   },
@@ -519,6 +524,8 @@ const SupabaseDB = {
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
       department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
       bio: r.bio || '', avatarBase64: r.avatar_base64 || '',
+      birthDate: r.birth_date || '', gender: r.gender || '', phone: r.phone || '',
+      address: r.address || '', hoursLoggedTotal: Number(r.hours_logged_total || 0),
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
     };
   },
@@ -1324,8 +1331,8 @@ const SupabaseDB = {
     }
     const ids = (data || []).map(r => Number(r.classroom_id)).filter(Boolean);
     if (ids.length) return ids;
+    // Safe fallback: return default without overwriting existing DB rows (prevents destructive fallback on transient errors)
     const defaultId = await this.ensureDefaultClassroom();
-    await this.setUserClassrooms(userId, [defaultId]);
     return [defaultId];
   },
 
@@ -1355,7 +1362,12 @@ const SupabaseDB = {
       department: data.department || '',
       color: data.color || '',
       bio: data.bio || '',
-      avatar_base64: data.avatarBase64 || ''
+      avatar_base64: data.avatarBase64 || '',
+      birth_date: data.birthDate || null,
+      gender: data.gender || '',
+      phone: data.phone || '',
+      address: data.address || '',
+      hours_logged_total: Number(data.hoursLoggedTotal || 0)
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
@@ -1412,6 +1424,11 @@ const SupabaseDB = {
     if (changes.avatarBase64 != null) patch.avatar_base64 = changes.avatarBase64 || '';
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
     if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
+    if (changes.birthDate != null) patch.birth_date = changes.birthDate || null;
+    if (changes.gender != null) patch.gender = changes.gender || '';
+    if (changes.phone != null) patch.phone = changes.phone || '';
+    if (changes.address != null) patch.address = changes.address || '';
+    if (changes.hoursLoggedTotal != null) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
     if (changes.username != null) {
       const next = String(changes.username).trim().toLowerCase();
       if (!next) throw new Error('Username cannot be empty');
@@ -1885,7 +1902,7 @@ const SupabaseDB = {
         type: 'updateTask',
         mergeKey: `updateTask:${id}`,
         collections: ['tasks', 'projects'],
-        payload: { id, changes: this._clone(changes), actorUserId },
+        payload: { id, projectId: optimistic.projectId, title: optimistic.title, changes: this._clone(changes), actorUserId },
         status: 'pending',
         attempts: 0,
         nextRetryAt: 0,
@@ -1897,7 +1914,9 @@ const SupabaseDB = {
         payload: {
           ...current.payload,
           changes: { ...(current.payload?.changes || {}), ...(nextJob.payload?.changes || {}) },
-          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId
+          actorUserId: nextJob.payload?.actorUserId ?? current.payload?.actorUserId,
+          projectId: nextJob.payload?.projectId ?? current.payload?.projectId,
+          title: nextJob.payload?.title ?? current.payload?.title
         },
         status: 'pending',
         updatedAt: nextJob.updatedAt,
@@ -1906,7 +1925,13 @@ const SupabaseDB = {
       }));
       return optimistic;
     }
-    const task = await this._fetchRemoteTask(id);
+    // Use projectId from payload if available (from optimistic state) to avoid extra fetch
+    let task = null;
+    if (payload?.projectId) {
+      task = { projectId: payload.projectId, title: payload.title };
+    } else {
+      task = await this._fetchRemoteTask(id);
+    }
     const activityDetails = changes.activityDetails || '';
     const patch = { updated_at: new Date().toISOString() };
     if (changes.title != null) patch.title = changes.title;
@@ -1921,13 +1946,20 @@ const SupabaseDB = {
     if (changes.sortOrder !== undefined) patch.sort_order = Number(changes.sortOrder) || 0;
     const { error } = await this._sb().from('wt_tasks').update(patch).eq('id', id);
     if (error) throw error;
-    if (task) {
-      await this._sb().from('wt_projects').update({ updated_at: patch.updated_at }).eq('id', task.projectId);
-      this._touchShadowProject(task.projectId, patch.updated_at);
-      if (actorUserId) {
-        const detail = activityDetails || (changes.status ? `status -> ${changes.status}` : (task.title || ''));
-        await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
-      }
+    if (task?.projectId) {
+      // Parallelize project touch + activity log (they're independent)
+      await Promise.all([
+        this._sb().from('wt_projects').update({ updated_at: patch.updated_at }).eq('id', task.projectId),
+        (async () => {
+          this._touchShadowProject(task.projectId, patch.updated_at);
+        })(),
+        (async () => {
+          if (actorUserId) {
+            const detail = activityDetails || (changes.status ? `status -> ${changes.status}` : (task.title || ''));
+            await this.logActivity({ userId: actorUserId, projectId: task.projectId, action: 'updated', entityType: 'task', entityId: id, details: detail });
+          }
+        })()
+      ]);
     }
     return this._applyTaskChanges(task, changes);
   },
@@ -2727,6 +2759,58 @@ const SupabaseDB = {
       needsPasswordReset,
       attachmentsSkipped: (data.attachments?.length || 0) - attachmentsImported
     };
+  },
+
+  _mapCalendarEvent(r) {
+    if (!r) return null;
+    return {
+      id: r.id, title: r.title || '', description: r.description || '',
+      startsAt: r.starts_at, endsAt: r.ends_at || null, allDay: !!r.all_day,
+      createdBy: r.created_by, visibility: r.visibility || 'team',
+      classroomId: r.classroom_id || null, relatedProjectId: r.related_project_id || null,
+      relatedTaskId: r.related_task_id || null, createdAt: r.created_at
+    };
+  },
+
+  async getCalendarEvents({ from, to } = {}) {
+    if (this._isOffline()) return this._shadowRows('calendarEvents') || [];
+    let q = this._sb().from('wt_calendar_events').select('*').order('starts_at');
+    if (from) q = q.gte('starts_at', from);
+    if (to) q = q.lte('starts_at', to);
+    const { data, error } = await q;
+    if (error) {
+      if (this._isMissingColumn(error) || this._isMissingTable(error)) return LocalDB.getCalendarEvents({ from, to });
+      throw error;
+    }
+    const rows = (data || []).map(r => this._mapCalendarEvent(r));
+    this._shadowSetCollection('calendarEvents', rows);
+    return rows;
+  },
+
+  async createCalendarEvent(data, actorUserId = null) {
+    const id = await LocalDB.createCalendarEvent(data, actorUserId);
+    if (this._isOffline()) return id;
+    try {
+      const { data: row, error } = await this._sb().from('wt_calendar_events').insert({
+        title: data.title || 'Event', description: data.description || '',
+        starts_at: data.startsAt, ends_at: data.endsAt || null, all_day: !!data.allDay,
+        created_by: data.createdBy || actorUserId || null, visibility: data.visibility || 'team',
+        classroom_id: data.classroomId || null, related_project_id: data.relatedProjectId || null,
+        related_task_id: data.relatedTaskId || null
+      }).select().single();
+      if (error) throw error;
+      return row?.id || id;
+    } catch (err) {
+      if (this._isMissingTable(err)) return id;
+      throw err;
+    }
+  },
+
+  async deleteCalendarEvent(id, actorUserId = null) {
+    await LocalDB.deleteCalendarEvent(id, actorUserId);
+    if (this._isOffline()) return;
+    const { error } = await this._sb().from('wt_calendar_events').delete().eq('id', id);
+    if (error && !this._isMissingTable(error)) throw error;
   },
 
   async createSampleData(ownerId) {

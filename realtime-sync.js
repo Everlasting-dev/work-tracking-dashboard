@@ -256,7 +256,17 @@ const RealtimeSync = (() => {
     // Only process changes to current user's classroom assignments
     if (Number(row.user_id) !== uid) return;
 
-    // When user's classrooms change, trigger a workspace cache bust to refresh projects
+    // Persist to LocalDB so getUserClassroomIds reads fresh data on next call
+    const ldb = window.LocalDB?.db;
+    if (ldb?.userClassrooms) {
+      if (eventType === 'DELETE') {
+        try { await ldb.userClassrooms.where('classroomId').equals(Number(row.classroom_id)).delete(); } catch (_) {}
+      } else {
+        await _put(ldb.userClassrooms, { id: row.id, userId: Number(row.user_id), classroomId: Number(row.classroom_id), createdAt: row.created_at });
+      }
+    }
+
+    // Trigger workspace cache bust to refresh projects
     window.dispatchEvent(new CustomEvent('wt-user-classroom-changed', {
       detail: { userId: row.user_id, classroomId: row.classroom_id, eventType }
     }));

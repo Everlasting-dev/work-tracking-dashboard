@@ -328,6 +328,33 @@ db.version(15).stores({
   discordMessages: '++id, channelId, createdAt'
 });
 
+db.version(16).stores({
+  projects: '++id, name, type, status, priority, ownerId, classroomId, department, workflowTemplate, completedAt, isOngoing, cadence, createdAt, updatedAt',
+  milestones: '++id, projectId, title, status, dueDate, createdAt',
+  tasks: '++id, projectId, milestoneId, assigneeId, workflowStepKey, status, priority, dueDate, createdAt, updatedAt',
+  updates: '++id, projectId, createdAt',
+  users: '++id, &username, role, department, createdAt',
+  settings: '&key',
+  attachments: '++id, projectId, taskId, uploadedBy, documentType, createdAt',
+  activityLog: '++id, userId, projectId, action, entityType, [action+entityType], createdAt',
+  notifications: '++id, userId, readAt, type, createdAt',
+  webhooks: '++id, scope, projectId, createdAt',
+  sessions: '++id, userId, &[userId+deviceId], lastSeenAt',
+  departments: '&key, sortOrder',
+  projectAccessRequests: '++id, projectId, requesterId, status, [projectId+requesterId], createdAt',
+  bugReports: '++id, userId, status, createdAt',
+  classrooms: '++id, name, createdAt',
+  userClassrooms: '++id, userId, classroomId, &[userId+classroomId]',
+  directMessages: '++id, [fromUserId+toUserId], createdAt',
+  workflowTemplates: '++id, name, createdBy, createdAt, updatedAt',
+  userFavorites: '++id, userId, favoriteUserId, &[userId+favoriteUserId], createdAt',
+  personalNotes: '++id, userId, done, sortOrder, createdAt, updatedAt',
+  discordMessages: '++id, channelId, createdAt',
+  calendarEvents: '++id, startsAt, createdBy, classroomId, relatedProjectId, createdAt',
+  userActivityDaily: '++id, &[userId+date], userId, date',
+  taskDependencies: '++id, projectId, fromTaskId, toTaskId, &[projectId+fromTaskId+toTaskId]'
+});
+
 /* ── Password hashing via Web Crypto API (PBKDF2) ── */
 
 async function hashPassword(password, salt) {
@@ -488,6 +515,132 @@ const LocalDB = {
     const patch = { lastSeenAt: new Date().toISOString() };
     if (ip) patch.lastSeenIp = ip;
     await db.users.update(Number(userId), patch);
+    await LocalDB.recordActiveMinute(Number(userId), 1).catch(() => {});
+  },
+
+  _todayDateKey(d = new Date()) {
+    return d.toISOString().slice(0, 10);
+  },
+
+  async recordActiveMinute(userId, minutes = 1) {
+    if (!userId || minutes <= 0) return;
+    const uid = Number(userId);
+    const date = LocalDB._todayDateKey();
+    const existing = await db.userActivityDaily.where('[userId+date]').equals([uid, date]).first();
+    if (existing) {
+      await db.userActivityDaily.update(existing.id, {
+        activeMinutes: (existing.activeMinutes || 0) + minutes,
+        actionCount: (existing.actionCount || 0)
+      });
+      return existing.id;
+    }
+    return db.userActivityDaily.add({ userId: uid, date, activeMinutes: minutes, actionCount: 0 });
+  },
+
+  async getUserActivityDaily(userId = null, { days = 30 } = {}) {
+    const since = new Date();
+    since.setDate(since.getDate() - (days - 1));
+    const sinceKey = LocalDB._todayDateKey(since);
+    let rows = await db.userActivityDaily.toArray();
+    rows = rows.filter(r => r.date >= sinceKey);
+    if (userId != null) rows = rows.filter(r => Number(r.userId) === Number(userId));
+    return rows.sort((a, b) => a.date.localeCompare(b.date));
+  },
+
+  async getTeamActivitySummary({ days = 7 } = {}) {
+    const rows = await LocalDB.getUserActivityDaily(null, { days });
+    const byUser = {};
+    for (const r of rows) {
+      const uid = Number(r.userId);
+      if (!byUser[uid]) byUser[uid] = { activeMinutes: 0, actionCount: 0 };
+      byUser[uid].activeMinutes += Number(r.activeMinutes || 0);
+      byUser[uid].actionCount += Number(r.actionCount || 0);
+    }
+    return byUser;
+  },
+
+  async getCalendarEvents({ from, to } = {}) {
+    let rows = await db.calendarEvents.toArray();
+    if (from) rows = rows.filter(r => r.startsAt >= from);
+    if (to) rows = rows.filter(r => r.startsAt <= to);
+    return rows.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  },
+
+  async createCalendarEvent(data, actorUserId = null) {
+    const now = new Date().toISOString();
+    const id = await db.calendarEvents.add({
+      title: data.title || 'Event',
+      description: data.description || '',
+      startsAt: data.startsAt,
+      endsAt: data.endsAt || null,
+      allDay: !!data.allDay,
+      createdBy: data.createdBy || actorUserId || null,
+      visibility: data.visibility || 'team',
+      classroomId: data.classroomId || null,
+      relatedProjectId: data.relatedProjectId || null,
+      relatedTaskId: data.relatedTaskId || null,
+      createdAt: now
+    });
+    if (actorUserId) {
+      await LocalDB.logActivity({ userId: actorUserId, action: 'created', entityType: 'calendar_event', entityId: id, details: data.title || '' });
+    }
+    return id;
+  },
+
+  async updateCalendarEvent(id, changes, actorUserId = null) {
+    await db.calendarEvents.update(Number(id), changes);
+    if (actorUserId) {
+      await LocalDB.logActivity({ userId: actorUserId, action: 'updated', entityType: 'calendar_event', entityId: id, details: changes.title || '' });
+    }
+  },
+
+  async deleteCalendarEvent(id, actorUserId = null) {
+    await db.calendarEvents.delete(Number(id));
+    if (actorUserId) {
+      await LocalDB.logActivity({ userId: actorUserId, action: 'deleted', entityType: 'calendar_event', entityId: id, details: '' });
+    }
+  },
+
+  async getTaskDependencies(projectId) {
+    return db.taskDependencies.where('projectId').equals(Number(projectId)).toArray();
+  },
+
+  async setTaskBlockedBy(taskId, blockerIds = [], actorUserId = null) {
+    const tid = Number(taskId);
+    const task = await db.tasks.get(tid);
+    if (!task) throw new Error('Task not found');
+    const projectId = Number(task.projectId);
+    const want = [...new Set((blockerIds || []).map(Number).filter(id => id && id !== tid))];
+    const existing = await db.taskDependencies.where('projectId').equals(projectId).toArray();
+    const current = existing.filter(d => Number(d.toTaskId) === tid && d.type === 'blocks');
+    for (const dep of current) {
+      if (!want.includes(Number(dep.fromTaskId))) await db.taskDependencies.delete(dep.id);
+    }
+    for (const fromId of want) {
+      const dup = existing.find(d => Number(d.fromTaskId) === fromId && Number(d.toTaskId) === tid);
+      if (!dup) {
+        await db.taskDependencies.add({ projectId, fromTaskId: fromId, toTaskId: tid, type: 'blocks', createdAt: new Date().toISOString() });
+      }
+    }
+    if (actorUserId) {
+      await LocalDB.logActivity({ userId: actorUserId, projectId, action: 'updated', entityType: 'task', entityId: tid, details: 'dependencies' });
+    }
+  },
+
+  async getTaskBlockers(taskId) {
+    const tid = Number(taskId);
+    const deps = await db.taskDependencies.toArray();
+    return deps.filter(d => Number(d.toTaskId) === tid && d.type === 'blocks').map(d => Number(d.fromTaskId));
+  },
+
+  async areTaskBlockersDone(taskId) {
+    const blockers = await LocalDB.getTaskBlockers(taskId);
+    if (!blockers.length) return true;
+    for (const bid of blockers) {
+      const t = await db.tasks.get(bid);
+      if (t && t.status !== 'done') return false;
+    }
+    return true;
   },
 
   async recordLoginSession(userId, { deviceId = '', deviceLabel = '', userAgent = '', ip = '' } = {}) {
@@ -698,8 +851,8 @@ const LocalDB = {
   async getUserClassroomIds(userId) {
     const rows = await db.userClassrooms.where('userId').equals(Number(userId)).toArray();
     if (rows.length) return rows.map(r => Number(r.classroomId)).filter(Boolean);
+    // Safe fallback: return default without overwriting existing DB rows (prevents destructive fallback on transient errors)
     const defaultId = await this.ensureDefaultClassroom();
-    await this.setUserClassrooms(userId, [defaultId]);
     return [defaultId];
   },
 
@@ -732,6 +885,11 @@ const LocalDB = {
       role: data.role || 'user',
       department: data.department || '',
       bio: data.bio || '',
+      birthDate: data.birthDate || '',
+      gender: data.gender || '',
+      phone: data.phone || '',
+      address: data.address || '',
+      hoursLoggedTotal: Number(data.hoursLoggedTotal || 0),
       avatarBase64: data.avatarBase64 || '',
       color: data.color || '',
       createdAt: now
@@ -916,9 +1074,10 @@ const LocalDB = {
     return id;
   },
 
-  async getAttachments(projectId) {
+  async getAttachments(projectId, opts = {}) {
     const rows = await db.attachments.where('projectId').equals(projectId).toArray();
-    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const visible = opts.includeHidden ? rows : rows.filter(row => !row.isHidden && !row.deletedAt);
+    return visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   },
 
   async getAttachment(id) { return db.attachments.get(id); },
@@ -941,14 +1100,19 @@ const LocalDB = {
   async deleteAttachment(id, actorUserId = null) {
     const row = await db.attachments.get(id);
     let cloudDeleted = false;
+    const now = new Date().toISOString();
     if (row?.storagePath && attachmentsCloudReady()) {
       try { await window.SupabaseDB.deleteAttachment(id, actorUserId); cloudDeleted = true; }
       catch (err) { console.warn('[attachments] cloud delete failed:', err); }
     }
-    await db.attachments.delete(id);
+    await db.attachments.update(id, {
+      isHidden: true,
+      deletedAt: now,
+      deletedBy: actorUserId || null,
+      deleteReason: 'Removed from project view'
+    });
     if (row) {
-      await db.projects.update(row.projectId, { updatedAt: new Date().toISOString() });
-      // SupabaseDB.deleteAttachment already logs the activity when it ran.
+      await db.projects.update(row.projectId, { updatedAt: now });
       if (actorUserId && !cloudDeleted) await LocalDB.logActivity({ userId: actorUserId, projectId: row.projectId, action: 'deleted', entityType: 'attachment', entityId: id, details: row.fileName || '' });
     }
   },
@@ -989,6 +1153,8 @@ const LocalDB = {
       dueDate: data.dueDate || '',
       status: data.status || 'todo',
       priority: data.priority || 'medium',
+      notes: data.notes || data.description || '',
+      customFields: Array.isArray(data.customFields) ? data.customFields : [],
       // sort_order on the board. New tasks default to "now" (epoch seconds) so they
       // land at the bottom; an explicit drag-reorder rewrites these to small indices.
       sortOrder: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000),
@@ -1049,6 +1215,24 @@ const LocalDB = {
       .filter(s => s.title);
   },
 
+  _normalizeTemplateFields(fields) {
+    const allowed = new Set(['text', 'long_text', 'number', 'date', 'checkbox', 'file', 'image']);
+    return (Array.isArray(fields) ? fields : [])
+      .map((f, idx) => {
+        const label = (f?.label || '').trim();
+        if (!label) return null;
+        const type = allowed.has(f?.type) ? f.type : 'text';
+        return {
+          key: (f.key || label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `field_${idx + 1}`),
+          label,
+          type,
+          required: !!f.required,
+          showOnCard: !!(f.showOnCard || f.visibleOnTaskCard)
+        };
+      })
+      .filter(Boolean);
+  },
+
   async getWorkflowTemplates() {
     const rows = await db.workflowTemplates.toArray();
     return rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -1062,6 +1246,7 @@ const LocalDB = {
       name: (data.name || '').trim() || 'Untitled template',
       description: (data.description || '').trim(),
       steps: LocalDB._normalizeTemplateSteps(data.steps),
+      fields: LocalDB._normalizeTemplateFields(data.fields),
       createdBy: data.createdBy || data.actorUserId || null,
       createdAt: now,
       updatedAt: now
@@ -1074,6 +1259,7 @@ const LocalDB = {
     if (changes.name != null) patch.name = (changes.name || '').trim() || 'Untitled template';
     if (changes.description != null) patch.description = (changes.description || '').trim();
     if (changes.steps != null) patch.steps = LocalDB._normalizeTemplateSteps(changes.steps);
+    if (changes.fields != null) patch.fields = LocalDB._normalizeTemplateFields(changes.fields);
     patch.updatedAt = new Date().toISOString();
     await db.workflowTemplates.update(Number(id), patch);
     return db.workflowTemplates.get(Number(id));

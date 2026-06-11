@@ -29,10 +29,12 @@ jobs:
           cat > config.js << 'CONFIGEOF'
           window.WT_CONFIG = {
             storage: 'supabase',
+            supabaseSchemaVersion: 'v2',
             supabaseUrl: '${{ secrets.SUPABASE_URL }}',
             supabaseAnonKey: '${{ secrets.SUPABASE_ANON_KEY }}'
           };
           CONFIGEOF
+          touch .nojekyll
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

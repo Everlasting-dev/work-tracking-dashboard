@@ -718,6 +718,19 @@ function bustWorkspaceCache() {
   }
 }
 
+function patchTaskInCache(taskId, changes) {
+  if (!_workspaceCache?.tasks) return;
+  const idx = _workspaceCache.tasks.findIndex(t => t.id === taskId);
+  if (idx !== -1) {
+    _workspaceCache.tasks[idx] = { ..._workspaceCache.tasks[idx], ...changes, updatedAt: new Date().toISOString() };
+  }
+}
+
+function removeTaskFromCache(taskId) {
+  if (!_workspaceCache?.tasks) return;
+  _workspaceCache.tasks = _workspaceCache.tasks.filter(t => t.id !== taskId);
+}
+
 // On startup, clear the Supabase shadow cache if schema version changed
 const _SCHEMA_VER = 'wt-schema-v12';
 if (localStorage.getItem('wt-schema-version') !== _SCHEMA_VER) {
@@ -2595,28 +2608,30 @@ async function persistBoardOrder(projectId, movedId) {
   }
 
   let movedStatusChanged = false;
-  let updateCount = 0;
-  for (const d of desired) {
+  const updatePromises = desired.map(async d => {
     const t = byId[d.id];
-    if (!t) continue;
+    if (!t) return false;
     const changes = {};
     if (t.status !== d.status) changes.status = d.status;
     if ((t.sortOrder ?? 0) !== d.sortOrder) changes.sortOrder = d.sortOrder;
-    if (!Object.keys(changes).length) continue;
+    if (!Object.keys(changes).length) return false;
 
     try {
       await DB.updateTask(d.id, changes, uid);
-      updateCount++;
       if (d.id === movedId && changes.status) {
         movedStatusChanged = true;
         console.log(`[persistBoardOrder] Task ${movedId} moved from ${t.status} to ${d.status}`);
       }
+      return true;
     } catch (err) {
       console.error(`[persistBoardOrder] Failed to update task ${d.id}:`, err);
+      return false;
     }
-  }
+  });
 
-  console.log(`[persistBoardOrder] Updated ${updateCount} tasks, movedStatusChanged=${movedStatusChanged}`);
+  const results = await Promise.all(updatePromises);
+  const updateCount = results.filter(Boolean).length;
+  console.log(`[persistBoardOrder] Updated ${updateCount} tasks in parallel, movedStatusChanged=${movedStatusChanged}`);
 
   if (movedStatusChanged && moved && movedTarget) {
     try {
@@ -7266,8 +7281,8 @@ const actions = {
     const blockedReason = validateLogisticsTaskTransition(t, nextStatus, p, projectTasks, projectAttachments);
     if (blockedReason) { showToast(blockedReason, 'warning'); return; }
     await DB.updateTask(t.id, { status: nextStatus }, uid);
+    patchTaskInCache(t.id, { status: nextStatus });
     await applyTaskStatusSideEffects(p, t, nextStatus, uid, projectTasks, projectAttachments);
-    bustWorkspaceCache();
     await router();
   },
   'assign-task': (b) => showAssignTaskModal(Number(b.dataset.id)),
@@ -7276,12 +7291,13 @@ const actions = {
     const p = await DB.getProject(t.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
     await DB.deleteTask(t.id, actorId());
+    removeTaskFromCache(t.id);
     await recordProjectActivity({
       userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'task',
       details: t.title,
       discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted task "${t.title}" from "${p.name}".`
     });
-    showToast('Task deleted', 'success'); bustWorkspaceCache(); await router();
+    showToast('Task deleted', 'success'); await router();
   },
   'delete-milestone': async (b) => {
     const id = Number(b.dataset.id);
@@ -7625,7 +7641,7 @@ const actions = {
       if (priority) changes.priority = priority;
       if (assigneeId) changes.assigneeId = assigneeId;
       await DB.updateTask(taskId, changes, uid);
-      bustWorkspaceCache();
+      patchTaskInCache(taskId, changes);
       hideModal();
       await router();
       showToast('Task saved', 'success');
