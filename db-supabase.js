@@ -511,7 +511,7 @@ const SupabaseDB = {
     if (job.type === 'createTask') return this.createTask({ ...(job.payload.task || {}), actorUserId: job.payload.actorUserId });
     if (job.type === 'createUpdate') return this.createUpdate({ ...(job.payload.update || {}), actorUserId: job.payload.actorUserId });
     if (job.type === 'updateProject') return this.updateProject(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
-    if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true);
+    if (job.type === 'updateTask') return this.updateTask(job.payload.id, job.payload.changes, job.payload.actorUserId, true, { projectId: job.payload.projectId, title: job.payload.title });
     if (job.type === 'upsertDepartment') return this.upsertDepartment(job.payload, true);
     if (job.type === 'deleteDepartment') return this.deleteDepartment(job.payload.key, true);
     // Non-critical background jobs that can safely fail silently (no handler needed)
@@ -1893,7 +1893,7 @@ const SupabaseDB = {
     return row;
   },
 
-  async updateTask(id, changes, actorUserId = null, remoteOnly = false) {
+  async updateTask(id, changes, actorUserId = null, remoteOnly = false, hint = null) {
     if (!remoteOnly) {
       const task = await this.getTask(id);
       if (!task) throw new Error('Task not found');
@@ -1928,10 +1928,10 @@ const SupabaseDB = {
       }));
       return optimistic;
     }
-    // Use projectId from payload if available (from optimistic state) to avoid extra fetch
+    // Use the hint from the sync job payload if available to avoid an extra fetch
     let task = null;
-    if (payload?.projectId) {
-      task = { projectId: payload.projectId, title: payload.title };
+    if (hint?.projectId) {
+      task = { projectId: hint.projectId, title: hint.title };
     } else {
       task = await this._fetchRemoteTask(id);
     }

@@ -14,5 +14,9 @@ out/
 worktracker-*.json
 node_modules
 release-build/
+release-build2/
 *.rar
 release.rar
+supabase-backups/
+.claude/
+README.md.bak

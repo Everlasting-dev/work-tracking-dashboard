@@ -173,6 +173,19 @@ const SyncEngine = (() => {
       }
     }
 
+    // Presence heartbeats fire every minute — keep only one pending op per user
+    // so the queue doesn't grow unbounded while offline.
+    if (method === 'touchLastSeen' || method === 'recordLoginSession') {
+      const idx = _queue.findLastIndex?.(o => o.method === method && String(o.args?.[0]) === String(args[0]) && o.status === 'pending');
+      if (idx >= 0) {
+        _queue[idx].args = _serialize(args);
+        _queue[idx].createdAt = new Date().toISOString();
+        _saveQueue();
+        if (navigator.onLine && !_syncing) _scheduleFlush(400);
+        return;
+      }
+    }
+
     // Deduplicate: collapse rapid update+update for same entity
     if (/^update/.test(method) && typeof args[0] === 'number') {
       const idx = _queue.findLastIndex?.(o => o.method === method && o.args?.[0] === args[0] && o.status === 'pending');
@@ -276,6 +289,19 @@ const SyncEngine = (() => {
           // Stale queue entry — local row never reached the cloud or was already removed.
           op.status = 'done';
           console.warn('[SyncEngine] dropping stale update:', op.method, msg);
+        } else if (/violates foreign key constraint|not found in Supabase/i.test(msg)) {
+          // The op references a row that doesn't exist in the cloud (e.g. a
+          // ghost local-only user or a parent create that never synced).
+          // Retry once in case the parent create lands on this flush cycle,
+          // then drop it — retrying forever just spams error reports.
+          op.attempts++;
+          if (op.attempts >= 2) {
+            op.status = 'done';
+            console.warn('[SyncEngine] dropping op referencing a missing row:', op.method, msg.slice(0, 160));
+          } else {
+            op.error = msg.slice(0, 200);
+            op.status = 'pending';
+          }
         } else {
           op.attempts++;
           op.error  = msg.slice(0, 200);
@@ -613,7 +639,10 @@ const SyncEngine = (() => {
       const ldb = window.LocalDB?.db;
       if (!ldb) return;
 
-      if (users.status         === 'fulfilled') await _bulkPut(ldb.users,                 users.value);
+      if (users.status         === 'fulfilled') {
+        await _bulkPut(ldb.users, users.value);
+        await _reconcileUsers(ldb, users.value);
+      }
       if (projects.status      === 'fulfilled') await _bulkPut(ldb.projects,              _normalizeProjects(projects.value));
       if (tasks.status         === 'fulfilled') await _bulkPut(ldb.tasks,                 _normalizeTasks(tasks.value));
       if (departments.status   === 'fulfilled') {
@@ -666,6 +695,43 @@ const SyncEngine = (() => {
     } finally {
       _pullRunning = false;
       _publish();
+    }
+  }
+
+  // Remove local-only "ghost" users that don't exist in the cloud. They cause
+  // FK violations whenever notifications or DMs target them. Keep users with a
+  // pending createUser op (offline-created, not yet pushed) and the active
+  // session's own user.
+  async function _reconcileUsers(ldb, remoteUsers) {
+    try {
+      if (!Array.isArray(remoteUsers) || !remoteUsers.length || !ldb?.users) return;
+      const remoteIds = new Set(remoteUsers.map(u => Number(u.id)));
+      const pendingIds = new Set(_queue
+        .filter(o => o.method === 'createUser' && o.status !== 'done')
+        .map(o => Number(o.args?.[0]?.id ?? o.localId))
+        .filter(n => Number.isFinite(n)));
+      const myId = Number(_getSession()?.userId || 0);
+      const locals = await ldb.users.toArray();
+      const ghosts = locals.filter(u =>
+        !remoteIds.has(Number(u.id)) && !pendingIds.has(Number(u.id)) && Number(u.id) !== myId);
+      if (!ghosts.length) return;
+      for (const g of ghosts) {
+        const gid = Number(g.id);
+        await ldb.users.delete(gid).catch(() => {});
+        await ldb.notifications?.where('userId').equals(gid).delete().catch(() => {});
+        await ldb.userClassrooms?.where('userId').equals(gid).delete().catch(() => {});
+      }
+      // Drop any queued ops that target the removed users so they can't FK-fail.
+      const ghostIds = new Set(ghosts.map(g => Number(g.id)));
+      _queue = _queue.filter(o => {
+        const a = o.args?.[0];
+        const targets = [a?.userId, a?.toUserId, a?.assigneeId];
+        return !targets.some(t => t != null && ghostIds.has(Number(t)));
+      });
+      _saveQueue();
+      console.warn('[SyncEngine] removed ghost local users:', ghosts.map(g => `${g.id} (${g.username || ''})`).join(', '));
+    } catch (err) {
+      console.warn('[SyncEngine] user reconcile skipped:', err);
     }
   }
 

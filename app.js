@@ -83,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.0.6'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.0.7'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -6021,7 +6021,7 @@ function initializeTeamActivityD3() {
       .attr('fill', d => colorByHeat(heat(d.activity)))
       .attr('stroke', vibrant ? '#0f766e' : '#525252').attr('stroke-width', 2)
       .style('cursor', 'pointer').style('filter', d => d.online ? '' : 'opacity(0.6)')
-      .on('click', (e, d) => { e.stopPropagation(); dispatchAction('show-user-profile', d.user.id); });
+      .on('click', (e, d) => { e.stopPropagation(); showUserProfileModal(Number(d.user.id)); });
 
     circles.append('text').attr('text-anchor', 'middle').attr('dy', '0.35em')
       .attr('font-size', '10px').attr('font-weight', '800')
@@ -7983,20 +7983,39 @@ function showToast(msg, type = 'info') {
 }
 
 let _lastAutoErrorAt = 0;
+const AUTO_ERROR_DEDUPE_MS = 6 * 60 * 60 * 1000; // one report per unique error per 6h
+
+function _autoErrorSeenRecently(signature) {
+  try {
+    const map = JSON.parse(localStorage.getItem('wt-auto-error-log') || '{}');
+    const now = Date.now();
+    // prune old entries while we're here
+    for (const k of Object.keys(map)) { if (now - map[k] > AUTO_ERROR_DEDUPE_MS) delete map[k]; }
+    const seen = map[signature] && (now - map[signature] < AUTO_ERROR_DEDUPE_MS);
+    map[signature] = map[signature] && seen ? map[signature] : now;
+    localStorage.setItem('wt-auto-error-log', JSON.stringify(map));
+    return !!seen;
+  } catch (_) { return false; }
+}
 
 async function reportClientError(kind, error, context = {}) {
   const now = Date.now();
   if (now - _lastAutoErrorAt < 8000) return;
   _lastAutoErrorAt = now;
 
+  const message = String(error?.message || error || 'Unknown error').slice(0, 1000);
+  // The same error re-firing (e.g. a retried sync op) should not file a new
+  // report every few minutes — it buries real issues and spams admins.
+  if (_autoErrorSeenRecently(`${kind}|${message.slice(0, 200)}`)) return;
+
   const session = getSession?.();
   const payload = {
     user_id: session?.userId || null,
     kind: kind || 'client_error',
-    message: String(error?.message || error || 'Unknown error').slice(0, 1000),
+    message,
     stack: String(error?.stack || '').slice(0, 8000),
     route: window.location.hash || '',
-    app_version: window.WT_APP_VERSION || '',
+    app_version: window.WT_APP_VERSION || getAppVersion?.() || '',
     user_agent: navigator.userAgent || '',
     context
   };
@@ -8029,16 +8048,21 @@ async function reportClientError(kind, error, context = {}) {
         appVersion: payload.app_version,
         screenshots: []
       });
-      const users = DB.getUsers ? await DB.getUsers().catch(() => []) : [];
-      for (const admin of users.filter(u => u.role === 'admin')) {
-        await DB.createNotification?.({
-          userId: admin.id,
-          actorUserId: payload.user_id,
-          type: 'bug_report',
-          entityType: 'bug_report',
-          entityId: reportId,
-          message: `Automatic error report: ${payload.message.slice(0, 120)}`
-        }).catch(() => {});
+      // Don't fan out notifications for sync errors: if the failing op IS a
+      // notification insert, notifying admins about it creates more failing
+      // ops and the loop never converges.
+      if (kind !== 'sync_error') {
+        const users = DB.getUsers ? await DB.getUsers().catch(() => []) : [];
+        for (const admin of users.filter(u => u.role === 'admin')) {
+          await DB.createNotification?.({
+            userId: admin.id,
+            actorUserId: payload.user_id,
+            type: 'bug_report',
+            entityType: 'bug_report',
+            entityId: reportId,
+            message: `Automatic error report: ${payload.message.slice(0, 120)}`
+          }).catch(() => {});
+        }
       }
     }
   } catch (fallbackError) {

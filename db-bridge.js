@@ -12,6 +12,7 @@
 async function bootstrapDB() {
   const cfg = window.WT_CONFIG || { storage: 'local' };
   window.WT_INITIAL_SYNC = Promise.resolve(false);
+  const useV3 = cfg.supabaseSchemaVersion === 'v3';
 
   // LocalDB is always primary — instant, no network needed
   window.DB = window.LocalDB;
@@ -22,15 +23,16 @@ async function bootstrapDB() {
     cfg.storage === 'supabase' &&
     cfg.supabaseUrl &&
     cfg.supabaseAnonKey &&
-    typeof SyncEngine !== 'undefined' &&
+    (useV3 ? typeof SyncEngineV3 !== 'undefined' : typeof SyncEngine !== 'undefined') &&
     typeof SupabaseDB !== 'undefined' &&
     typeof supabase   !== 'undefined';
 
   if (useSupabase) {
-    window.WT_STORAGE_MODE = 'hybrid';
+    window.WT_STORAGE_MODE = useV3 ? 'hybrid-v3' : 'hybrid';
     // Keep a handle to the first pull so auth can avoid showing first-time setup
     // before an existing cloud workspace has had a chance to hydrate locally.
-    window.WT_INITIAL_SYNC = SyncEngine.init(cfg.supabaseUrl, cfg.supabaseAnonKey).catch(err => {
+    const engine = useV3 ? SyncEngineV3 : SyncEngine;
+    window.WT_INITIAL_SYNC = engine.init(cfg.supabaseUrl, cfg.supabaseAnonKey).catch(err => {
       console.error('[db-bridge] SyncEngine init failed:', err);
       return false;
     });
