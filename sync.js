@@ -46,6 +46,16 @@ const SyncEngine = (() => {
       const r = localStorage.getItem(IDMAP_KEY);
       _idMap = (r ? JSON.parse(r) : {}) || {};
     } catch (_) { _idMap = {}; }
+    // Legacy idmap stored stable local IDs (1, 2, 7, …) in one flat table shared by
+    // users, projects, tasks, etc. That made assigneeId 7 remap to e.g. project id 3.
+    let purged = false;
+    for (const key of Object.keys(_idMap)) {
+      if (!_isOfflineId(Number(key))) {
+        delete _idMap[key];
+        purged = true;
+      }
+    }
+    if (purged) _saveIdMap();
     _lastPullAt = Number(localStorage.getItem(PULL_KEY) || 0);
   }
 
@@ -78,6 +88,11 @@ const SyncEngine = (() => {
 
   function _remap(id) {
     if (id == null) return id;
+    const n = Number(id);
+    // Only offline temp IDs belong in the idmap. Stable cloud IDs (1, 2, 7, …) must
+    // never pass through — the flat map is shared across entity types and caused
+    // assignee/user FKs to be rewritten to unrelated rows (e.g. user 7 → user 3).
+    if (!Number.isFinite(n) || !_isOfflineId(n)) return id;
     const m = _idMap[String(id)];
     return m != null ? m : id;
   }
@@ -278,6 +293,13 @@ const SyncEngine = (() => {
         await _execOp(op);
         op.status = 'done';
         _lastError = '';
+        if (op.method === 'setUserClassrooms' && window.RealtimeSync?.broadcastTeamSync) {
+          const targetUserId = op.args?.[0];
+          window.RealtimeSync.broadcastTeamSync({
+            reason: 'userClassrooms',
+            userId: targetUserId != null ? Number(targetUserId) : null
+          }).catch(() => {});
+        }
       } catch (err) {
         const msg = String(err?.message || err);
         // Optional/not-yet-migrated schema: drop the op instead of letting it
@@ -343,10 +365,10 @@ const SyncEngine = (() => {
     const callArgs = REMOTE_ONLY_OPS.has(op.method) ? [...remapped, true] : remapped;
     const result = await sb[op.method](...callArgs);
 
-    // After a create: record local→remote ID mapping and patch LocalDB
+    // After a create: record offline local→remote ID mapping and patch LocalDB
     if (_isCreate(op.method) && op.localId != null && result != null) {
       const remoteId = typeof result === 'number' ? result : result?.id;
-      if (remoteId != null && String(op.localId) !== String(remoteId)) {
+      if (remoteId != null && String(op.localId) !== String(remoteId) && _isOfflineId(op.localId)) {
         _idMap[String(op.localId)] = remoteId;
         _saveIdMap();
         await _patchLocalId(op.method, op.localId, remoteId);
@@ -401,6 +423,17 @@ const SyncEngine = (() => {
     const valid = rows.filter(r => r?.id != null);
     if (!valid.length) return;
     await table.bulkPut(valid).catch(() => {});
+  }
+
+  // Cloud is source of truth for membership rows. bulkPut alone leaves revoked
+  // assignments in IndexedDB (e.g. user still sees old classrooms after admin restricts access).
+  async function _replaceCollection(table, rows) {
+    if (!table || !Array.isArray(rows)) return;
+    const valid = rows.filter(r => r?.id != null);
+    try {
+      await table.clear();
+      if (valid.length) await table.bulkPut(valid);
+    } catch (_) {}
   }
 
   async function _bulkPutByKey(table, rows, keyField = 'key') {
@@ -655,7 +688,7 @@ const SyncEngine = (() => {
       if (notifications.status === 'fulfilled') await _bulkPut(ldb.notifications,         notifications.value);
       if (accessRequests.status=== 'fulfilled') await _bulkPut(ldb.projectAccessRequests, accessRequests.value);
       if (bugReports.status    === 'fulfilled') await _bulkPutBugReports(ldb.bugReports,  bugReports.value);
-      if (userClassrooms.status=== 'fulfilled') await _bulkPut(ldb.userClassrooms,        userClassrooms.value);
+      if (userClassrooms.status=== 'fulfilled') await _replaceCollection(ldb.userClassrooms, userClassrooms.value || []);
       if (attachments.status   === 'fulfilled') await _bulkPutAttachments(ldb.attachments, attachments.value);
       if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));
       if (favorites.status     === 'fulfilled' && ldb.userFavorites) await _bulkPut(ldb.userFavorites, favorites.value);

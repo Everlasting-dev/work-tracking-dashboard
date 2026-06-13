@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.8
+
+### Fixed
+- **Task assignee sync** — `updateTask` now resolves assignee IDs through `_resolveSupabaseUserId` (matching `createTask`), so reassigned users like Usmani no longer revert to the wrong person (e.g. zain) after cloud sync.
+- **Sync ID map collision** — stable numeric IDs (users, projects, tasks) no longer pass through the shared offline idmap; legacy flat entries are purged on load. Fixes cases where `assigneeId: 7` was silently rewritten to `3`.
+- **Classroom access stale cache** — cloud pull replaces the full `userClassrooms` table instead of merge-only upsert, so revoked classroom access is removed from IndexedDB on the user's device.
+- **Push sync for classroom changes** — when an admin updates a user's classrooms and the change reaches Supabase, affected online clients receive a realtime broadcast and pull fresh membership data within about one second.
+
 ## 2.2.22
 
 ### Fixed

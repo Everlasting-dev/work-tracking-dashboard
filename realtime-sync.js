@@ -2,10 +2,12 @@
 
 const RealtimeSync = (() => {
   let _channel = null;
+  let _teamChannel = null;
   let _client = null;
   let _uid = null;
   let _connected = false;
   let _v3PullTimer = null;
+  let _teamPullTimer = null;
 
   function _getSession() {
     try {
@@ -280,6 +282,65 @@ const RealtimeSync = (() => {
     console.log('[RealtimeSync] User classroom changed:', { userId: row.user_id, classroomId: row.classroom_id, eventType });
   }
 
+  function _scheduleTeamPull(payload = {}) {
+    const session = _getSession();
+    if (!session?.userId || !navigator.onLine) return;
+    const targetUserId = payload.userId != null ? Number(payload.userId) : null;
+    // No userId → all online clients pull (team-wide). With userId → only that user pulls.
+    if (targetUserId != null && targetUserId !== Number(session.userId)) return;
+    clearTimeout(_teamPullTimer);
+    _teamPullTimer = setTimeout(async () => {
+      try {
+        if (window.SyncEngineV3?.pull) await window.SyncEngineV3.pull();
+        else if (window.SyncEngine?.pull) await window.SyncEngine.pull();
+        window.dispatchEvent(new CustomEvent('wt-sync-pulled'));
+      } catch (err) {
+        console.warn('[RealtimeSync] team sync pull failed', err);
+      }
+    }, 400);
+  }
+
+  function _initTeamChannel() {
+    if (!_client) return;
+    if (_teamChannel) {
+      try { _teamChannel.unsubscribe(); } catch (_) {}
+      _teamChannel = null;
+    }
+    _teamChannel = _client.channel('wt-team-sync', {
+      config: { broadcast: { ack: false, self: false } }
+    });
+    _teamChannel.on('broadcast', { event: 'sync' }, ({ payload }) => {
+      _scheduleTeamPull(payload || {});
+    });
+    _teamChannel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') console.warn('[RealtimeSync] team sync channel error');
+    });
+  }
+
+  async function broadcastTeamSync(detail = {}) {
+    if (!_client || !navigator.onLine) return false;
+    if (!_teamChannel) _initTeamChannel();
+    try {
+      const state = _teamChannel.state;
+      if (state !== 'joined' && state !== 'joining') {
+        await new Promise((resolve) => {
+          _teamChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') resolve();
+          });
+        });
+      }
+      await _teamChannel.send({
+        type: 'broadcast',
+        event: 'sync',
+        payload: { ...detail, at: Date.now() }
+      });
+      return true;
+    } catch (err) {
+      console.warn('[RealtimeSync] broadcastTeamSync failed', err);
+      return false;
+    }
+  }
+
   function _subscribe(table, handler, filter) {
     const cfg = { event: '*', schema: 'public', table };
     if (filter) cfg.filter = filter;
@@ -309,6 +370,12 @@ const RealtimeSync = (() => {
       try { _channel.unsubscribe(); } catch (_) {}
       _channel = null;
     }
+    if (_teamChannel) {
+      try { _teamChannel.unsubscribe(); } catch (_) {}
+      _teamChannel = null;
+    }
+    clearTimeout(_v3PullTimer);
+    clearTimeout(_teamPullTimer);
     _connected = false;
     _uid = null;
     window.dispatchEvent(new CustomEvent('wt-realtime-status', { detail: { connected: false } }));
@@ -337,6 +404,7 @@ const RealtimeSync = (() => {
         'profiles', 'projects', 'project_members', 'tasks', 'project_updates',
         'documents', 'notifications', 'activity_log', 'error_reports'
       ].forEach(_subscribeV3);
+      _initTeamChannel();
     } else {
       _subscribe('wt_notifications', _handleNotification, `user_id=eq.${uid}`);
       _subscribe('wt_activity_log', _handleActivityLog);
@@ -348,6 +416,7 @@ const RealtimeSync = (() => {
       _subscribe('wt_updates', _handleUpdate);
       _subscribe('wt_calendar_events', _handleCalendarEvent);
       _subscribe('wt_user_classrooms', _handleUserClassroom, `user_id=eq.${uid}`);
+      _initTeamChannel();
     }
 
     return new Promise((resolve) => {
@@ -366,7 +435,7 @@ const RealtimeSync = (() => {
     return init(session.userId);
   }
 
-  return { init, stop, restart, isConnected };
+  return { init, stop, restart, isConnected, broadcastTeamSync };
 })();
 
 window.RealtimeSync = RealtimeSync;

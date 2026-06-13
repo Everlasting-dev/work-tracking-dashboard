@@ -1942,7 +1942,14 @@ const SupabaseDB = {
     if (changes.priority != null) patch.priority = changes.priority;
     if (changes.dueDate != null) patch.due_date = changes.dueDate;
     if (changes.milestoneId !== undefined) patch.milestone_id = changes.milestoneId;
-    if (changes.assigneeId !== undefined) patch.assignee_id = changes.assigneeId == null ? null : Number(changes.assigneeId);
+    if (changes.assigneeId !== undefined) {
+      if (changes.assigneeId == null) {
+        patch.assignee_id = null;
+      } else {
+        // Match createTask: local Dexie IDs can differ from wt_users.id (offline drift).
+        patch.assignee_id = await this._resolveSupabaseUserId(Number(changes.assigneeId));
+      }
+    }
     if (changes.workflowStepKey !== undefined) patch.workflow_step_key = changes.workflowStepKey || '';
     if (changes.notes !== undefined) patch.notes = changes.notes ?? '';
     if (changes.customFields !== undefined) patch.custom_fields = JSON.stringify(changes.customFields ?? []);
