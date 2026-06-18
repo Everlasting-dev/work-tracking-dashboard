@@ -4782,7 +4782,10 @@ body.theme-black .projects-search-wrap kbd { background: #18181b; border-color: 
   width: 11px; height: 11px; border-radius: 50%;
   background: var(--border); border: 2px solid var(--card);
 }
-.presence-dot--on { background: var(--green); box-shadow: 0 0 0 0 rgba(16,185,129,0.5); animation: presencePulse 2s infinite; }
+.presence-dot--on,
+.presence-dot--active { background: var(--green); box-shadow: 0 0 0 0 rgba(16,185,129,0.5); animation: presencePulse 2s infinite; }
+.presence-dot--idle { background: #f59e0b; }
+.presence-dot--away { background: var(--border); }
 @keyframes presencePulse {
   0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); }
   70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
@@ -6168,6 +6171,19 @@ body.theme-black .chat-msg-mine .chat-msg-bubble a { color: #1d4ed8 !important; 
 .task-cf-label { color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.65rem; }
 .task-cf-value { color: var(--text); font-weight: 700; font-family: 'SF Mono',Consolas,monospace; }
 .task-cf-more { font-size: 0.7rem; color: var(--text-muted); align-self: center; }
+/* Black theme: the indigo chip is near-invisible and the muted label washes
+   out on the dark card — give the chip a visible surface and bright text. */
+body.theme-black .task-cf-chip {
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.14) !important;
+}
+body.theme-black .task-cf-chip:hover {
+  background: rgba(255,255,255,0.1) !important;
+  border-color: rgba(255,255,255,0.22) !important;
+}
+body.theme-black .task-cf-label { color: #c7c7cc !important; }
+body.theme-black .task-cf-value { color: #f4f4f5 !important; }
+body.theme-black .task-cf-more { color: #c7c7cc !important; }
 
 /* ─── UI v3: Notes panel ─── */
 .notes-backdrop {
@@ -7258,6 +7274,26 @@ body.theme-black .activity-map-d3-wrap {
   filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.25));
 }
 
+/* ── Brainstorm canvas: room list ──────────────────────────────── */
+.canvas-rooms { max-width: 1000px; }
+.canvas-rooms-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.canvas-rooms-head h1 { margin: 0 0 4px; }
+.canvas-new-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); }
+.canvas-new-form.hidden { display: none; }
+.canvas-new-name { flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 0.9rem; }
+.canvas-new-private { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.85rem; }
+.canvas-rooms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.canvas-room-card {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); color: var(--text); cursor: pointer; text-align: left;
+  transition: border-color var(--transition), transform 0.1s ease;
+}
+.canvas-room-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.canvas-room-name { font-weight: 700; font-size: 0.95rem; }
+.canvas-room-meta { color: var(--text-muted); font-size: 0.76rem; }
+.canvas-room-header { display: flex; align-items: center; justify-content: space-between; }
+
 /* ── tldraw collaborative canvas ───────────────────────────────── */
 .orbi-canvas-mount {
   position: relative;
@@ -7300,7 +7336,10 @@ body.theme-black .activity-map-d3-wrap {
 .orbi-node-body { padding: 9px 12px 11px; }
 .orbi-node-title { font-size: 0.86rem; font-weight: 700; color: var(--text); line-height: 1.3; }
 .orbi-node-who { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
-.orbi-handle { width: 9px; height: 9px; background: #38bdf8; border: 2px solid var(--card); }
+/* Plain node look: connection dots stay invisible at rest, fade in only on
+   node hover so there are no arrowhead/handle symbols cluttering the map. */
+.orbi-handle { width: 8px; height: 8px; background: #38bdf8; border: 2px solid var(--card); opacity: 0; transition: opacity 0.15s ease; }
+.orbi-node:hover .orbi-handle { opacity: 0.9; }
 body.theme-black .react-flow__controls-button {
   background: #1c1c23; border-bottom: 1px solid rgba(255,255,255,0.08); fill: #e8e8ee; color: #e8e8ee;
 }
@@ -7738,52 +7777,16 @@ body.theme-black .clock-bar-fill--week { background: #f4f4f5 !important; }
   overflow: hidden;
 }
 
-.note-editor-wrap:not(:focus-within) .ql-toolbar {
-  opacity: 0;
-  pointer-events: none;
-  height: 0;
-  overflow: hidden;
-}
-
-.note-quill-editor {
+/* BlockNote notes editor (replaces Quill). BlockNote ships its own themed
+   styles via the light/dark theme prop; we only size the container. */
+.note-blocknote-editor {
   background: var(--card);
-  border: none;
   min-height: 120px;
-  padding: 14px;
   font-size: 14px;
-  color: var(--text);
 }
-
-.note-quill-editor.ql-editor {
-  padding: 14px;
-  line-height: 1.6;
-}
-
-.ql-toolbar {
-  background: var(--bg);
-  border: none;
-  border-bottom: 1px solid var(--border);
-  padding: 8px;
-}
-
-.ql-toolbar button {
-  color: var(--text);
-  border: none;
-}
-
-.ql-toolbar button:hover,
-.ql-toolbar button.ql-active {
-  color: var(--accent);
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.ql-toolbar.ql-snow {
-  border: none;
-}
-
-.ql-container.ql-snow {
-  border: none;
-}
+.note-blocknote-editor .bn-container,
+.note-blocknote-editor .bn-editor { background: transparent; }
+.note-blocknote-editor [contenteditable] { min-height: 100px; }
 
 /* ── Layout alignment fixes ── */
 .activity-page-row .dash-act-av { width: 34px; height: 34px; font-size: 0.85rem; }

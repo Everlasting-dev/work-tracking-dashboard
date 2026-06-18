@@ -584,6 +584,7 @@ async function copilotCreateProjectWithTasks(spec, opts = {}) {
     }
   }
 
+  window.OrbiObs?.track('project_created', { source: 'ai', tasks: created.length });
   return { id: projectId, name: spec.name, taskCount: created.length };
 }
 window.copilotCreateProjectWithTasks = copilotCreateProjectWithTasks;
@@ -601,50 +602,6 @@ async function copilotGetClassrooms() {
   } catch (_) { return []; }
 }
 window.copilotGetClassrooms = copilotGetClassrooms;
-
-/* ──── Collaborative canvas persistence ──────────────────────────────────
-   Canvas docs are stored OUTSIDE the normal sync queue (own IndexedDB +
-   a dedicated wt_canvas_documents table) so the Yjs blob never collides with
-   the task/project last-write-wins pipeline. Local saves keep it offline; the
-   cloud upsert lets other machines load it (live edits flow over Realtime). */
-let _canvasDB = null;
-function _getCanvasDB() {
-  if (_canvasDB !== null) return _canvasDB;
-  try {
-    _canvasDB = new Dexie('orbitrack-canvas');
-    _canvasDB.version(1).stores({ docs: '&projectId' });
-  } catch (_) { _canvasDB = false; }
-  return _canvasDB;
-}
-async function canvasLoadDoc(projectId) {
-  const pid = Number(projectId);
-  try {
-    const cdb = _getCanvasDB();
-    const row = cdb ? await cdb.docs.get(pid) : null;
-    if (row?.doc) return row.doc;
-  } catch (_) {}
-  try {
-    if (isCloudMode() && !isOffline()) {
-      const sb = window.SupabaseDB?._client;
-      if (sb) {
-        const { data } = await sb.from('wt_canvas_documents').select('doc').eq('project_id', pid).maybeSingle();
-        if (data?.doc) return data.doc;
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-async function canvasSaveDoc(projectId, b64) {
-  const pid = Number(projectId);
-  const now = new Date().toISOString();
-  try { const cdb = _getCanvasDB(); if (cdb) await cdb.docs.put({ projectId: pid, doc: b64, updatedAt: now }); } catch (_) {}
-  try {
-    if (isCloudMode() && !isOffline()) {
-      const sb = window.SupabaseDB?._client;
-      if (sb) await sb.from('wt_canvas_documents').upsert({ project_id: pid, doc: b64, updated_at: now }, { onConflict: 'project_id' });
-    }
-  } catch (_) {}
-}
 
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
 
@@ -1578,6 +1535,8 @@ async function handleAuth(e) {
     if (prevUserId && prevUserId !== newUserId) resetClientState();
     localStorage.setItem(LAST_USER_KEY, newUserId);
     setSession(user, { remember: fd.get('rememberDevice') === 'on' });
+    window.OrbiObs?.identify(user.id);
+    window.OrbiObs?.track('login');
     // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
     captureLastSeen(user.id).then(async () => {
       const fresh = await DB.getUser(user.id);
@@ -2177,6 +2136,7 @@ async function renderProjects() {
         })() : ''}
       </div>
       <div class="projects-page-actions">
+        <a class="btn btn-ghost" href="#/canvas">${ICONS.edit || ICONS.plus} Brainstorm</a>
         <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} Task</button>
         <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
       </div>
@@ -3228,7 +3188,6 @@ async function renderProjectDetail(projectId) {
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'board' ? 'active' : ''}" data-action="switch-tab" data-tab="board" data-project-id="${projectId}">Board</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
-          ${canSeeTasks ? `<button class="tab-btn ${tab === 'canvas' ? 'active' : ''}" data-action="switch-tab" data-tab="canvas" data-project-id="${projectId}">Canvas</button>` : ''}
         </div>
         <div id="tab-content"></div>
       </section>
@@ -3607,24 +3566,6 @@ async function renderTab(tab, projectId, editable) {
       });
     } else {
       el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
-    }
-  } else if (tab === 'canvas') {
-    // Real-time collaborative whiteboard (tldraw + Yjs over Supabase Realtime).
-    if (window.OrbiCanvas) {
-      el.innerHTML = `<p class="text-muted text-sm tab-hint">Brainstorm together — sketch notes, boxes, and arrows. Edits sync live with everyone in this project.</p><div id="orbi-canvas-mount" class="orbi-canvas-mount"></div>`;
-      const mountEl = el.querySelector('#orbi-canvas-mount');
-      const s = getSession();
-      window.OrbiCanvas.mount(mountEl, {
-        projectId,
-        channelName: `canvas:project:${projectId}`,
-        user: { id: s?.userId, name: s?.displayName || s?.username || 'Teammate', color: s?.color || '#38bdf8' },
-        supabase: window.SupabaseDB?._client,
-      }, {
-        loadDoc: () => canvasLoadDoc(projectId),
-        saveDoc: (b64) => canvasSaveDoc(projectId, b64),
-      });
-    } else {
-      el.innerHTML = emptyState({ icon: 'edit', title: 'Canvas unavailable', description: 'The collaborative canvas module failed to load.' });
     }
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
@@ -7930,9 +7871,11 @@ const actions = {
     patchTaskInCache(t.id, { status: nextStatus });
     await applyTaskStatusSideEffects(p, t, nextStatus, uid, projectTasks, projectAttachments);
     // Celebrate only the big moment: this task was the last one to finish.
-    if (nextStatus === 'done' && projectTasks.length > 1
-      && projectTasks.filter(x => x.id !== t.id && x.status !== 'done').length === 0) {
-      window.OrbiFun?.celebrate({ big: true });
+    if (nextStatus === 'done') {
+      window.OrbiObs?.track('task_completed');
+      if (projectTasks.length > 1 && projectTasks.filter(x => x.id !== t.id && x.status !== 'done').length === 0) {
+        window.OrbiFun?.celebrate({ big: true });
+      }
     }
     await router();
   },
@@ -8854,11 +8797,16 @@ function revokeLibraryPreviewUrls() {
 
 const PRESENCE_ONLINE_MS = 3 * 60 * 1000; // a user seen within 3 min is "online"
 let _presenceTimer = null;
+let _idleSeconds = 0;
 
 function startPresenceHeartbeat() {
   stopPresenceHeartbeat();
+  // On desktop, learn OS idle time from powerMonitor (via IPC) so we only
+  // refresh presence while the machine is actually being used.
+  try { window.workTrackerDesktop?.onIdleState?.((p) => { _idleSeconds = Number(p?.idleSeconds) || 0; }); } catch (_) {}
   const beat = () => {
     if (document.visibilityState === 'hidden') return;
+    if (window.workTrackerDesktop && _idleSeconds >= 90) return; // idle/away → let presence age
     const uid = actorId();
     if (uid && DB.touchLastSeen) DB.touchLastSeen(uid).catch(() => {});
   };
@@ -8886,14 +8834,27 @@ function sortUsersByPresence(users) {
     return bT - aT;
   });
 }
+const PRESENCE_IDLE_MS = 15 * 60 * 1000; // seen within 15 min but not active = "idle"
 function isUserOnline(user) {
   if (!user?.lastSeenAt) return false;
   const t = Date.parse(user.lastSeenAt);
   return !isNaN(t) && (Date.now() - t) < PRESENCE_ONLINE_MS;
 }
+// Three-state presence derived from lastSeenAt freshness. The presence
+// heartbeat only refreshes lastSeenAt while the machine is active (powerMonitor
+// on desktop), so a stale-but-recent timestamp means idle, older means away.
+function presenceState(user) {
+  if (!user?.lastSeenAt) return 'away';
+  const age = Date.now() - Date.parse(user.lastSeenAt);
+  if (isNaN(age)) return 'away';
+  if (age < PRESENCE_ONLINE_MS) return 'active';
+  if (age < PRESENCE_IDLE_MS) return 'idle';
+  return 'away';
+}
 function presenceDotHtml(user) {
-  const on = isUserOnline(user);
-  return `<span class="presence-dot ${on ? 'presence-dot--on' : ''}" title="${on ? 'Online' : (user?.lastSeenAt ? 'Last active ' + timeAgo(user.lastSeenAt) : 'Offline')}"></span>`;
+  const st = presenceState(user);
+  const label = st === 'active' ? 'Active now' : st === 'idle' ? 'Idle' : (user?.lastSeenAt ? 'Last active ' + timeAgo(user.lastSeenAt) : 'Offline');
+  return `<span class="presence-dot presence-dot--${st}" title="${label}"></span>`;
 }
 
 /* ──── Ranking explanation (Phase 4) ──── */
@@ -9064,6 +9025,7 @@ async function router() {
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/users') await renderUsers();
   else if (hash === '/chat') await window.WTChat?.renderRoute?.();
+  else if (hash === '/canvas') await window.WTCanvas?.renderRoute?.();
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/support') await renderSupportPage();

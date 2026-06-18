@@ -20,6 +20,8 @@
     "build:orbiflow": "esbuild build-src/orbiflow.jsx --bundle --format=iife --jsx=automatic --minify --outfile=vendor/orbiflow/orbiflow.js",
     "build:orbifun": "esbuild build-src/orbifun.js --bundle --format=iife --minify --outfile=vendor/orbifun/orbifun.js",
     "build:orbicanvas": "esbuild build-src/orbicanvas.jsx --bundle --format=iife --jsx=automatic --minify --outfile=vendor/orbicanvas/orbicanvas.js",
+    "build:orbinotes": "esbuild build-src/orbinotes.jsx --bundle --format=iife --jsx=automatic --minify --conditions=style,import --loader:.woff=dataurl --loader:.woff2=dataurl --loader:.ttf=dataurl --loader:.svg=dataurl --outfile=vendor/orbinotes/orbinotes.js",
+    "build:orbiobs": "esbuild build-src/orbiobs.js --bundle --format=iife --minify --outfile=vendor/orbiobs/orbiobs.js",
     "dist": "electron-builder --win nsis",
     "dist:win": "electron-builder --win nsis",
     "publish:win": "electron-builder --win nsis --publish always"
@@ -28,6 +30,12 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "@blocknote/core": "^0.51.4",
+    "@blocknote/mantine": "^0.51.4",
+    "@blocknote/react": "^0.51.4",
+    "@mantine/core": "^9.3.2",
+    "@mantine/hooks": "^9.3.2",
+    "@sentry/browser": "^10.58.0",
     "@xyflow/react": "^12.11.0",
     "canvas-confetti": "^1.9.4",
     "electron": "^33.4.11",
@@ -35,6 +43,7 @@
     "esbuild": "^0.28.1",
     "lucide": "^1.20.0",
     "motion": "^12.40.0",
+    "posthog-js": "^1.390.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tldraw": "^5.1.1",
@@ -55,6 +64,7 @@
       "app.js",
       "notes.js",
       "chat.js",
+      "canvas.js",
       "reports.js",
       "ui.js",
       "bootstrap.js",

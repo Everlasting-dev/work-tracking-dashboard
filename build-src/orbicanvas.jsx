@@ -163,8 +163,25 @@ function CanvasApp({ data, handlers }) {
   }, [store, data, handlers]);
 
   return React.createElement('div', { style: { position: 'absolute', inset: 0 } },
-    React.createElement(Tldraw, { store })
+    React.createElement(Tldraw, { store, onMount: (editor) => { data.__onEditor && data.__onEditor(editor); } })
   );
+}
+
+// Pull plain text out of every text-bearing shape, so the canvas can be handed
+// to the AI Copilot to turn a brainstorm into a real project.
+function extractText(editor) {
+  if (!editor) return '';
+  try {
+    const shapes = editor.getCurrentPageShapes();
+    const lines = [];
+    for (const shape of shapes) {
+      let t = '';
+      try { t = editor.getShapeUtil(shape).getText?.(shape) || ''; } catch (_) {}
+      if (!t && typeof shape.props?.text === 'string') t = shape.props.text;
+      if (t && t.trim()) lines.push(t.trim());
+    }
+    return lines.join('\n');
+  } catch (_) { return ''; }
 }
 
 const roots = new WeakMap();
@@ -173,8 +190,14 @@ function mount(container, data = {}, handlers = {}) {
   if (!container) return;
   let root = roots.get(container);
   if (!root) { root = createRoot(container); roots.set(container, root); }
+  const handle = {
+    _editor: null,
+    getText() { return extractText(this._editor); },
+    unmount() { try { root.unmount(); } catch (_) {} roots.delete(container); },
+  };
+  data.__onEditor = (editor) => { handle._editor = editor; };
   root.render(React.createElement(CanvasApp, { data, handlers }));
-  return { unmount() { try { root.unmount(); } catch (_) {} roots.delete(container); } };
+  return handle;
 }
 
 window.OrbiCanvas = { mount };

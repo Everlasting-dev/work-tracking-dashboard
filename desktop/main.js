@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell, clipboard, powerMonitor } = require('electron');
 
 let mainWindow;
 let checkingForUpdates = false;
@@ -267,7 +267,24 @@ app.whenReady().then(() => {
     autoCheckDone = true;
     setTimeout(() => checkForUpdates({ manual: false }), 10000);
   }
+
+  startIdleReporting();
 });
+
+// Report OS idle time to the renderer so it can show active / idle / away
+// presence (powerMonitor.getSystemIdleTime returns seconds since last input).
+function startIdleReporting() {
+  const send = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    let idleSeconds = 0;
+    try { idleSeconds = powerMonitor.getSystemIdleTime(); } catch (_) {}
+    let state = 'active';
+    try { state = powerMonitor.getSystemIdleState(60); } catch (_) {}
+    mainWindow.webContents.send('idle:state', { idleSeconds, state });
+  };
+  setInterval(send, 30000);
+  setTimeout(send, 4000);
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

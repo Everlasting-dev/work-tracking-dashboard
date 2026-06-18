@@ -15,9 +15,8 @@
   <link rel="stylesheet" href="vendor/orbicanvas/orbicanvas.css?v=3.0.11">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js"></script>
-  <!-- Quill rich-text editor for notes -->
-  <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
+  <!-- BlockNote rich-text editor island styles (replaces Quill) -->
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.0.11">
   <!-- jsPDF for PDF report generation -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
@@ -223,6 +222,13 @@
 
   <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.0.11';</script>
   <script src="config.js?v=3.0.11"></script>
+  <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
+  <script src="vendor/orbiobs/orbiobs.js?v=3.0.11"></script>
+  <script>
+    window.OrbiObs && window.OrbiObs.init();
+    window.addEventListener('error', (e) => window.OrbiObs && window.OrbiObs.captureError(e.error || e.message));
+    window.addEventListener('unhandledrejection', (e) => window.OrbiObs && window.OrbiObs.captureError(e.reason));
+  </script>
   <script src="vendor/dexie.min.js?v=3.0.11"></script>
   <script src="vendor/supabase.min.js?v=3.0.11"></script>
   <script src="db.js?v=3.0.11"></script>
@@ -236,6 +242,7 @@
   <script src="app.js?v=3.0.11"></script>
   <script src="notes.js?v=3.0.11"></script>
   <script src="chat.js?v=3.0.11"></script>
+  <script src="canvas.js?v=3.0.11"></script>
   <script src="reports.js?v=3.0.11"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
   <script src="ui.js?v=3.0.11"></script>
@@ -247,5 +254,7 @@
   <script src="vendor/orbifun/orbifun.js?v=3.0.11"></script>
   <!-- tldraw collaborative canvas island — bundled React + tldraw + Yjs -->
   <script src="vendor/orbicanvas/orbicanvas.js?v=3.0.11"></script>
+  <!-- BlockNote notes editor island — bundled React + @blocknote -->
+  <script src="vendor/orbinotes/orbinotes.js?v=3.0.11"></script>
 </body>
 </html>

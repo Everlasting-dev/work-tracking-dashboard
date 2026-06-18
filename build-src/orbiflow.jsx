@@ -9,7 +9,7 @@ import React, { useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap,
-  Handle, Position, MarkerType, useNodesState, useEdgesState, addEdge,
+  Handle, Position, useNodesState, useEdgesState, addEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -86,8 +86,7 @@ function Graph({ data, handlers }) {
     source: e.source,
     target: e.target,
     type: 'default',
-    animated: true,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#38bdf8' },
+    animated: false,
     style: { stroke: '#38bdf8', strokeWidth: 2 },
   })), [data]);
 
@@ -100,8 +99,7 @@ function Graph({ data, handlers }) {
     setEdges((eds) => addEdge({
       ...params,
       id: `e-${params.source}-${params.target}`,
-      animated: true,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#38bdf8' },
+      animated: false,
       style: { stroke: '#38bdf8', strokeWidth: 2 },
     }, eds));
     handlers.onConnect && handlers.onConnect(params.source, params.target);

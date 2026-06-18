@@ -4,6 +4,8 @@
 /* ──── UI v3: Personal notes panel ──── */
 let _notesPanelOpen = false;
 let _notesSaveTimers = {};
+let _noteContent = {};   // noteId -> HTML, fed to BlockNote on mount
+let _noteEditors = {};   // noteId -> island handle (for teardown)
 function formatNoteTime(iso) {
   if (!iso) return '';
   try {
@@ -25,35 +27,44 @@ async function renderNotesPanel(focusNoteId = null) {
     list.innerHTML = `<p class="notes-panel-empty">${q ? 'No notes match your search.' : 'Click + to add your first note.'}</p>`;
     return;
   }
+  _teardownNoteEditors();
+  _noteContent = {};
+  notes.forEach(n => { _noteContent[n.id] = n.content || ''; });
   list.innerHTML = notes.map((n, i) => `
     <div class="note-editor-wrap" data-note-id="${n.id}" style="animation-delay:${Math.min(i * 40, 200)}ms">
       <div class="notes-sticky-top">
         <span class="notes-sticky-time">${esc(formatNoteTime(n.updatedAt || n.createdAt))}</span>
         <button type="button" class="notes-sticky-delete" data-action="delete-personal-note" data-id="${n.id}" title="Delete note" aria-label="Delete note">×</button>
       </div>
-      <div class="note-quill-editor" data-note-id="${n.id}">${n.content || ''}</div>
+      <div class="note-blocknote-editor" data-note-id="${n.id}"></div>
     </div>`).join('');
-  if (window.Quill) _initNoteEditors(focusNoteId);
+  _initNoteEditors(focusNoteId);
 }
 
-function _initNoteEditors(focusNoteId = null) {
+function _initNoteEditors() {
   const list = document.getElementById('notes-panel-list');
   if (!list) return;
-  list.querySelectorAll('.note-quill-editor:not([data-quill-initialized])').forEach(edEl => {
+  const theme = document.body.classList.contains('theme-black') ? 'dark' : 'light';
+  list.querySelectorAll('.note-blocknote-editor:not([data-bn-initialized])').forEach(edEl => {
     const noteId = Number(edEl.dataset.noteId);
-    edEl.setAttribute('data-quill-initialized', 'true');
-    const editor = new Quill(edEl, {
-      theme: 'snow',
-      modules: { toolbar: ['bold', 'italic', 'underline', { list: 'bullet' }, { list: 'ordered' }, 'link'] }
-    });
-    editor.on('text-change', () => {
-      const html = editor.root.innerHTML;
-      scheduleNoteSave(noteId, html);
-    });
-    if (focusNoteId === noteId) {
-      requestAnimationFrame(() => editor.focus());
+    edEl.setAttribute('data-bn-initialized', 'true');
+    const initialHTML = _noteContent[noteId] || '';
+    if (window.OrbiNotes?.mount) {
+      _noteEditors[noteId] = window.OrbiNotes.mount(edEl, { initialHTML, theme }, {
+        onChangeHTML: (html) => scheduleNoteSave(noteId, html),
+      });
+    } else {
+      // Fallback if the BlockNote island didn't load: editable HTML.
+      edEl.innerHTML = initialHTML;
+      edEl.contentEditable = 'true';
+      edEl.addEventListener('input', () => scheduleNoteSave(noteId, edEl.innerHTML));
     }
   });
+}
+
+function _teardownNoteEditors() {
+  Object.values(_noteEditors).forEach(h => { try { h?.unmount?.(); } catch (_) {} });
+  _noteEditors = {};
 }
 function openNotesPanel() {
   const panel = document.getElementById('notes-panel');
@@ -68,6 +79,7 @@ function openNotesPanel() {
 }
 function closeNotesPanel() {
   _notesPanelOpen = false;
+  _teardownNoteEditors();
   document.body.classList.remove('notes-panel-open');
   document.getElementById('notes-panel')?.classList.add('hidden');
   document.getElementById('notes-backdrop')?.classList.add('hidden');

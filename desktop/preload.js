@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('updater:status', listener);
     return () => ipcRenderer.removeListener('updater:status', listener);
+  },
+  onIdleState: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('idle:state', listener);
+    return () => ipcRenderer.removeListener('idle:state', listener);
   }
 });
 
