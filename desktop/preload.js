@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const { version: PKG_VERSION } = require('../package.json');
+const PKG_VERSION = process.env.npm_package_version || '3.0.10';
 
 contextBridge.exposeInMainWorld('workTrackerDesktop', {
   isDesktop: true,

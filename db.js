@@ -434,13 +434,14 @@ const LocalDB = {
 
   async getActivityLog(filters = {}) {
     let rows = await db.activityLog.toArray();
-    if (filters.projectId != null) rows = rows.filter(r => r.projectId === filters.projectId);
-    if (filters.userId != null) rows = rows.filter(r => r.userId === filters.userId);
+    if (filters.projectId != null) rows = rows.filter(r => Number(r.projectId) === Number(filters.projectId));
+    if (filters.userId != null) rows = rows.filter(r => Number(r.userId) === Number(filters.userId));
     if (filters.viewerUserId != null && !filters.isAdmin) {
-      rows = rows.filter(r => r.userId === filters.viewerUserId);
+      rows = rows.filter(r => Number(r.userId) === Number(filters.viewerUserId));
     }
-    if (filters.limit) rows = rows.slice(0, filters.limit);
-    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    if (filters.limit) rows = rows.slice(0, Number(filters.limit));
+    return rows;
   },
 
   /* Notifications (in-app bell) */

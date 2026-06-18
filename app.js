@@ -83,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.0.7'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.0.10'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -177,87 +177,6 @@ async function applyClassroomTheme(classroomId) {
     console.warn('[Theme] classroom theme application failed:', err);
   }
 }
-
-/* ──── UI v3: Personal notes panel ──── */
-let _notesPanelOpen = false;
-let _notesSaveTimers = {};
-function formatNoteTime(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  } catch (_) { return ''; }
-}
-
-async function renderNotesPanel(focusNoteId = null) {
-  const list = document.getElementById('notes-panel-list');
-  const searchEl = document.getElementById('notes-panel-search');
-  if (searchEl && searchEl.value !== (state.notesSearch || '')) searchEl.value = state.notesSearch || '';
-  if (!list || !DB.getPersonalNotes) return;
-  const uid = getSession()?.userId;
-  if (!uid) { list.innerHTML = '<p class="notes-panel-empty">Sign in to use notes.</p>'; return; }
-  const q = (state.notesSearch || '').trim().toLowerCase();
-  let notes = await DB.getPersonalNotes(uid);
-  if (q) notes = notes.filter(n => (n.content || '').toLowerCase().includes(q));
-  if (!notes.length) {
-    list.innerHTML = `<p class="notes-panel-empty">${q ? 'No notes match your search.' : 'Click + to add your first note.'}</p>`;
-    return;
-  }
-  list.innerHTML = notes.map((n, i) => `
-    <div class="note-editor-wrap" data-note-id="${n.id}" style="animation-delay:${Math.min(i * 40, 200)}ms">
-      <div class="notes-sticky-top">
-        <span class="notes-sticky-time">${esc(formatNoteTime(n.updatedAt || n.createdAt))}</span>
-        <button type="button" class="notes-sticky-delete" data-action="delete-personal-note" data-id="${n.id}" title="Delete note" aria-label="Delete note">×</button>
-      </div>
-      <div class="note-quill-editor" data-note-id="${n.id}">${n.content || ''}</div>
-    </div>`).join('');
-  if (window.Quill) _initNoteEditors(focusNoteId);
-}
-
-function _initNoteEditors(focusNoteId = null) {
-  const list = document.getElementById('notes-panel-list');
-  if (!list) return;
-  list.querySelectorAll('.note-quill-editor:not([data-quill-initialized])').forEach(edEl => {
-    const noteId = Number(edEl.dataset.noteId);
-    edEl.setAttribute('data-quill-initialized', 'true');
-    const editor = new Quill(edEl, {
-      theme: 'snow',
-      modules: { toolbar: ['bold', 'italic', 'underline', { list: 'bullet' }, { list: 'ordered' }, 'link'] }
-    });
-    editor.on('text-change', () => {
-      const html = editor.root.innerHTML;
-      scheduleNoteSave(noteId, html);
-    });
-    if (focusNoteId === noteId) {
-      requestAnimationFrame(() => editor.focus());
-    }
-  });
-}
-function openNotesPanel() {
-  const panel = document.getElementById('notes-panel');
-  const backdrop = document.getElementById('notes-backdrop');
-  if (!panel) return;
-  _notesPanelOpen = true;
-  document.body.classList.add('notes-panel-open');
-  panel.classList.remove('hidden');
-  backdrop?.classList.remove('hidden');
-  renderNotesPanel();
-  renderChatDock().catch(() => {});
-}
-function closeNotesPanel() {
-  _notesPanelOpen = false;
-  document.body.classList.remove('notes-panel-open');
-  document.getElementById('notes-panel')?.classList.add('hidden');
-  document.getElementById('notes-backdrop')?.classList.add('hidden');
-  renderChatDock().catch(() => {});
-}
-function scheduleNoteSave(id, content) {
-  clearTimeout(_notesSaveTimers[id]);
-  _notesSaveTimers[id] = setTimeout(async () => {
-    if (DB.updatePersonalNote) await DB.updatePersonalNote(Number(id), { content });
-  }, 400);
-}
-
-/* ──── Config ──── */
 
 const TYPE_CFG  = { 'project': { l: 'Project', c: 'blue' }, 'research': { l: 'Research', c: 'purple' }, 'idea': { l: 'Idea', c: 'amber' } };
 const STAT_CFG  = { 'active': { l: 'Active', c: 'green' }, 'completed': { l: 'Completed', c: 'blue' }, 'on-hold': { l: 'On Hold', c: 'amber' }, 'archived': { l: 'Archived', c: 'muted' } };
@@ -442,6 +361,15 @@ const EMPTY_ICONS = {
   activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
 };
 
+const PROJECT_EMPTY_ASCII = String.raw`
+    +--------+
+   /        /|
+  +--------+ |
+  |  [] [] | |
+  |   __   | /
+  +--------+
+`.trim();
+
 function emptyState(opts) {
   if (typeof opts === 'string') return `<div class="empty-state">${esc(opts)}</div>`;
   const {
@@ -466,6 +394,40 @@ function emptyState(opts) {
 }
 
 /* ──── Session ──── */
+
+function projectFirstRunEmptyState() {
+  return `<section class="project-empty-onboarding" aria-labelledby="project-empty-title">
+    <pre class="project-empty-ascii" aria-hidden="true">${esc(PROJECT_EMPTY_ASCII)}</pre>
+    <h2 id="project-empty-title">Projects</h2>
+    <p>Projects are larger units of work with a clear outcome. They can hold tasks, milestones, notes, files, and teammates in one place.</p>
+    <div class="onboarding-tiles" aria-label="Getting started">
+      <button type="button" class="onboarding-tile onboarding-tile-primary" data-action="create-starter-project">
+        <span class="onboarding-tile-icon">${ICONS.checkCircle}</span>
+        <strong>Start guided mission</strong>
+        <span>Create a tiny onboarding project with tasks you can complete.</span>
+      </button>
+      <button type="button" class="onboarding-tile" data-action="add-project">
+        <span class="onboarding-tile-icon">${ICONS.folder}</span>
+        <strong>Create a real project</strong>
+        <span>Set a goal, add tasks, and track progress.</span>
+      </button>
+      <a class="onboarding-tile" href="#/tasks">
+        <span class="onboarding-tile-icon">${ICONS.tasks}</span>
+        <strong>Open task views</strong>
+        <span>Use Board and Table to scan work quickly.</span>
+      </a>
+      <button type="button" class="onboarding-tile" data-action="open-command-palette">
+        <span class="onboarding-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+        <strong>Try Ctrl + K</strong>
+        <span>Search projects, jump to tasks, or create work.</span>
+      </button>
+    </div>
+    <div class="project-empty-actions">
+      <button type="button" class="btn btn-primary" data-action="create-starter-project">${ICONS.plus} Create starter mission</button>
+      <button type="button" class="btn btn-ghost" data-action="add-project">Create blank project</button>
+    </div>
+  </section>`;
+}
 
 const TRUSTED_SESSION_KEY = 'wt-trusted-session-v1';
 const TRUSTED_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -678,29 +640,21 @@ function loadPersistedWorkspaceCache() {
 
 function resetClientState() {
   bustWorkspaceCache();
-  stopChatDockPolling();
+  window.WTChat?.reset?.();
   stopPresenceHeartbeat();
-  state.chatDockOpen = false;
-  state.chatChannel = null;
-  state.chatDockView = 'list';
-  state.chatDockSearch = '';
-  state.chatUsersMap = {};
   state.notesSearch = '';
   state.lastMainRoute = '/projects';
-  state.rankingPanelOpen = true;
+  state.rankingPanelOpen = false;
+  state.projectPanelOpen = false;
+  state.projectPanelTab = 'overview';
   state._detailCache = null;
   state.userMenuOpen = false;
   state.notifOpen = false;
   state.helpMenuOpen = false;
-  _notesPanelOpen = false;
-  closeNotesPanel();
+  window.WTNotes?.close?.();
   closeNotifPanel();
   closeUserMenu();
-  const dockRoot = document.getElementById('chat-dock-root');
-  if (dockRoot) { dockRoot.innerHTML = ''; dockRoot.style.display = 'none'; }
-  _chatDockData = null;
-  stopChatUnreadPolling();
-  if (state.chatUnreadChannels) state.chatUnreadChannels.clear();
+  state.globalTaskSearch = '';
 }
 
 function bustWorkspaceCache() {
@@ -945,6 +899,7 @@ async function recordProjectActivity({ userId, projectId = null, action, entityT
   const uid = userId || actorId();
   if (uid && action) {
     await DB.logActivity({ userId: uid, projectId, action, entityType, entityId, details }).catch(() => {});
+    refreshActivityViews().catch(() => {});
   }
   if (discordLine) {
     const line = discordLine.startsWith('[Backlog]') ? discordLine : `[Backlog] ${discordLine}`;
@@ -1256,15 +1211,19 @@ const state = {
   projectDepartmentFilter: 'all',
   classroomFilter: 'all',
   taskFilter: 'all',
+  globalTaskSearch: '',
   taskViewMode: 'list',
-  globalTaskViewMode: 'list',
+  globalTaskViewMode: 'board',
   projectTab: 'tasks',
   currentProjectId: null,
   workspaceScope: 'everyone',
-  docPanelOpen: true,
-  rankingPanelOpen: true,
+  docPanelOpen: false,
+  projectPanelOpen: false,
+  projectPanelTab: 'overview',
+  rankingPanelOpen: false,
   calendarMonth: null,
   calendarSelectedDay: null,
+  calendarFilters: { events: true, due: true, birthday: true, completed: false },
   lastMainRoute: '/projects',
   userMenuOpen: false,
   notifOpen: false,
@@ -1544,8 +1503,8 @@ async function showApp() {
   startSidebarClock();
   startPresenceHeartbeat();
   const dockRoot = document.getElementById('chat-dock-root');
-  if (dockRoot) { dockRoot.style.display = ''; renderChatDock(); }
-  startChatUnreadPolling();
+  if (dockRoot) { dockRoot.style.display = ''; window.WTChat?.renderDock?.(); }
+  window.WTChat?.startUnreadPolling?.();
   if (isCloudMode() && window.RealtimeSync) {
     RealtimeSync.init(s.userId).catch(() => {});
   }
@@ -2026,6 +1985,7 @@ async function renderProjects() {
   const f = state.projectFilter;
   const list = f === 'all' ? baseList : baseList.filter(p => p.status === f);
   const pData = list.map(p => ({ ...p, ...projectStatsFromTasks(allTasks, p.id) }));
+  const isProjectFirstRunEmpty = all.length === 0 && !query && ownerFilter === 'all' && deptFilter === 'all';
 
   const cnt = {
     all: baseList.length,
@@ -2084,7 +2044,9 @@ async function renderProjects() {
     <div class="projects-controls">
       <div class="projects-search-wrap">
         <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input class="projects-search-input" type="search" placeholder="Search projects…" value="${esc(state.projectSearch)}" data-project-filter-input="search">
+        <input id="project-search" class="projects-search-input" type="search" placeholder="Search projects…" value="${esc(state.projectSearch)}" data-project-filter-input="search">
+        <kbd>/</kbd>
+        <kbd>Ctrl K</kbd>
       </div>
       <div class="projects-filters-row">
         <select class="projects-filter-select" data-project-filter-input="owner">
@@ -2105,7 +2067,7 @@ async function renderProjects() {
         </button>`).join('')}
     </div>
     </div>
-    ${pData.length === 0 ? emptyState(f === 'all' ? {
+    ${pData.length === 0 ? (isProjectFirstRunEmpty ? projectFirstRunEmptyState() : emptyState(f === 'all' ? {
       icon: 'folder',
       title: 'No projects yet',
       description: 'Create a project to organize tasks, milestones, and files for your team.',
@@ -2115,7 +2077,7 @@ async function renderProjects() {
       icon: 'folder',
       title: `No ${fLabels[f].toLowerCase()} projects`,
       description: 'Try another filter or create a new project.'
-    }) :
+    })) :
     `<div class="projects-grid-v2">${pData.map(p => {
       const owner = uMap[p.ownerId];
       const mine = p.ownerId === s.userId;
@@ -2227,6 +2189,33 @@ function taskAttachmentPreviewHtml(att) {
   return `<button type="button" class="task-file-chip" data-action="preview-attachment" data-id="${att.id}" title="${esc(att.fileName || 'Open file')}">${ICONS.file}<span>${esc(att.fileName || 'File')}</span></button>`;
 }
 
+function attachmentKind(att = {}) {
+  if (window.WTUI?.fileKind) return window.WTUI.fileKind(att);
+  const mime = String(att.mimeType || '').toLowerCase();
+  const fileName = String(att.fileName || '').toLowerCase();
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(fileName)) return { iconName: 'fileImage', label: 'Image', tone: 'image' };
+  if (mime === 'application/pdf' || /\.pdf$/.test(fileName)) return { iconName: 'filePdf', label: 'PDF', tone: 'pdf' };
+  if (/spreadsheet|excel|csv/.test(mime) || /\.(xlsx?|csv)$/.test(fileName)) return { iconName: 'fileSheet', label: 'Sheet', tone: 'sheet' };
+  if (/zip|rar|7z|tar|gzip/.test(mime) || /\.(zip|rar|7z|tar|gz)$/.test(fileName)) return { iconName: 'archive', label: 'Archive', tone: 'archive' };
+  if (/json|javascript|typescript|html|css|xml/.test(mime) || /\.(js|ts|tsx|jsx|html|css|json|xml|sql|md)$/.test(fileName)) return { iconName: 'fileCode', label: 'Code', tone: 'code' };
+  return { iconName: 'file', label: 'File', tone: 'file' };
+}
+
+function attachmentIconHtml(att = {}, { size = 22, className = 'file-kind-svg' } = {}) {
+  const kind = attachmentKind(att);
+  return window.WTUI?.icon
+    ? window.WTUI.icon(kind.iconName, { size, className, label: kind.label })
+    : ICONS.file;
+}
+
+function attachmentIconTileHtml(att = {}, extraClass = '') {
+  const kind = attachmentKind(att);
+  return `<span class="file-kind-tile file-kind-${esc(kind.tone)} ${esc(extraClass)}">
+    ${attachmentIconHtml(att)}
+    <span>${esc(kind.label)}</span>
+  </span>`;
+}
+
 /* Board ordering: synced sortOrder ascending, oldest-first as the tiebreaker. */
 function sortTasksByOrder(tasks) {
   return [...tasks].sort((a, b) => {
@@ -2319,6 +2308,175 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = 
     </div>`;
   }
   return html;
+}
+
+function projectIssuePrefix(project) {
+  const words = String(project?.name || project?.department || 'Task')
+    .replace(/[^a-z0-9\s-]/gi, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const raw = words.length > 1 ? words.map(w => w[0]).join('') : (words[0] || 'TSK').slice(0, 3);
+  return (raw || 'TSK').slice(0, 4).toUpperCase();
+}
+
+function renderLinearTaskListHtml(tasks, uMap, editable, projectId, attachments = [], project = null) {
+  if (!tasks.length) return `<div class="linear-task-empty">${emptyState({
+    icon: 'tasks',
+    title: 'No tasks yet',
+    description: editable ? 'Add the first task and this project becomes easy to scan.' : 'Tasks assigned to you will appear here.',
+    cta: editable ? 'Add task' : '',
+    ctaAction: editable ? 'add-task' : '',
+    ctaData: editable ? { 'project-id': projectId } : {}
+  })}</div>`;
+
+  const sorted = applyTaskOrder(sortTasksByOrder(tasks), projectId);
+  const statusGroups = [
+    { key: 'todo', label: 'Todo', color: '#8b949e' },
+    { key: 'doing', label: 'In progress', color: '#f59e0b' },
+    { key: 'done', label: 'Done', color: '#22c55e' },
+  ];
+  const prefix = projectIssuePrefix(project);
+  const keyById = new Map(sorted.map((t, index) => [Number(t.id), `${prefix}-${index + 1}`]));
+
+  const renderAssignee = (user) => {
+    const label = user ? (user.displayName || user.username || 'Assignee') : 'No assignee';
+    const initial = user ? label.charAt(0).toUpperCase() : '?';
+    const inner = user?.avatarBase64
+      ? `<img src="${esc(user.avatarBase64)}" alt="${esc(label)}">`
+      : esc(initial);
+    return `<span class="linear-task-assignee ${user ? '' : 'is-empty'}" ${user ? userColorStyle(user) : ''} title="${esc(label)}">${inner}</span>`;
+  };
+
+  const renderRow = (task) => {
+    const assignee = uMap[task.assigneeId];
+    const taskAtts = attachments.filter(a => Number(a.taskId) === Number(task.id));
+    const od = isOverdue(task.dueDate) && task.status !== 'done';
+    const notePreview = (task.notes || task.description || '').trim();
+    return `<div class="task-card-v2 linear-task-row linear-task-row--${task.status}${task.status === 'done' ? ' task-done' : ''}"
+        draggable="${editable ? 'true' : 'false'}" data-task-id="${task.id}">
+      ${editable ? `<div class="task-card-drag-handle linear-task-handle" title="Drag to reorder">
+        <span>::</span>
+      </div>` : '<span class="linear-task-handle-spacer" aria-hidden="true"></span>'}
+      <div class="linear-task-key">${esc(keyById.get(Number(task.id)) || `${prefix}-${task.id}`)}</div>
+      ${editable
+        ? `<button class="status-dot status-dot-${task.status} linear-task-status" data-action="cycle-task-status" data-id="${task.id}" title="Cycle status"></button>`
+        : `<span class="status-dot status-dot-${task.status} linear-task-status"></span>`}
+      <button class="linear-task-title${task.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${task.id}" title="Open task details">${esc(task.title)}</button>
+      ${notePreview ? `<button class="linear-task-note" data-action="open-task-detail" data-id="${task.id}" title="${esc(notePreview)}">${esc(notePreview.slice(0, 80))}</button>` : ''}
+      <div class="linear-task-meta">
+        ${taskAtts.length ? `<span class="linear-task-chip" title="${taskAtts.length} attachment${taskAtts.length === 1 ? '' : 's'}">${ICONS.paperclip}${taskAtts.length}</span>` : ''}
+        ${task.priority && task.priority !== 'medium' ? `<span class="linear-task-chip">${esc(PRIO_CFG[task.priority]?.l || task.priority)}</span>` : ''}
+        ${renderAssignee(assignee)}
+        ${task.dueDate ? `<span class="linear-task-date ${od ? 'overdue' : isDueSoon(task.dueDate) ? 'due-soon' : ''}">${formatDateShort(task.dueDate)}</span>` : ''}
+        ${editable ? `<button class="btn-icon task-card-del linear-task-delete" data-action="delete-task" data-id="${task.id}" title="Delete task">${ICONS.trash}</button>` : ''}
+      </div>
+    </div>`;
+  };
+
+  return `<div class="linear-task-list">
+    ${statusGroups.map(group => {
+      const groupTasks = sorted.filter(t => t.status === group.key);
+      if (!groupTasks.length && group.key === 'done') return '';
+      return `<section class="task-group-v2 linear-task-group" data-status="${group.key}" style="--group-color:${group.color}">
+        <div class="task-group-header-v2 linear-task-group-header">
+          <span class="linear-task-group-caret">v</span>
+          <span class="task-group-dot-v2"></span>
+          <span class="task-group-label-v2">${esc(group.label)}</span>
+          <span class="task-group-count-v2">${groupTasks.length}</span>
+          ${editable ? `<button type="button" class="linear-task-group-add" data-action="add-task" data-project-id="${projectId}" data-default-status="${group.key}" title="Add ${esc(group.label)} task">${ICONS.plus}</button>` : ''}
+        </div>
+        <div class="task-group-body-v2 linear-task-group-body" data-project-id="${projectId}">
+          ${editable ? _insertZoneHtml('top-' + group.key, group.key, projectId) : ''}
+          ${groupTasks.map(t => renderRow(t) + (editable ? _insertZoneHtml(t.id, group.key, projectId) : '')).join('')}
+          ${!groupTasks.length ? `<p class="task-group-empty-v2">No ${group.label.toLowerCase()} tasks yet.</p>` : ''}
+        </div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderProjectInspectorHtml(project, tasks = [], milestones = [], users = [], activity = [], attachments = [], editable = false) {
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const owner = uMap[project.ownerId];
+  const editorIds = Array.isArray(project.editorIds) ? project.editorIds.map(Number).filter(Boolean) : [];
+  const members = editorIds.map(id => uMap[id]).filter(Boolean);
+  const department = projectDepartmentValue(project, uMap);
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const doingCount = tasks.filter(t => t.status === 'doing').length;
+  const visibility = members.length ? 'Shared' : 'Personal';
+  const createdDate = project.createdAt ? formatDateShort(String(project.createdAt).slice(0, 10)) : 'Start';
+  const endDate = completedAtForReport(project)
+    ? formatDateShort(String(completedAtForReport(project)).slice(0, 10))
+    : (project.status === 'completed' ? 'Done' : 'Target');
+
+  const memberHtml = members.length
+    ? `<div class="project-inspector-avatar-row">${members.slice(0, 5).map(user => {
+        const label = user.displayName || user.username || 'Member';
+        const initial = label.charAt(0).toUpperCase();
+        return `<button type="button" class="project-inspector-avatar" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(label)}">${user.avatarBase64 ? `<img src="${esc(user.avatarBase64)}" alt="${esc(label)}">` : esc(initial)}</button>`;
+      }).join('')}${members.length > 5 ? `<span class="project-inspector-more">+${members.length - 5}</span>` : ''}</div>`
+    : '<span class="project-inspector-muted">Add members</span>';
+
+  const milestoneRows = milestones.slice(0, 3).map(m => `<div class="project-inspector-mini-row">
+    <span class="project-inspector-mini-icon">${ICONS.flag}</span>
+    <span class="project-inspector-mini-main">${esc(m.title)}</span>
+    <span class="project-inspector-mini-meta">${m.dueDate ? formatDateShort(m.dueDate) : (m.status || 'Pending')}</span>
+  </div>`).join('');
+
+  const activityRows = activity.slice(0, 4).map(entry => {
+    const who = uMap[entry.userId];
+    const label = who?.displayName || who?.username || 'System';
+    const initial = label.charAt(0).toUpperCase();
+    return `<div class="project-inspector-activity-row">
+      <span class="project-inspector-activity-avatar" ${who ? userColorStyle(who) : ''}>${esc(initial)}</span>
+      <span class="project-inspector-activity-text">${formatActivityMessage(entry, uMap)}</span>
+      <span class="project-inspector-activity-time">${timeAgo(entry.createdAt)}</span>
+    </div>`;
+  }).join('');
+
+  return `<aside class="project-inspector" aria-label="Project overview">
+    <section class="project-inspector-card project-inspector-title-card">
+      <div class="project-inspector-title-main">
+        <span class="project-inspector-stack" aria-hidden="true">${ICONS.folder}</span>
+        <strong>All tasks</strong>
+      </div>
+      <span class="project-inspector-count">${tasks.length}</span>
+    </section>
+
+    <section class="project-inspector-card">
+      <div class="project-inspector-section-head">
+        <h3>Properties</h3>
+        ${editable ? `<button type="button" class="project-inspector-add" data-action="edit-project" data-id="${project.id}" title="Edit project">${ICONS.plus}</button>` : ''}
+      </div>
+      <div class="project-inspector-props">
+        <div class="project-inspector-prop"><span>Visibility</span><strong>${esc(visibility)}</strong></div>
+        <div class="project-inspector-prop"><span>Status</span><strong>${statusBadge(project.status)}</strong></div>
+        <div class="project-inspector-prop"><span>Priority</span><strong>${prioBadge(project.priority)}</strong></div>
+        <div class="project-inspector-prop"><span>Lead</span><strong>${owner ? assigneeChipHtml(owner) : '<span class="project-inspector-muted">No owner</span>'}</strong></div>
+        <div class="project-inspector-prop"><span>Members</span><strong>${memberHtml}</strong></div>
+        <div class="project-inspector-prop"><span>Tasks</span><strong>${doneCount}/${tasks.length} done${doingCount ? `, ${doingCount} active` : ''}</strong></div>
+        <div class="project-inspector-prop"><span>Dates</span><strong>${esc(createdDate)} <span class="project-inspector-arrow">-></span> ${esc(endDate)}</strong></div>
+        <div class="project-inspector-prop"><span>Team</span><strong>${department ? departmentBadge(department) : '<span class="project-inspector-muted">No team</span>'}</strong></div>
+        <div class="project-inspector-prop"><span>Files</span><strong>${attachments.length}</strong></div>
+      </div>
+    </section>
+
+    <section class="project-inspector-card">
+      <div class="project-inspector-section-head">
+        <h3>Milestones</h3>
+        ${editable ? `<button type="button" class="project-inspector-add" data-action="add-milestone" data-project-id="${project.id}" title="Add milestone">${ICONS.plus}</button>` : ''}
+      </div>
+      ${milestoneRows || '<p class="project-inspector-empty">Add milestones to break this project into smaller stages.</p>'}
+    </section>
+
+    <section class="project-inspector-card">
+      <div class="project-inspector-section-head">
+        <h3>Activity</h3>
+        <button type="button" class="project-inspector-link" data-action="project-panel-tab" data-tab="activity" data-project-id="${project.id}">See all</button>
+      </div>
+      ${activityRows || '<p class="project-inspector-empty">Project changes will appear here.</p>'}
+    </section>
+  </aside>`;
 }
 
 function projectVisibleCustomFields(tasks = []) {
@@ -2842,11 +3000,14 @@ async function renderProjectDetail(projectId) {
       await ensureProjectWorkflowTasks(project, uid);
     }
   }
-  const [allProjectTasks, milestones, users, attList] = await Promise.all([
+  const [allProjectTasks, milestones, users, attList, recentActivity] = await Promise.all([
     DB.getTasks({ projectId }),
     DB.getMilestones(projectId),
     getUsersCached(),
-    DB.getAttachments(projectId)
+    DB.getAttachments(projectId),
+    DB.getActivityLog
+      ? DB.getActivityLog({ projectId, viewerUserId: s?.userId, isAdmin: isAdmin(), limit: 6 }).catch(() => [])
+      : Promise.resolve([])
   ]);
   const visibleTasks = allProjectTasks;
   const canSeeTasks = true;
@@ -2855,12 +3016,15 @@ async function renderProjectDetail(projectId) {
   const owner = users.find(u => u.id === project.ownerId);
   const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
   let tab = state.projectTab;
-  if (!canSeeTasks && (tab === 'tasks' || tab === 'timeline')) tab = 'milestones';
+  if (!canSeeTasks && (tab === 'tasks' || tab === 'board' || tab === 'timeline')) tab = 'milestones';
+  if (['milestones', 'library', 'updates'].includes(tab)) tab = canSeeTasks ? 'tasks' : 'map';
   state.projectTab = tab;
   const attCount = attList.length;
-  state._detailCache = { projectId, allProjectTasks, milestones, users, attList };
+  state.currentProjectId = project.id;
+  state._detailCache = { projectId, project, allProjectTasks, milestones, users, attList, recentActivity };
 
-  if (main) main.classList.toggle('with-doc-panel', state.docPanelOpen);
+  state.docPanelOpen = !!state.projectPanelOpen;
+  if (main) main.classList.remove('with-doc-panel');
   await renderDocumentPanel(projectId, editable);
 
   const currentTask = canSeeTasks ? allProjectTasks.find(t => t.status === 'doing') : null;
@@ -2883,14 +3047,14 @@ async function renderProjectDetail(projectId) {
   const requestAccessBtn = !editable && s?.userId !== project.ownerId
     ? `<button class="btn btn-ghost" data-action="request-project-access" data-project-id="${project.id}">${ICONS.userCog} Request edit access</button>` : '';
 
-  content.innerHTML = `
+  content.innerHTML = `<div class="project-detail-linear">
     <div class="view-header">
       <div class="breadcrumb">
         <a href="#/projects" class="breadcrumb-link">${ICONS.arrowLeft} Projects</a>
         <span class="breadcrumb-sep">/</span><span>${esc(project.name)}</span>
       </div>
       <div class="view-actions">
-        <button type="button" class="btn btn-ghost ${state.docPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" title="Documents panel">${ICONS.file} Files (${attCount})</button>
+        <button type="button" class="btn btn-ghost" data-action="project-report-options" data-project-id="${project.id}">${ICONS.download} Report</button>
         ${requestAccessBtn}
         ${manageAccess ? `<button class="btn btn-ghost" data-action="manage-project-access" data-project-id="${project.id}">${ICONS.userCog} Access</button>` : ''}
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
@@ -2898,6 +3062,10 @@ async function renderProjectDetail(projectId) {
         ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
       </div>
     </div>
+    <button type="button" class="project-panel-launcher ${state.projectPanelOpen ? 'is-open' : ''}" data-action="toggle-doc-panel" data-project-id="${project.id}" title="Project panel" aria-label="Open project panel">
+      ${ICONS.sidebar || ICONS.file}
+      ${attCount ? `<span>${attCount}</span>` : ''}
+    </button>
     <div class="project-hero project-hero-animate">
       <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
       <h1>${esc(project.name)}</h1>
@@ -2907,21 +3075,27 @@ async function renderProjectDetail(projectId) {
       ${progressLine}
     </div>
     ${isLogisticsWorkflow(project) ? renderLogisticsWorkflowCard(project, allProjectTasks, attList, editable) : ''}
-    <div class="tab-bar">
-      ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
-      ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
-      ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
-      <button class="tab-btn ${tab === 'milestones' ? 'active' : ''}" data-action="switch-tab" data-tab="milestones" data-project-id="${projectId}">Milestones (${milestones.length})</button>
-      <button class="tab-btn ${tab === 'library' ? 'active' : ''}" data-action="switch-tab" data-tab="library" data-project-id="${projectId}">Library (${attCount})</button>
-      <button class="tab-btn ${tab === 'updates' ? 'active' : ''}" data-action="switch-tab" data-tab="updates" data-project-id="${projectId}">Activity</button>
+    <div class="project-workspace-shell">
+      <section class="project-workspace-main">
+        <div class="tab-bar project-tab-bar">
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'board' ? 'active' : ''}" data-action="switch-tab" data-tab="board" data-project-id="${projectId}">Board</button>` : ''}
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
+        </div>
+        <div id="tab-content"></div>
+      </section>
     </div>
-    <div id="tab-content"></div>`;
+  </div>`;
   await renderTab(tab, projectId, editable);
 }
 
 function closeDocumentPanelAnimated(done) {
   const panel = document.getElementById('document-panel');
   const main = document.getElementById('main-content');
+  const backdrop = document.getElementById('project-panel-backdrop');
+  document.body.classList.remove('project-panel-open');
+  backdrop?.classList.add('hidden');
   if (!panel || panel.classList.contains('hidden')) { done?.(); return; }
   panel.classList.remove('is-open');
   let finished = false;
@@ -2939,12 +3113,17 @@ function closeDocumentPanelAnimated(done) {
 }
 
 function hideDocumentPanel() {
+  state.projectPanelOpen = false;
+  state.docPanelOpen = false;
   closeDocumentPanelAnimated();
 }
 
 function openDocumentPanelAnimated() {
   const panel = document.getElementById('document-panel');
+  const backdrop = document.getElementById('project-panel-backdrop');
   if (!panel) return;
+  document.body.classList.add('project-panel-open');
+  backdrop?.classList.remove('hidden');
   panel.classList.remove('hidden');
   requestAnimationFrame(() => panel.classList.add('is-open'));
 }
@@ -2953,7 +3132,8 @@ async function renderDocumentPanel(projectId, editable) {
   const panel = document.getElementById('document-panel');
   const main = document.getElementById('main-content');
   if (!panel) return;
-  if (!state.docPanelOpen) {
+  state.docPanelOpen = !!state.projectPanelOpen;
+  if (!state.projectPanelOpen) {
     closeDocumentPanelAnimated();
     return;
   }
@@ -2961,11 +3141,23 @@ async function renderDocumentPanel(projectId, editable) {
   if (state._docPanelUrls?.length) { state._docPanelUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} }); }
   state._docPanelUrls = [];
 
-  const items = await DB.getAttachments(projectId);
-  const projectItems = items.filter(a => !a.taskId); // project-level files only in panel
-  const users = await DB.getUsers();
+  const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+  const [project, tasks, milestones, items, users, activity] = await Promise.all([
+    cache?.project ? Promise.resolve(cache.project) : DB.getProject(projectId),
+    cache?.allProjectTasks ? Promise.resolve(cache.allProjectTasks) : DB.getTasks({ projectId }),
+    cache?.milestones ? Promise.resolve(cache.milestones) : DB.getMilestones(projectId),
+    cache?.attList ? Promise.resolve(cache.attList) : DB.getAttachments(projectId),
+    cache?.users ? Promise.resolve(cache.users) : getUsersCached(),
+    DB.getActivityLog
+      ? DB.getActivityLog({ projectId, viewerUserId: getSession()?.userId, isAdmin: isAdmin(), limit: 40 }).catch(() => cache?.recentActivity || [])
+      : Promise.resolve(cache?.recentActivity || [])
+  ]);
+  if (!project) {
+    closeDocumentPanelAnimated();
+    return;
+  }
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  if (main) main.classList.add('with-doc-panel');
+  if (main) main.classList.remove('with-doc-panel');
   if (!panel.classList.contains('is-open')) openDocumentPanelAnimated();
   else panel.classList.remove('hidden');
 
@@ -2981,11 +3173,11 @@ async function renderDocumentPanel(projectId, editable) {
         let url = '';
         if (item.blob) { url = URL.createObjectURL(item.blob); state._docPanelUrls.push(url); }
         else if (item.storagePath && DB.getAttachmentUrl) { url = DB.getAttachmentUrl(item.storagePath); }
-        thumbHtml = url ? `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">` : `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
+        thumbHtml = url ? `<img src="${esc(url)}" class="doc-panel-thumb" alt="${esc(item.fileName)}">` : attachmentIconTileHtml(item, 'doc-panel-file-tile');
       } else if (isPdf) {
-        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--pdf"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12h1v4h1"/><path d="M8 12h4"/></svg>PDF</div>`;
+        thumbHtml = attachmentIconTileHtml(item, 'doc-panel-file-tile');
       } else {
-        thumbHtml = `<div class="doc-panel-thumb doc-panel-thumb--file">${ICONS.file}</div>`;
+        thumbHtml = attachmentIconTileHtml(item, 'doc-panel-file-tile');
       }
       return `<button type="button" class="doc-panel-item-v2" data-action="preview-attachment" data-id="${item.id}">
         <div class="doc-panel-thumb-wrap">${thumbHtml}</div>
@@ -3000,13 +3192,62 @@ async function renderDocumentPanel(projectId, editable) {
       </button>`;
     }).join('');
 
+  const milestoneHtml = milestones.length
+    ? `<div class="project-panel-list">${milestones.map(m => `
+        <div class="project-panel-row">
+          <span class="project-panel-row-icon">${ICONS.flag}</span>
+          <div class="project-panel-row-main">
+            <strong>${esc(m.title)}</strong>
+            <span>${m.dueDate ? formatDateShort(m.dueDate) : (m.status || 'Pending')}</span>
+          </div>
+          ${editable ? `<button type="button" class="btn-icon" data-action="complete-milestone" data-id="${m.id}" title="Complete">${ICONS.check || '✓'}</button>` : ''}
+        </div>`).join('')}</div>`
+    : `<p class="doc-panel-empty">Add milestones to break this project into smaller stages.</p>`;
+
+  const activityHtml = activity.length
+    ? `<div class="project-panel-list">${activity.map(entry => {
+        const who = uMap[entry.userId];
+        const init = who ? (who.displayName || who.username).charAt(0).toUpperCase() : '?';
+        return `<div class="project-panel-row project-panel-row--activity">
+          <span class="project-inspector-activity-avatar" ${who ? userColorStyle(who) : ''}>${esc(init)}</span>
+          <div class="project-panel-row-main">
+            <strong>${formatActivityMessage(entry, uMap)}</strong>
+            <span>${timeAgo(entry.createdAt)}</span>
+          </div>
+        </div>`;
+      }).join('')}</div>`
+    : `<p class="doc-panel-empty">Project changes will appear here.</p>`;
+
+  const activeTab = ['overview', 'milestones', 'activity', 'documents'].includes(state.projectPanelTab)
+    ? state.projectPanelTab
+    : 'overview';
+  state.projectPanelTab = activeTab;
+  const tabButton = (key, label, count = '') =>
+    `<button type="button" class="project-panel-tab ${activeTab === key ? 'active' : ''}" data-action="project-panel-tab" data-tab="${key}" data-project-id="${projectId}">${label}${count !== '' ? ` <span>${count}</span>` : ''}</button>`;
+
+  const bodyHtml = activeTab === 'overview'
+    ? renderProjectInspectorHtml(project, tasks, milestones, users, activity, items, editable)
+    : activeTab === 'milestones'
+      ? `<div class="project-panel-actions">${editable ? `<button type="button" class="btn btn-sm btn-primary" data-action="add-milestone" data-project-id="${projectId}">${ICONS.plus} Add milestone</button>` : ''}</div>${milestoneHtml}`
+      : activeTab === 'activity'
+        ? `<div class="project-panel-actions">${editable ? `<button type="button" class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add note</button>` : ''}</div>${activityHtml}`
+        : `${editable ? `<button type="button" class="btn btn-sm btn-primary doc-panel-upload" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.upload} Upload</button>` : ''}<div class="doc-panel-list">${listHtml}</div>`;
+
   panel.innerHTML = `
-    <div class="doc-panel-header">
-      <h3>Documents <span class="projects-page-count" style="font-size:0.72rem">${items.length}</span></h3>
-      <button type="button" class="btn-icon" data-action="toggle-doc-panel" title="Close panel">${ICONS.x}</button>
+    <div class="doc-panel-header project-panel-header">
+      <div>
+        <h3>${esc(project.name || 'Project')}</h3>
+        <span class="projects-page-count" style="font-size:0.72rem">${tasks.length} tasks · ${items.length} docs</span>
+      </div>
+      <button type="button" class="btn-icon" data-action="toggle-doc-panel" data-project-id="${projectId}" title="Close panel">${ICONS.x}</button>
     </div>
-    ${editable ? `<button type="button" class="btn btn-sm btn-primary doc-panel-upload" data-action="library-pick-upload" data-project-id="${projectId}">${ICONS.upload} Upload</button>` : ''}
-    <div class="doc-panel-list">${listHtml}</div>`;
+    <div class="project-panel-tabs">
+      ${tabButton('overview', 'Overview')}
+      ${tabButton('milestones', 'Milestones', milestones.length)}
+      ${tabButton('activity', 'Activity')}
+      ${tabButton('documents', 'Documents', items.length)}
+    </div>
+    <div class="project-panel-body">${bodyHtml}</div>`;
 }
 
 function closeFilePreview() {
@@ -3041,6 +3282,30 @@ async function openFilePreview(attachmentId) {
   const body = document.getElementById('file-preview-body');
   const title = document.getElementById('file-preview-title');
   title.textContent = item.fileName;
+  // Always-available download. Cross-origin cloud links and the in-app
+  // will-navigate handler make plain anchor downloads unreliable, so fetch the
+  // bytes and save them through a same-origin blob URL.
+  const dl = document.getElementById('file-preview-download');
+  if (dl) {
+    dl.href = url;
+    dl.setAttribute('download', item.fileName || 'file');
+    dl.onclick = async (ev) => {
+      ev.preventDefault();
+      try {
+        const blob = item.blob || await (await fetch(url)).blob();
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        a.download = item.fileName || 'file';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (_) {} }, 4000);
+      } catch (_) {
+        showToast('Could not download this file.', 'error');
+      }
+    };
+  }
   const mime = item.mimeType || '';
   if (mime.startsWith('image/')) {
     body.innerHTML = `<img src="${url}" alt="${esc(item.fileName)}" class="file-preview-image">`;
@@ -3053,7 +3318,7 @@ async function openFilePreview(attachmentId) {
   } else {
     body.innerHTML = `<div class="file-preview-fallback">
       <p>Preview not available for this file type.</p>
-      <a href="${url}" download="${esc(item.fileName)}" class="btn btn-primary">${ICONS.download} Download</a>
+      <p class="text-muted">Use the Download button above to save this file.</p>
     </div>`;
   }
   ov.classList.remove('hidden');
@@ -3068,23 +3333,41 @@ async function renderTab(tab, projectId, editable) {
     const tasks = allTasks;
     const users = cache?.users ?? await getUsersCached();
     const attachments = cache?.attList ?? await DB.getAttachments(projectId);
+    const project = cache?.project ?? await DB.getProject(projectId);
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
 
-    el.innerHTML = `<div class="task-view-header">
-      <span class="text-muted text-sm tab-hint">${editable ? 'Drag cards to change status or reorder. Click a card to open details.' : 'View project tasks. Click a card for details.'}</span>
+    el.innerHTML = `<div class="task-view-header linear-task-view-header">
+      <span class="linear-task-total">${tasks.length} task${tasks.length === 1 ? '' : 's'}</span>
+      <span class="text-muted text-sm tab-hint">${editable ? 'Click the circle to change status. Drag rows to reorder.' : 'View project tasks. Click a row to open details.'}</span>
       ${editable ? `<div class="task-view-actions">
         ${tasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">Save as template</button>` : ''}
+        <button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add task</button>
+      </div>` : ''}
+    </div>
+    <div id="task-view-body" class="linear-task-view-body">
+      ${renderLinearTaskListHtml(tasks, uMap, editable, projectId, attachments, project)}
+    </div>`;
+
+    if (editable) {
+      setupTaskDragDropList(projectId);
+    }
+  } else if (tab === 'board') {
+    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
+    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
+    const users = cache?.users ?? await getUsersCached();
+    const attachments = cache?.attList ?? await DB.getAttachments(projectId);
+    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+    el.innerHTML = `<div class="task-view-header">
+      <span class="text-muted text-sm tab-hint">${editable ? 'Drag cards between columns to change status or reorder.' : 'View project tasks by status.'}</span>
+      ${editable ? `<div class="task-view-actions">
+        ${allTasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">Save as template</button>` : ''}
         <button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>
       </div>` : ''}
     </div>
     <div id="task-view-body">
-      ${renderTaskBoardViewHtml(tasks, uMap, editable, projectId, attachments)}
+      ${renderTaskBoardViewHtml(allTasks, uMap, editable, projectId, attachments)}
     </div>`;
-
-    if (editable) {
-      setupTaskBoardDragDrop(projectId);
-      setupTaskDragDropList(projectId);
-    }
+    if (editable) setupTaskBoardDragDrop(projectId);
   } else if (tab === 'timeline') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
@@ -3145,9 +3428,13 @@ async function renderTab(tab, projectId, editable) {
       const who = uMap[item.uploadedBy];
       const whoLabel = who ? esc(who.displayName || who.username) : 'Unknown';
       const isImg = item.mimeType && item.mimeType.startsWith('image/');
+      const kind = attachmentKind(item);
       const preview = isImg
-        ? `<button type="button" class="library-card-preview" data-action="preview-attachment" data-id="${item.id}">${url ? `<img src="${esc(url)}" alt="${esc(item.fileName || 'Image')}">` : ICONS.file}</button>`
-        : `<button type="button" class="library-card-file" data-action="preview-attachment" data-id="${item.id}"><span class="library-file-icon">${ICONS.file}</span><span>${esc(item.fileName)}</span></button>`;
+        ? `<button type="button" class="library-card-preview" data-action="preview-attachment" data-id="${item.id}">${url ? `<img src="${esc(url)}" alt="${esc(item.fileName || 'Image')}">` : attachmentIconTileHtml(item, 'library-file-tile')}</button>`
+        : `<button type="button" class="library-card-file library-card-file-${esc(kind.tone)}" data-action="preview-attachment" data-id="${item.id}">
+            ${attachmentIconTileHtml(item, 'library-file-tile')}
+            <span class="library-card-file-name">${esc(item.fileName)}</span>
+          </button>`;
       const del = editable ? `<button type="button" class="btn-icon" data-action="delete-attachment" data-id="${item.id}" title="Remove">${ICONS.trash}</button>` : '';
       return `<div class="library-card">
         ${preview}
@@ -3219,43 +3506,137 @@ function renderTaskProjectMeta(proj, uMap, cMap, { compact = false } = {}) {
 }
 
 function renderGlobalTasksBoardHtml(tasks, pMap, uMap, cMap = {}, filterLabel = null) {
-  const projectIds = [...new Set(tasks.map(t => t.projectId))].sort((a, b) =>
-    (pMap[a]?.name || '').localeCompare(pMap[b]?.name || ''));
-  if (!projectIds.length) {
+  if (!tasks.length) {
     if (filterLabel) return emptyState({ icon: 'tasks', title: `No ${filterLabel} tasks`, description: 'Try another filter.' });
     return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
   }
-  return `<div class="global-task-board">
-    ${projectIds.map(pid => {
-      const proj = pMap[pid];
-      if (!proj) return '';
-      const pt = tasks.filter(t => t.projectId === pid);
-      const doing = pt.filter(t => t.status === 'doing').length;
-      const todo = pt.filter(t => t.status === 'todo').length;
-      const ordered = [...pt.filter(t=>t.status==='doing'), ...pt.filter(t=>t.status==='todo'), ...pt.filter(t=>t.status==='done')];
-      return `<div class="gtb-column">
-        <div class="gtb-col-header">
+  const cols = [
+    { key: 'todo', label: 'Todo', hint: 'Ready and waiting', color: '#8b949e' },
+    { key: 'doing', label: 'In Progress', hint: 'Actively moving', color: '#f59e0b' },
+    { key: 'done', label: 'Done', hint: 'Completed cleanly', color: '#22c55e' }
+  ];
+  const ordered = [...tasks].sort((a, b) => {
+    const ad = a.dueDate || '9999-12-31';
+    const bd = b.dueDate || '9999-12-31';
+    if (ad !== bd) return ad.localeCompare(bd);
+    return (a.createdAt || '').localeCompare(b.createdAt || '');
+  });
+  return `<div class="global-task-board orbi-status-board">
+    ${cols.map(col => {
+      const colTasks = ordered.filter(t => t.status === col.key);
+      return `<section class="gtb-column orbi-status-col" style="--col-color:${col.color}">
+        <div class="gtb-col-header orbi-status-col-head">
           <div class="gtb-col-header-main">
-            <a href="#/projects/${pid}" class="gtb-proj-name">${ICONS.folder} ${esc(proj.name)}</a>
-            ${renderTaskProjectMeta(proj, uMap, cMap, { compact: true })}
+            <strong class="orbi-status-title"><span class="task-board-col-dot-v2"></span>${esc(col.label)} <em>${colTasks.length}</em></strong>
+            <span class="orbi-status-hint">${esc(col.hint)}</span>
           </div>
-          <div class="gtb-col-badges">
-            ${doing ? `<span class="badge badge-blue">${doing}</span>` : ''}
-            ${todo ? `<span class="badge badge-amber">${todo}</span>` : ''}
-          </div>
+          <button class="btn-icon" data-action="add-task" data-default-status="${col.key}" title="Add ${esc(col.label)} task">${ICONS.plus}</button>
         </div>
-        <div class="gtb-col-tasks">
-          ${ordered.map(t => {
+        <div class="gtb-col-tasks orbi-status-cards">
+          ${colTasks.map(t => {
+            const proj = pMap[t.projectId];
             const assignee = uMap[t.assigneeId];
-            return `<a href="#/projects/${pid}" class="gtb-task-card${t.status === 'done' ? ' task-done' : ''}" title="Go to project">
-              <span class="status-dot status-dot-${t.status}" style="width:10px;height:10px;flex-shrink:0"></span>
-              <span class="gtb-task-title${t.status === 'done' ? ' text-strikethrough' : ''}">${esc(t.title)}</span>
-              ${assignee ? `<span class="gtb-task-assignee" ${userColorStyle(assignee)} title="${esc(assignee.displayName || assignee.username)}">${(assignee.displayName || assignee.username).charAt(0).toUpperCase()}</span>` : ''}
-            </a>`;
-          }).join('') || '<p class="text-muted text-sm" style="padding:8px 10px">No tasks</p>'}
+            const editable = proj && canEdit(proj);
+            const od = isOverdue(t.dueDate) && t.status !== 'done';
+            return `<article class="orbi-task-card${t.status === 'done' ? ' task-done' : ''}" data-task-id="${t.id}">
+              <div class="orbi-task-card-top">
+                <span class="orbi-task-key">${esc(projectIssuePrefix(proj))}-${esc(t.id)}</span>
+                ${prioBadge(t.priority)}
+              </div>
+              <button type="button" class="orbi-task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}">${esc(t.title)}</button>
+              ${proj ? `<a class="orbi-task-card-project" href="#/projects/${proj.id}">${esc(proj.name)}</a>` : ''}
+              <div class="orbi-task-card-meta">
+                ${assigneeChipHtml(assignee)}
+                ${t.dueDate ? `<span class="${od ? 'overdue' : 'text-muted'}">${formatDateShort(t.dueDate)}</span>` : '<span class="text-muted">No date</span>'}
+              </div>
+              ${editable ? `<div class="orbi-task-card-actions">
+                <button type="button" class="btn btn-sm btn-ghost" data-action="cycle-task-status" data-id="${t.id}">Move</button>
+                <button type="button" class="btn-icon" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>
+              </div>` : ''}
+            </article>`;
+          }).join('') || '<div class="task-board-col-empty-v2">Drop future tasks here</div>'}
         </div>
-      </div>`;
+      </section>`;
     }).join('')}
+  </div>`;
+}
+
+function renderGlobalTasksTableHtml(tasks, pMap, uMap, cMap = {}, filterLabel = null) {
+  if (!tasks.length) {
+    if (filterLabel) return emptyState({ icon: 'tasks', title: `No ${filterLabel} tasks`, description: 'Try another filter.' });
+    return emptyState({ icon: 'tasks', title: 'No tasks yet', description: 'Create a project and add tasks.', cta: 'New Task', ctaAction: 'add-task' });
+  }
+  const statusOrder = { doing: 0, todo: 1, done: 2 };
+  const ordered = [...tasks].sort((a, b) => {
+    const s = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (s) return s;
+    return (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31');
+  });
+  return `<div class="orbi-task-table-wrap">
+    <table class="orbi-task-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Task</th>
+          <th>Status</th>
+          <th>Project</th>
+          <th>Owner</th>
+          <th>Due</th>
+          <th>Priority</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ordered.map(task => {
+          const proj = pMap[task.projectId];
+          const assignee = uMap[task.assigneeId];
+          const od = isOverdue(task.dueDate) && task.status !== 'done';
+          return `<tr class="${task.status === 'done' ? 'task-done' : ''}" data-action="open-task-detail" data-id="${task.id}" tabindex="0">
+            <td><span class="orbi-task-key">${esc(projectIssuePrefix(proj))}-${esc(task.id)}</span></td>
+            <td><strong class="${task.status === 'done' ? 'text-strikethrough' : ''}">${esc(task.title)}</strong></td>
+            <td>${taskBadge(task.status)}</td>
+            <td>${proj ? `<a href="#/projects/${proj.id}" data-action="command-open-project" data-project-id="${proj.id}">${esc(proj.name)}</a>` : '<span class="text-muted">Missing project</span>'}</td>
+            <td>${assigneeChipHtml(assignee)}</td>
+            <td><span class="${od ? 'overdue' : 'text-muted'}">${task.dueDate ? formatDateShort(task.dueDate) : 'No date'}</span></td>
+            <td>${prioBadge(task.priority)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// Shared neat-table renderer used by both the grouped List view and the flat Table view.
+function taskListTableHtml(tasks, pMap, uMap, { showProject = false } = {}) {
+  return `<div class="orbi-task-table-wrap">
+    <table class="orbi-task-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Task</th>
+          <th>Status</th>
+          ${showProject ? '<th>Project</th>' : ''}
+          <th>Owner</th>
+          <th>Due</th>
+          <th>Priority</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tasks.map(task => {
+          const proj = pMap[task.projectId];
+          const assignee = uMap[task.assigneeId];
+          const od = isOverdue(task.dueDate) && task.status !== 'done';
+          return `<tr class="${task.status === 'done' ? 'task-done' : ''}" data-action="open-task-detail" data-id="${task.id}" tabindex="0">
+            <td><span class="orbi-task-key">${esc(projectIssuePrefix(proj))}-${esc(task.id)}</span></td>
+            <td><strong class="${task.status === 'done' ? 'text-strikethrough' : ''}">${esc(task.title)}</strong></td>
+            <td>${taskBadge(task.status)}</td>
+            ${showProject ? `<td>${proj ? `<a href="#/projects/${proj.id}" data-action="command-open-project" data-project-id="${proj.id}">${esc(proj.name)}</a>` : '<span class="text-muted">Missing project</span>'}</td>` : ''}
+            <td>${assigneeChipHtml(assignee)}</td>
+            <td><span class="${od ? 'overdue' : 'text-muted'}">${task.dueDate ? formatDateShort(task.dueDate) : 'No date'}</span></td>
+            <td>${prioBadge(task.priority)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
   </div>`;
 }
 
@@ -3280,10 +3661,12 @@ async function renderTasks() {
   const visibleProjectIds = new Set(allProjects.map(p => p.id));
   const editableProjectIds = new Set(allProjects.filter(p => canEdit(p)).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
+  const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   let all = allTasks.filter(t => visibleProjectIds.has(t.projectId));
   if (!isAdmin()) all = all.filter(t => visibleProjectIds.has(t.projectId));
+  const taskQuery = normalizeSearchText(state.globalTaskSearch || '');
+  if (taskQuery) all = all.filter(t => taskSearchHaystack(t, pMap[t.projectId], uMap[t.assigneeId]).includes(taskQuery));
   const f = state.taskFilter;
-  const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
   const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
   const filteredTasks = f === 'all' ? all : f === 'done' ? all.filter(t => t.status === 'done') : all.filter(t => t.status === f);
   const filterLabel = f === 'todo' ? 'to-do' : f === 'doing' ? 'in-progress' : f === 'done' ? 'done' : null;
@@ -3356,12 +3739,12 @@ async function renderTasks() {
             <span class="text-muted text-sm">${pt.length} tasks</span>
           </div>
         </div>
-        <div class="tpg-body task-group-body-v2">${ordered.map(t => renderCard(t, false)).join('')}</div>
+        <div class="tpg-body task-group-table">${taskListTableHtml(ordered, pMap, uMap, { showProject: false })}</div>
       </div>`;
     }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
   } else {
     const filtered = f === 'done' ? filteredTasks : sortPrio(filteredTasks);
-    body = filtered.length ? `<div class="task-group-body-v2">${filtered.map(t=>renderCard(t,true)).join('')}</div>`
+    body = filtered.length ? taskListTableHtml(filtered, pMap, uMap, { showProject: true })
       : emptyState({ icon:'tasks', title:`No ${filterLabel || f} tasks`, description:'Try another filter.' });
   }
 
@@ -3371,16 +3754,32 @@ async function renderTasks() {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
       List
     </button>
+    <button class="tvt-btn${vm === 'table' ? ' active' : ''}" data-action="global-task-view" data-view="table">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/><path d="M8 5v14"/></svg>
+      Table
+    </button>
     <button class="tvt-btn${vm === 'board' ? ' active' : ''}" data-action="global-task-view" data-view="board">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
       Board
     </button>
   </div>`;
-  const boardBody = vm === 'board' ? renderGlobalTasksBoardHtml(filteredTasks, pMap, uMap, cMap, filterLabel) : body;
+  const viewBody = vm === 'board'
+    ? renderGlobalTasksBoardHtml(filteredTasks, pMap, uMap, cMap, filterLabel)
+    : vm === 'table'
+      ? renderGlobalTasksTableHtml(filteredTasks, pMap, uMap, cMap, filterLabel)
+      : body;
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${filteredTasks.length} visible</span></div>
       <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}${(isAdmin() || editableProjectIds.size > 0) ? `<button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button>` : ''}</div>
+    </div>
+    <div class="orbi-task-toolbar">
+      <div class="orbi-task-search">
+        <svg class="orbi-task-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="global-task-search" class="orbi-task-search-input" type="search" value="${esc(state.globalTaskSearch || '')}" placeholder="Search tasks, projects, owners, notes..." data-task-filter-input="search" autocomplete="off">
+        <kbd>/</kbd>
+        <kbd>Ctrl K</kbd>
+      </div>
     </div>
     <div class="projects-status-pills">
       <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
@@ -3388,7 +3787,7 @@ async function renderTasks() {
       <button class="status-pill ${f==='todo'?'active':''}" data-action="filter-tasks" data-filter="todo">To Do <span class="status-pill-count">${cnt.todo}</span></button>
       <button class="status-pill ${f==='done'?'active':''}" data-action="filter-tasks" data-filter="done">Done <span class="status-pill-count">${cnt.done}</span></button>
     </div>
-    ${boardBody}`;
+    ${viewBody}`;
 }
 
 async function renderAdmin() {
@@ -3466,6 +3865,7 @@ async function renderAdmin() {
     </section>` : '';
 
   content.innerHTML = `
+    <div class="report-brief-page">
     <div class="view-header">
       <div><h1>Admin</h1><p class="view-subtitle">People management &amp; monitoring</p></div>
       <div class="view-actions"><button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button></div>
@@ -3945,467 +4345,6 @@ async function renderSettings() {
     </section>`;
 }
 
-/* ──── Chat (Discord bridge) ──── */
-
-const CHAT_READ_KEY = 'wt-chat-read-v2';
-let _chatUnreadTimer = null;
-
-function chatReadStorageKey() {
-  const uid = actorId();
-  return uid ? `${CHAT_READ_KEY}-${uid}` : null;
-}
-function loadChatReadMap() {
-  const key = chatReadStorageKey();
-  if (!key) return {};
-  try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
-}
-function saveChatReadMap(map) {
-  const key = chatReadStorageKey();
-  if (key) localStorage.setItem(key, JSON.stringify(map));
-}
-function markChatChannelRead(channelId) {
-  if (!channelId) return;
-  const map = loadChatReadMap();
-  map[channelId] = new Date().toISOString();
-  saveChatReadMap(map);
-  if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
-  state.chatUnreadChannels.delete(channelId);
-  if (state.chatUnreadCounts) delete state.chatUnreadCounts[channelId];
-  updateChatUnreadBadge();
-  // Mark DMs as read in the database so sender sees the read receipt
-  if (channelId.startsWith('dm-')) {
-    const otherId = Number(channelId.slice(3));
-    const me = actorId();
-    if (otherId && me) DB.markDMRead?.(otherId, me).catch(() => {});
-  }
-  if (state.chatDockOpen && state.chatDockView === 'list') {
-    const list = document.getElementById('chat-dock-list');
-    if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
-  }
-}
-function isChannelUnread(channelId, latestMsg) {
-  if (!latestMsg?.createdAt) return false;
-  const me = actorId();
-  const senderId = latestMsg.userId ?? latestMsg.fromUserId;
-  if (senderId && Number(senderId) === Number(me)) return false;
-  const readAt = loadChatReadMap()[channelId];
-  if (!readAt) return true;
-  return latestMsg.createdAt > readAt;
-}
-async function getChannelLatestMessage(channelId) {
-  const msgs = await getChatMessagesForChannel(channelId);
-  return msgs.length ? msgs[msgs.length - 1] : null;
-}
-function updateChatUnreadBadge() {
-  const btn = document.querySelector('.chat-dock-launcher');
-  if (!btn) return;
-  const has = state.chatUnreadChannels?.size > 0;
-  btn.classList.toggle('has-unread', has);
-  let badge = btn.querySelector('.dock-launcher-badge');
-  if (has && !badge) {
-    badge = document.createElement('span');
-    badge.className = 'dock-launcher-badge';
-    badge.setAttribute('aria-hidden', 'true');
-    btn.appendChild(badge);
-  } else if (!has && badge) badge.remove();
-}
-async function refreshChatUnreadState() {
-  const uid = actorId();
-  if (!uid) {
-    state.chatUnreadChannels = new Set();
-    updateChatUnreadBadge();
-    return;
-  }
-  if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
-  const prevUnread = new Set(state.chatUnreadChannels);
-
-  let users = _chatDockData?.users;
-  if (!users) {
-    const data = await getWorkspaceData();
-    users = data.users || [];
-  }
-
-  const channelIds = [
-    'general',
-    ...users.filter(x => x.id !== uid).map(u => `dm-${u.id}`)
-  ];
-
-  const results = await Promise.all(
-    channelIds.map(ch =>
-      getChannelLatestMessage(ch).then(msg => ({ ch, msg })).catch(() => ({ ch, msg: null }))
-    )
-  );
-
-  const unread = new Set();
-  for (const { ch, msg } of results) {
-    if (isChannelUnread(ch, msg)) unread.add(ch);
-  }
-
-  // Play sound when polling detects a new unread channel (realtime handler covers live events)
-  for (const ch of unread) {
-    if (!prevUnread.has(ch)) {
-      NotificationSounds?.play?.('chat');
-      break;
-    }
-  }
-
-  state.chatUnreadChannels = unread;
-  updateChatUnreadBadge();
-  if (state.chatDockOpen && state.chatDockView === 'list') {
-    const list = document.getElementById('chat-dock-list');
-    if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
-  }
-}
-function _chatPollMs() {
-  return window.RealtimeSync?.isConnected?.() ? 15000 : 5000;
-}
-function startChatUnreadPolling() {
-  stopChatUnreadPolling();
-  state.chatUnreadChannels = new Set();
-  state.chatUnreadCounts = {};
-  updateChatUnreadBadge();
-}
-function stopChatUnreadPolling() {
-  if (_chatUnreadTimer) { clearInterval(_chatUnreadTimer); _chatUnreadTimer = null; }
-}
-
-async function getChatMessagesForChannel(channelId) {
-  if (!channelId) return [];
-  if (channelId.startsWith('dm-')) {
-    const otherId = Number(channelId.slice(3));
-    const uid = actorId();
-    if (!uid || !otherId) return [];
-    const db = (window.SupabaseDB && !isOffline()) ? window.SupabaseDB : DB;
-    const rows = await db.getDirectMessages(uid, otherId, { limit: 150 }).catch(() => []);
-    return (rows || []).map(m => ({
-      id: `dm-${m.id}`,
-      userId: m.fromUserId,
-      details: m.content,
-      source: 'direct',
-      createdAt: m.createdAt,
-      deliveredAt: m.deliveredAt || null,
-      readAt: m.readAt || null
-    }));
-  }
-  const [activity, discord] = await Promise.all([
-    DB.getChatActivityLog(channelId).catch(() => []),
-    DB.getDiscordMessages(channelId).catch(() => [])
-  ]);
-  return [...(activity || []), ...(discord || [])]
-    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-}
-
-function _activeChatPane() {
-  return document.getElementById('chat-dock-pane') || document.getElementById('chat-messages-pane');
-}
-
-function appendChatMessageToPane(message, uMap) {
-  const pane = _activeChatPane();
-  if (!pane) return;
-  const empty = pane.querySelector('.chat-empty-v2, .chat-empty');
-  if (empty) pane.innerHTML = renderChatMessagesHtml([message], uMap);
-  else {
-    let container = pane.querySelector('.chat-msgs-wrap');
-    if (!container) {
-      pane.innerHTML = renderChatMessagesHtml([message], uMap);
-      container = pane.querySelector('.chat-msgs-wrap');
-    }
-    if (container) {
-      const wrap = document.createElement('div');
-      wrap.innerHTML = renderChatMessagesHtml([message], uMap);
-      const row = wrap.querySelector('.chat-msg-row');
-      if (row) container.appendChild(row);
-    }
-  }
-  pane.scrollTop = pane.scrollHeight;
-}
-
-async function refreshChatPane() {
-  const pane = _activeChatPane();
-  if (!pane) return;
-  const channelId = state.chatChannel || 'general';
-  const uMap = state.chatUsersMap || {};
-  let messages;
-
-  // DM channels: always pull fresh from Supabase so new messages appear even when
-  // realtime isn't delivering events (IndexedDB would stay stale otherwise).
-  if (channelId.startsWith('dm-') && window.SupabaseDB?._sb?.() && navigator.onLine !== false) {
-    try {
-      const otherId = Number(channelId.slice(3));
-      const rows = await window.SupabaseDB.getDirectMessages(actorId(), otherId, { limit: 150 });
-      messages = rows.map(r => ({
-        id: `dm-${r.id}`,
-        userId: r.fromUserId,
-        details: r.content || '',
-        source: 'direct',
-        createdAt: r.createdAt,
-        deliveredAt: r.deliveredAt || null,
-        readAt: r.readAt || null
-      }));
-    } catch (_) {
-      messages = await getChatMessagesForChannel(channelId);
-    }
-  } else {
-    messages = await getChatMessagesForChannel(channelId);
-  }
-
-  pane.innerHTML = renderChatMessagesHtml(messages, uMap);
-  pane.scrollTop = pane.scrollHeight;
-  markChatChannelRead(channelId);
-}
-
-function renderChatMessagesHtml(messages, uMap) {
-  const meId = actorId();
-  if (!messages.length) {
-    return `<div class="chat-empty-v2">
-      <div class="chat-empty-orb">${ICONS.chat}</div>
-      <strong>No messages yet</strong>
-      <span>Messages posted here are sent to the Discord channel.</span>
-    </div>`;
-  }
-  let html = '';
-  let lastDate = '';
-  messages.forEach(m => {
-    const isDiscord = m.source === 'discord';
-    const who = isDiscord ? null : uMap[m.userId];
-    const name = isDiscord ? (m.discordDisplayName || m.discordAuthorName || 'Discord') : (who ? (who.displayName || who.username) : 'Someone');
-    const init = name.charAt(0).toUpperCase();
-    const mine = !isDiscord && m.userId === meId;
-    const avatarBg = isDiscord ? 'background:#000000' : (who ? `background:${userColor(who)}` : '');
-    const avatarContent = isDiscord && m.discordAvatar
-      ? `<img src="${esc(m.discordAvatar)}" alt="${esc(name)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : init;
-    const msgDate = new Date(m.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
-    if (msgDate !== lastDate) {
-      html += `<div class="chat-date-divider"><span>${msgDate}</span></div>`;
-      lastDate = msgDate;
-    }
-    const isDirect = m.source === 'direct';
-    let receiptHtml = '';
-    if (mine && isDirect) {
-      if (m.readAt) {
-        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--read" title="Read">✓✓ Read</span>`;
-      } else if (m.deliveredAt) {
-        receiptHtml = `<span class="chat-msg-receipt chat-msg-receipt--delivered" title="Delivered">✓✓ Delivered</span>`;
-      } else {
-        receiptHtml = `<span class="chat-msg-receipt" title="Sent">✓ Sent</span>`;
-      }
-    }
-    html += `<div class="chat-msg-row ${mine ? 'chat-msg-mine' : ''} ${isDiscord ? 'chat-msg-discord' : ''}">
-      ${!mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
-      <div class="chat-msg-body">
-        ${!mine ? `<div class="chat-msg-name">${esc(name)} ${isDiscord ? `<span class="chat-discord-badge">${ICONS.discordMark}</span>` : ''}</div>` : ''}
-        <div class="chat-msg-bubble">${esc(m.details || '').replace(/\n/g, '<br>')}</div>
-        <div class="chat-msg-time">${timeAgo(m.createdAt)}${receiptHtml}</div>
-      </div>
-      ${mine ? `<div class="chat-msg-avatar" style="${avatarBg}" title="${esc(name)}">${avatarContent}</div>` : ''}
-    </div>`;
-  });
-  return `<div class="chat-msgs-wrap">${html}</div>`;
-}
-
-/* ──── Docked hybrid chat (Phase 5) ──── */
-// Facebook/G+ style pop-out chat: a launcher in the corner that expands into a
-// panel with a contacts list (favorites, online, everyone) + channels, and a
-// conversation view. Lives outside #content so it survives route changes.
-
-let _chatDockData = null;   // { users, projects, generalHook, favIds } cached for the open panel
-let _chatDockTimer = null;
-
-// The old full-page route now just pops the dock open.
-async function renderChat() {
-  openChatDock(state.chatChannel);
-  if (window.location.hash === '#/chat') window.location.hash = '#/projects';
-}
-
-function openChatDock(channelId = null) {
-  state.chatDockOpen = true;
-  if (channelId) {
-    state.chatChannel = channelId;
-    state.chatDockView = 'convo';
-    markChatChannelRead(channelId);
-  } else if (!state.chatDockView) state.chatDockView = 'list';
-  renderChatDock();
-}
-function closeChatDock() {
-  state.chatDockOpen = false;
-  stopChatDockPolling();
-  renderChatDock();
-}
-function toggleChatDock() { state.chatDockOpen ? closeChatDock() : openChatDock(); }
-
-function startChatDockPolling() {
-  stopChatDockPolling();
-  // Always poll at 5s for DM conversations — refreshChatPane goes to Supabase directly,
-  // so the interval is the max wait time for a new message when realtime isn't firing.
-  _chatDockTimer = setInterval(() => {
-    if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
-  }, 5000);
-}
-function stopChatDockPolling() {
-  if (_chatDockTimer) { clearInterval(_chatDockTimer); _chatDockTimer = null; }
-}
-
-function chatChannelInfo(channelId, users, projects, generalHook) {
-  if (!channelId) channelId = 'general';
-  if (channelId.startsWith('dm-')) {
-    const u = users.find(x => x.id === Number(channelId.slice(3)));
-    return { id: channelId, type: 'direct', name: u?.displayName || u?.username || 'User', user: u };
-  }
-  if (channelId.startsWith('project-')) {
-    const p = projects.find(x => x.id === Number(channelId.split('-')[1]));
-    return { id: channelId, type: 'project', name: p?.name || 'project', projectId: p?.id };
-  }
-  return { id: 'general', type: 'general', name: 'general', channelUrl: generalHook?.channelUrl || '', live: !!generalHook?.url };
-}
-
-function chatDockContactRow(u, isFav) {
-  const initials = (u.displayName || u.username || '?').charAt(0).toUpperCase();
-  const avatarInner = u.avatarBase64
-    ? `<img src="${esc(u.avatarBase64)}" alt="${esc(initials)}">`
-    : initials;
-  const sub = isUserOnline(u) ? 'Online' : (u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Offline');
-  const channelId = `dm-${u.id}`;
-  const isUnread = state.chatUnreadChannels?.has(channelId);
-  const unreadCount = state.chatUnreadCounts?.[channelId] || 0;
-  const unreadCls = isUnread ? ' chat-dock-contact--unread' : '';
-  const unreadBadge = isUnread ? `<span class="chat-unread-badge">${unreadCount > 99 ? '99+' : unreadCount || ''}</span>` : '';
-  return `<button type="button" class="chat-dock-contact${unreadCls}" data-action="open-chat-channel" data-channel-id="${channelId}">
-    <span class="chat-dock-contact-av" ${userColorStyle(u)}>${avatarInner}${presenceDotHtml(u)}</span>
-    <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">${esc(u.displayName || u.username)}</span><small>${sub}</small></span>
-    ${unreadBadge}
-    <span class="chat-dock-fav ${isFav ? 'is-fav' : ''}" data-action="toggle-chat-favorite" data-user-id="${u.id}" title="${isFav ? 'Unpin contact' : 'Pin contact'}">${isFav ? '★' : '☆'}</span>
-  </button>`;
-}
-
-function chatDockListBodyHtml() {
-  const d = _chatDockData;
-  if (!d) return '';
-  const s = getSession();
-  const q = (state.chatDockSearch || '').trim().toLowerCase();
-  const people = d.users.filter(u => u.id !== s?.userId);
-  const filtered = q ? people.filter(u => (u.displayName || u.username || '').toLowerCase().includes(q)) : people;
-
-  // Unread DMs bubble to the top section; remove them from their regular section to avoid duplicates
-  const unreadDMs = sortUsersByPresence(filtered.filter(u => state.chatUnreadChannels?.has(`dm-${u.id}`)));
-  const unreadIds = new Set(unreadDMs.map(u => u.id));
-
-  const favs = sortUsersByPresence(filtered.filter(u => d.favIds.has(u.id) && !unreadIds.has(u.id)));
-  const online = sortUsersByPresence(filtered.filter(u => !d.favIds.has(u.id) && isUserOnline(u) && !unreadIds.has(u.id)));
-  const others = sortUsersByPresence(filtered.filter(u => !d.favIds.has(u.id) && !isUserOnline(u) && !unreadIds.has(u.id)));
-
-  const generalIsUnread = state.chatUnreadChannels?.has('general');
-  const generalUnreadCount = state.chatUnreadCounts?.['general'] || 0;
-  const generalBadge = generalIsUnread ? `<span class="chat-unread-badge">${generalUnreadCount > 99 ? '99+' : generalUnreadCount || ''}</span>` : '';
-  const channelsHtml = `
-    <button type="button" class="chat-dock-contact${generalIsUnread ? ' chat-dock-contact--unread' : ''}" data-action="open-chat-channel" data-channel-id="general">
-      <span class="chat-dock-contact-av chat-dock-channel-ic">#</span>
-      <span class="chat-dock-contact-meta"><span class="chat-dock-contact-name">general</span><small>${d.generalHook?.url ? 'Discord connected' : 'Team channel'}</small></span>
-      ${generalBadge}
-    </button>`;
-
-  const section = (label, html) => html ? `<div class="chat-dock-section-label">${label}</div>${html}` : '';
-  return `
-    ${section('Channels', channelsHtml)}
-    ${section('Unread', unreadDMs.map(u => chatDockContactRow(u, d.favIds.has(u.id))).join(''))}
-    ${section('Pinned', favs.map(u => chatDockContactRow(u, true)).join(''))}
-    ${section('Online', online.map(u => chatDockContactRow(u, false)).join(''))}
-    ${section(q ? 'Results' : 'Everyone', others.map(u => chatDockContactRow(u, false)).join('') || (q ? '<p class="chat-dock-empty">No matches</p>' : ''))}`;
-}
-
-async function chatDockPanelHtml() {
-  if (!state.chatDockView) state.chatDockView = 'list';
-  _chatDockData = null;
-
-  const s = getSession();
-  const [{ users, projects }, allHooks, favRows] = await Promise.all([
-    getWorkspaceData(),
-    getWebhooksCached(),
-    DB.getFavorites ? DB.getFavorites(s?.userId).catch(() => []) : Promise.resolve([]),
-  ]);
-  const generalHook = allHooks.find(h => h.scope === 'general');
-  state.chatUsersMap = Object.fromEntries(users.map(u => [u.id, u]));
-  _chatDockData = { users, projects, generalHook, favIds: new Set((favRows || []).map(f => Number(f.favoriteUserId))) };
-
-  if (state.chatDockView === 'convo') {
-    const active = chatChannelInfo(state.chatChannel, users, projects, generalHook);
-    state.chatChannel = active.id;
-    const messages = await getChatMessagesForChannel(active.id);
-    const messagesHtml = renderChatMessagesHtml(messages, state.chatUsersMap);
-    const prefix = active.type === 'direct' ? '@' : '#';
-    const subtitle = active.type === 'direct'
-      ? (isUserOnline(active.user) ? 'Online' : (active.user?.lastSeenAt ? `Last active ${timeAgo(active.user.lastSeenAt)}` : 'Offline'))
-      : (active.live ? 'Live · Discord' : 'Team channel');
-    return `<div class="chat-dock-panel">
-      <div class="chat-dock-head chat-dock-head--convo">
-        <button type="button" class="chat-dock-icon-btn" data-action="chat-dock-back" title="Back">${ICONS.chevronLeft || '‹'}</button>
-        <div class="chat-dock-convo-title">
-          <span class="chat-dock-convo-name">${prefix} ${esc(active.name)}</span>
-          <small>${subtitle}</small>
-        </div>
-        ${active.channelUrl ? `<a href="${esc(active.channelUrl)}" target="_blank" rel="noopener" class="chat-dock-icon-btn" title="Open in Discord">${ICONS.externalLink || '↗'}</a>` : ''}
-        <button type="button" class="chat-dock-icon-btn" data-action="close-chat-dock" title="Close">${ICONS.close || '×'}</button>
-      </div>
-      <div class="chat-dock-pane" id="chat-dock-pane">${messagesHtml}</div>
-      <form class="chat-dock-compose" data-form="chat-send" data-channel-id="${active.id}">
-        <textarea class="chat-dock-input" name="content" rows="1" placeholder="Message ${prefix}${esc(active.name)}…" required></textarea>
-        <button type="submit" class="chat-dock-send" title="Send">${ICONS.send}</button>
-      </form>
-    </div>`;
-  }
-
-  return `<div class="chat-dock-panel">
-    <div class="chat-dock-head">
-      <span class="chat-dock-title">Messages</span>
-      <button type="button" class="chat-dock-icon-btn" data-action="close-chat-dock" title="Close">${ICONS.close || '×'}</button>
-    </div>
-    <input type="text" class="chat-dock-search" id="chat-dock-search" placeholder="Search people…" value="${esc(state.chatDockSearch || '')}">
-    <div class="chat-dock-list" id="chat-dock-list">${chatDockListBodyHtml()}</div>
-  </div>`;
-}
-
-async function renderChatDock() {
-  const root = document.getElementById('chat-dock-root');
-  if (!root) return;
-  const open = !!state.chatDockOpen;
-  root.classList.toggle('chat-dock-open', open);
-  const panel = open ? await chatDockPanelHtml() : '';
-  const notesOpen = _notesPanelOpen;
-  const chatUnread = !open && state.chatUnreadChannels?.size > 0;
-  root.innerHTML = `
-    ${panel}
-    <div class="dock-launchers">
-      <button type="button" class="dock-launcher notes-dock-launcher${notesOpen ? ' is-active' : ''}" data-action="open-notes" title="Notes" aria-label="Notes">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
-      </button>
-      <button type="button" class="dock-launcher chat-dock-launcher${open ? ' is-active' : ''}${chatUnread ? ' has-unread' : ''}" data-action="toggle-chat-dock" title="Messages" aria-label="Messages">
-        ${open ? (ICONS.close || '×') : ICONS.chat}
-        ${chatUnread ? '<span class="dock-launcher-badge" aria-hidden="true"></span>' : ''}
-      </button>
-    </div>`;
-
-  if (open && state.chatDockView === 'list') {
-    const search = document.getElementById('chat-dock-search');
-    if (search) {
-      search.addEventListener('input', () => {
-        state.chatDockSearch = search.value;
-        const list = document.getElementById('chat-dock-list');
-        if (list) list.innerHTML = chatDockListBodyHtml();
-      });
-    }
-  }
-  if (open && state.chatDockView === 'convo') {
-    startChatDockPolling();
-    requestAnimationFrame(() => {
-      const pane = document.getElementById('chat-dock-pane');
-      if (pane) pane.scrollTop = pane.scrollHeight;
-      const input = document.querySelector('.chat-dock-input');
-      if (input) input.focus();
-    });
-  } else {
-    stopChatDockPolling();
-  }
-}
-
 /* ──── Admin Dashboard ──── */
 
 async function renderAdminDashboard() {
@@ -4713,12 +4652,17 @@ async function exportMonthlyReportPdf() {
 
   const doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
-  // Header with teal gradient
-  doc.setFillColor(13, 148, 136);
-  doc.rect(0, 0, doc.internal.pageSize.getWidth(), 60, 'F');
+  // Brief-style header
+  doc.setFillColor(252, 252, 250);
+  doc.rect(0, 0, doc.internal.pageSize.getWidth(), 72, 'F');
+  doc.setDrawColor(233, 231, 224);
+  doc.line(30, 72, doc.internal.pageSize.getWidth() - 30, 72);
 
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(47, 93, 124);
+  doc.setFontSize(9);
+  doc.text('PROGRESS BRIEF', 40, 24);
+  doc.setTextColor(24, 27, 34);
   doc.setFontSize(18);
   doc.text('Orbitask — Monthly Report', 40, 35);
   doc.setFontSize(12);
@@ -4741,10 +4685,10 @@ async function exportMonthlyReportPdf() {
   doc.autoTable({
     head: [['Project', 'Owner', 'Department', 'Status', 'Progress', 'Started', 'Completed']],
     body: tableData,
-    startY: 75,
+    startY: 90,
     styles: { font: 'helvetica', fontSize: 9, cellPadding: 6 },
-    headStyles: { fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [245, 252, 250] },
+    headStyles: { fillColor: [234, 241, 246], textColor: [47, 93, 124], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [252, 252, 250] },
     margin: { left: 30, right: 30 }
   });
 
@@ -4961,6 +4905,55 @@ function showModal(title, body) {
   if (inp) setTimeout(() => inp.focus(), 50);
 }
 function hideModal() { const ov = document.getElementById('modal-overlay'); ov.classList.add('hidden'); ov.innerHTML = ''; }
+
+function showConfirmDialog({
+  title = 'Confirm action',
+  message = '',
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  tone = 'danger'
+} = {}) {
+  const ov = document.getElementById('modal-overlay');
+  if (!ov) return Promise.resolve(false);
+  const previousFocus = document.activeElement;
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (window._activeConfirmCancel === cancel) window._activeConfirmCancel = null;
+      ov.removeAttribute('data-confirm-dialog');
+      hideModal();
+      if (previousFocus?.focus) setTimeout(() => previousFocus.focus(), 0);
+      resolve(!!value);
+    };
+    const cancel = () => finish(false);
+    window._activeConfirmCancel = cancel;
+    ov.dataset.confirmDialog = 'true';
+    const icon = tone === 'warning' ? ICONS.alertTriangle : tone === 'info' ? ICONS.info : ICONS.trash;
+    ov.innerHTML = `
+      <div class="modal confirm-modal confirm-modal--${esc(tone)}" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div class="confirm-modal-icon" aria-hidden="true">${icon || '!'}</div>
+        <div class="confirm-modal-content">
+          <div class="modal-header confirm-modal-header">
+            <h2 id="confirm-title">${esc(title)}</h2>
+            <button type="button" class="btn-icon" data-confirm-cancel aria-label="Close">${ICONS.x}</button>
+          </div>
+          <div class="modal-body confirm-modal-body">
+            <p>${esc(message)}</p>
+          </div>
+          <div class="confirm-modal-actions">
+            <button type="button" class="btn btn-ghost" data-confirm-cancel>${esc(cancelLabel)}</button>
+            <button type="button" class="btn btn-primary confirm-modal-primary" data-confirm-ok>${esc(confirmLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    ov.classList.remove('hidden');
+    ov.querySelectorAll('[data-confirm-cancel]').forEach(btn => btn.addEventListener('click', cancel));
+    ov.querySelector('[data-confirm-ok]')?.addEventListener('click', () => finish(true));
+    setTimeout(() => ov.querySelector('[data-confirm-ok]')?.focus(), 30);
+  });
+}
 
 async function showSaveTemplateModal(projectId) {
   const pid = Number(projectId);
@@ -5206,6 +5199,157 @@ async function showTaskModal(preId = null, defaultStatus = 'todo') {
     const ownerId = projectSelect.selectedOptions[0]?.dataset.ownerId;
     if (ownerId && assigneeSelect?.querySelector(`option[value="${ownerId}"]`)) assigneeSelect.value = ownerId;
   });
+}
+
+function taskSearchHaystack(task, project, assignee) {
+  return normalizeSearchText([
+    task?.title,
+    task?.priority,
+    task?.status,
+    task?.notes,
+    project?.name,
+    project?.notes,
+    project ? departmentLabel(projectDepartmentValue(project)) : '',
+    assignee?.displayName,
+    assignee?.username
+  ].filter(Boolean).join(' '));
+}
+
+async function createStarterProject() {
+  const uid = actorId();
+  if (!uid) return;
+  const user = await DB.getUser(uid).catch(() => null);
+  const classrooms = DB.getClassrooms ? await DB.getClassrooms().catch(() => []) : [];
+  const allowedRooms = await userClassroomIds().catch(() => []);
+  const allowedSet = Array.isArray(allowedRooms) ? new Set(allowedRooms.map(Number)) : null;
+  const classroom = allowedSet ? classrooms.find(c => allowedSet.has(Number(c.id))) : classrooms[0];
+  const projectData = {
+    name: 'Learn Orbitrack',
+    notes: 'A small starter mission to learn projects, tasks, files, activity, search, and shortcuts.',
+    type: 'project',
+    priority: 'medium',
+    department: user?.department || '',
+    classroomId: classroom?.id || null,
+    ownerId: uid,
+    actorUserId: uid
+  };
+  const id = await DB.createProject(projectData);
+  const steps = [
+    ['Open this project and review the task list', 'done'],
+    ['Press Ctrl + K and search for this project', 'todo'],
+    ['Move one task to In Progress', 'todo'],
+    ['Upload a sample document in the Library tab', 'todo'],
+    ['Mark the starter mission complete', 'todo']
+  ];
+  for (const [title, status] of steps) {
+    await DB.createTask({
+      projectId: id,
+      title,
+      status,
+      priority: 'medium',
+      assigneeId: uid,
+      actorUserId: uid
+    }).catch(() => {});
+  }
+  const created = await DB.getProject(id).catch(() => ({ id, name: projectData.name }));
+  await recordProjectActivity({
+    userId: uid,
+    projectId: id,
+    action: 'created',
+    entityType: 'project',
+    entityId: id,
+    details: 'starter mission'
+  }).catch(() => {});
+  bustWorkspaceCache();
+  showProjectCreatedPopup(created || { id, name: projectData.name });
+  window.location.hash = `#/projects/${id}`;
+}
+
+async function showCommandPalette(initialQuery = '') {
+  const [{ projects = [], tasks = [], users = [] }, classrooms] = await Promise.all([
+    getWorkspaceData().catch(() => ({ projects: [], tasks: [], users: [] })),
+    DB.getClassrooms ? DB.getClassrooms().catch(() => []) : Promise.resolve([])
+  ]);
+  const allowedClassroomIds = await userClassroomIds().catch(() => []);
+  const visibleProjects = filterProjectsByClassroom(filterProjectsByWorkspace(projects), allowedClassroomIds);
+  const projectIds = new Set(visibleProjects.map(p => Number(p.id)));
+  const pMap = Object.fromEntries(visibleProjects.map(p => [p.id, p]));
+  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const visibleTasks = tasks.filter(t => projectIds.has(Number(t.projectId)));
+  const commandIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+
+  showModal('Command', `
+    <div class="command-palette" role="dialog" aria-label="Command palette">
+      <div class="command-search-shell">
+        <span class="command-search-icon">${commandIcon}</span>
+        <input id="command-palette-input" class="command-search-input" type="search" value="${esc(initialQuery)}" placeholder="Create, search, jump, or change view..." autocomplete="off">
+        <kbd>Ctrl K</kbd>
+      </div>
+      <div id="command-palette-results" class="command-results"></div>
+    </div>`);
+
+  const input = document.getElementById('command-palette-input');
+  const results = document.getElementById('command-palette-results');
+  const routeCommands = [
+    { label: 'Go to Projects', sub: 'Project grid and onboarding', route: '/projects' },
+    { label: 'Go to Tasks', sub: 'Board and table views', route: '/tasks' },
+    { label: 'Go to Reports', sub: 'Workspace reporting', route: '/reports' },
+    { label: 'Go to Settings', sub: 'Workspace settings', route: '/settings' }
+  ];
+
+  const render = () => {
+    if (!results) return;
+    const q = normalizeSearchText(input?.value || '');
+    const projectMatches = visibleProjects
+      .filter(p => !q || projectMatchesSearch(p, uMap[p.ownerId], q))
+      .slice(0, 6);
+    const taskMatches = visibleTasks
+      .filter(t => !q || taskSearchHaystack(t, pMap[t.projectId], uMap[t.assigneeId]).includes(q))
+      .slice(0, 8);
+    const routeMatches = routeCommands.filter(cmd => !q || normalizeSearchText(`${cmd.label} ${cmd.sub}`).includes(q));
+    results.innerHTML = `
+      <div class="command-group">
+        <div class="command-group-label">Actions</div>
+        <button type="button" class="command-item" data-action="command-create-task">
+          <span>${ICONS.plus}</span><strong>Create task</strong><em>Ctrl N</em>
+        </button>
+        <button type="button" class="command-item" data-action="command-create-project">
+          <span>${ICONS.folder}</span><strong>Create project</strong><em>Ctrl Shift N</em>
+        </button>
+      </div>
+      ${routeMatches.length ? `<div class="command-group">
+        <div class="command-group-label">Navigate</div>
+        ${routeMatches.map(cmd => `<button type="button" class="command-item" data-action="command-route" data-route="${esc(cmd.route)}">
+          <span>&gt;</span><strong>${esc(cmd.label)}</strong><small>${esc(cmd.sub)}</small>
+        </button>`).join('')}
+      </div>` : ''}
+      ${projectMatches.length ? `<div class="command-group">
+        <div class="command-group-label">Projects</div>
+        ${projectMatches.map(p => `<button type="button" class="command-item" data-action="command-open-project" data-project-id="${p.id}">
+          <span>${ICONS.folder}</span><strong>${esc(p.name)}</strong><small>${esc(uMap[p.ownerId]?.displayName || uMap[p.ownerId]?.username || 'Unknown owner')}</small>
+        </button>`).join('')}
+      </div>` : ''}
+      ${taskMatches.length ? `<div class="command-group">
+        <div class="command-group-label">Tasks</div>
+        ${taskMatches.map(t => `<button type="button" class="command-item" data-action="command-open-task" data-task-id="${t.id}">
+          <span class="status-dot status-dot-${esc(t.status)}"></span><strong>${esc(t.title)}</strong><small>${esc(pMap[t.projectId]?.name || 'Project')}</small>
+        </button>`).join('')}
+      </div>` : ''}
+      ${!projectMatches.length && !taskMatches.length && !routeMatches.length ? '<p class="command-empty">No matching command.</p>' : ''}
+    `;
+  };
+  input?.addEventListener('input', render);
+  input?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      const first = results?.querySelector('.command-item');
+      if (first) {
+        event.preventDefault();
+        first.click();
+      }
+    }
+  });
+  render();
+  setTimeout(() => input?.focus(), 30);
 }
 
 function renderTaskChainTimelineHtml(tasks, uMap) {
@@ -5874,8 +6018,10 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
-  { version: '2.2.22', date: '2026-06-10', items: ['Support hub & calendar', 'Activity heatmap on Team page', 'Project task dependency map', 'Theme toggle animation', 'Boot screen flash fix'] },
-  { version: '2.2.20', date: '2026-06-05', items: ['Black Edition UI refresh', 'User profile fields (birthday, gender)', 'Admin activity histogram'] },
+  { version: '3.0.10', date: '2026-06-18', items: ['Orbitask-themed confirm dialogs in light and dark mode', 'Project properties, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, tooltips, heat, clusters, and collaboration links', 'Brief-style reports across HTML previews, PDF export, and AI report prompts', 'Local AI Copilot removed from production builds'] },
+  { version: '3.0.8', date: '2026-06-17', items: ['Dark theme polish: readable popups, sync banner, headings, and completed tasks', 'Download button for project & task attachments (any file type)', 'Neater task List view using grouped tables', 'Documents panel no longer opens automatically on a project', 'Assignee sync, ID-map, and classroom access fixes'] },
+  { version: '3.0.7', date: '2026-06-12', items: ['Fixed queued task updates and sync error loops', 'Removed ghost users from team views', 'More reliable realtime sync'] },
+  { version: '3.0.0', date: '2026-06-07', items: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Interactive D3 team activity map', 'Rich-text notes and PDF report generation', 'Direct messaging with Discord bridge'] },
 ];
 
 async function renderSupportPage() {
@@ -5942,14 +6088,14 @@ function _pentPoints(cx, cy, r, rot = -Math.PI / 2) {
   return pts.join(' ');
 }
 
-async function buildTeamActivityHeatmapHtml(users) {
+async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
   const activityByUser = await DB.getTeamActivitySummary({ days: 7 });
   const vibrant = getThemeMode() === 'normal';
 
   // Store data for D3 initialization
   const mapId = `team-map-${Date.now()}`;
   window._teamActivityData = window._teamActivityData || {};
-  window._teamActivityData[mapId] = { users, activityByUser, vibrant };
+  window._teamActivityData[mapId] = { users, projects, tasks, activityByUser, vibrant };
 
   const legend = vibrant
     ? `<span><i style="background:linear-gradient(135deg,#06b6d4,#38bdf8)"></i> Low</span><span><i style="background:linear-gradient(135deg,#a855f7,#7c3aed)"></i> Medium</span><span><i style="background:linear-gradient(135deg,#f97316,#ec4899)"></i> High</span>`
@@ -6044,6 +6190,199 @@ function initializeTeamActivityD3() {
     simulation.on('tick', () => {
       circles.attr('transform', d => `translate(${d.x},${d.y})`);
     });
+  });
+}
+
+function initializeTeamActivityD3() {
+  if (!window.d3) return;
+  document.querySelectorAll('[data-map-id]').forEach(el => {
+    const mapId = el.dataset.mapId;
+    const data = window._teamActivityData?.[mapId];
+    if (!data || el.dataset.d3Ready === 'true') return;
+    el.dataset.d3Ready = 'true';
+
+    const { users, projects = [], tasks = [], activityByUser, vibrant } = data;
+    const maxMin = Math.max(1, ...users.map(u => activityByUser[u.id]?.activeMinutes || 0));
+    const departments = [...new Set(users.map(u => u.department || 'general'))];
+    const width = Math.max(720, el.clientWidth || 900);
+    const height = Math.max(460, el.clientHeight || 520);
+    const deptX = (dept) => {
+      const idx = Math.max(0, departments.indexOf(dept || 'general'));
+      return ((idx + 1) / (departments.length + 1)) * width;
+    };
+    const pairKey = (a, b) => [Number(a), Number(b)].sort((x, y) => x - y).join(':');
+    const linkWeights = new Map();
+    projects.forEach(project => {
+      const participants = new Set();
+      if (project.ownerId != null) participants.add(Number(project.ownerId));
+      tasks.filter(t => Number(t.projectId) === Number(project.id) && t.assigneeId != null).forEach(t => participants.add(Number(t.assigneeId)));
+      const ids = [...participants].filter(id => users.some(u => Number(u.id) === id));
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const key = pairKey(ids[i], ids[j]);
+          linkWeights.set(key, (linkWeights.get(key) || 0) + 1);
+        }
+      }
+    });
+    const links = [...linkWeights.entries()].map(([key, weight]) => {
+      const [source, target] = key.split(':').map(Number);
+      return { source, target, weight };
+    });
+    const nodes = users.map(u => {
+      const name = u.displayName || u.username || 'Unknown';
+      const activity = activityByUser[u.id]?.activeMinutes || 0;
+      const projectCount = projects.filter(p => Number(p.ownerId) === Number(u.id)).length;
+      const taskCount = tasks.filter(t => Number(t.assigneeId) === Number(u.id)).length;
+      return {
+        id: Number(u.id),
+        name,
+        initials: name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+        activity,
+        actionCount: activityByUser[u.id]?.actionCount || 0,
+        online: isUserOnline(u),
+        lastSeen: u.lastSeenAt,
+        department: u.department || 'general',
+        projectCount,
+        taskCount,
+        user: u
+      };
+    });
+    const heat = (min) => Math.max(0.08, min / maxMin);
+    const colorByHeat = (h) => {
+      if (vibrant) {
+        if (h < 0.34) return '#06b6d4';
+        if (h < 0.67) return '#8b5cf6';
+        return '#f97316';
+      }
+      if (h < 0.34) return '#e5e5e5';
+      if (h < 0.67) return '#737373';
+      return '#fafafa';
+    };
+
+    el.innerHTML = `
+      <div class="team-map-floating-controls">
+        <button type="button" data-map-tool="fit">Fit</button>
+        <button type="button" data-map-tool="reset">Reset</button>
+        <button type="button" data-map-filter="all" class="active">All</button>
+        <button type="button" data-map-filter="online">Online</button>
+        <button type="button" data-map-filter="active">Active</button>
+      </div>
+      <div class="team-map-tooltip hidden"></div>`;
+    const tooltip = el.querySelector('.team-map-tooltip');
+    const svg = d3.select(el).append('svg')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('class', 'team-map-svg-rich');
+    const g = svg.append('g');
+    const zoomBehavior = d3.zoom()
+      .scaleExtent([0.45, 2.4])
+      .on('zoom', (event) => g.attr('transform', event.transform));
+    svg.call(zoomBehavior);
+
+    const deptBands = g.append('g').attr('class', 'team-map-dept-bands');
+    departments.forEach(dept => {
+      deptBands.append('text')
+        .attr('x', deptX(dept))
+        .attr('y', 34)
+        .attr('text-anchor', 'middle')
+        .attr('class', 'team-map-dept-label')
+        .text(departmentLabel(dept));
+    });
+
+    const linkSel = g.append('g').attr('class', 'team-map-links')
+      .selectAll('line')
+      .data(links)
+      .enter()
+      .append('line')
+      .attr('stroke-width', d => Math.min(6, 1 + d.weight))
+      .attr('opacity', d => Math.min(0.5, 0.16 + d.weight * 0.08));
+
+    const nodeSel = g.append('g').attr('class', 'team-map-nodes')
+      .selectAll('g')
+      .data(nodes)
+      .enter()
+      .append('g')
+      .attr('class', 'team-map-node')
+      .style('cursor', 'grab')
+      .call(d3.drag()
+        .on('start', (event, d) => { simulation.alphaTarget(0.28).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on('end', (_event, d) => { simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+    nodeSel.append('circle')
+      .attr('r', d => 24 + Math.min(20, Math.sqrt(d.activity || 1) * 1.6))
+      .attr('fill', d => colorByHeat(heat(d.activity)))
+      .attr('stroke', 'var(--card)')
+      .attr('stroke-width', 3)
+      .on('click', (_event, d) => showUserProfileModal(Number(d.id)))
+      .on('mousemove', (event, d) => {
+        tooltip.classList.remove('hidden');
+        tooltip.style.left = `${event.offsetX + 14}px`;
+        tooltip.style.top = `${event.offsetY + 14}px`;
+        tooltip.innerHTML = `<strong>${esc(d.name)}</strong><span>${departmentLabel(d.department)} - ${(d.activity / 60).toFixed(1)}h this week</span><small>${d.projectCount} owned projects - ${d.taskCount} assigned tasks</small>`;
+      })
+      .on('mouseleave', () => tooltip.classList.add('hidden'));
+    nodeSel.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', '0.36em')
+      .attr('class', 'team-map-initials')
+      .text(d => d.initials);
+    nodeSel.append('circle')
+      .attr('class', 'team-map-online-dot')
+      .attr('r', 6)
+      .attr('cx', 24)
+      .attr('cy', -24)
+      .attr('display', d => d.online ? null : 'none');
+    nodeSel.append('text')
+      .attr('class', 'team-map-name')
+      .attr('text-anchor', 'middle')
+      .attr('y', 54)
+      .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}...` : d.name);
+
+    const simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(d => 120 - Math.min(55, d.weight * 9)).strength(0.08))
+      .force('charge', d3.forceManyBody().strength(-260))
+      .force('x', d3.forceX(d => deptX(d.department)).strength(0.12))
+      .force('y', d3.forceY(height / 2).strength(0.08))
+      .force('collide', d3.forceCollide(d => 42 + Math.min(20, Math.sqrt(d.activity || 1) * 1.4)));
+
+    simulation.on('tick', () => {
+      linkSel
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+    const applyFilter = (mode) => {
+      el.querySelectorAll('[data-map-filter]').forEach(btn => btn.classList.toggle('active', btn.dataset.mapFilter === mode));
+      nodeSel.transition().duration(160).style('opacity', d => {
+        if (mode === 'online') return d.online ? 1 : 0.18;
+        if (mode === 'active') return d.activity > 0 ? 1 : 0.18;
+        return 1;
+      });
+      linkSel.transition().duration(160).style('opacity', d => {
+        const s = d.source;
+        const t = d.target;
+        if (mode === 'online') return s.online && t.online ? 0.42 : 0.04;
+        if (mode === 'active') return s.activity > 0 && t.activity > 0 ? 0.42 : 0.04;
+        return Math.min(0.5, 0.16 + d.weight * 0.08);
+      });
+    };
+    const reset = () => svg.transition().duration(220).call(zoomBehavior.transform, d3.zoomIdentity);
+    const fit = () => {
+      const bounds = g.node().getBBox();
+      const scale = Math.min(1.6, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+      const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
+      const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
+      svg.transition().duration(260).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    };
+    el.querySelector('[data-map-tool="reset"]')?.addEventListener('click', reset);
+    el.querySelector('[data-map-tool="fit"]')?.addEventListener('click', fit);
+    el.querySelectorAll('[data-map-filter]').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.mapFilter || 'all')));
+    setTimeout(fit, 350);
   });
 }
 
@@ -6168,12 +6507,15 @@ async function renderCalendarPage() {
   const monthLabel = monthDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   const rangeStart = new Date(year, month, 1).toISOString();
   const rangeEnd = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  if (!state.calendarSelectedDay) state.calendarSelectedDay = todayKey;
+  state.calendarFilters = { events: true, due: true, birthday: true, completed: false, ...(state.calendarFilters || {}) };
   const [events, { tasks, projects }, users] = await Promise.all([
     DB.getCalendarEvents({ from: rangeStart, to: rangeEnd }),
     getWorkspaceData(),
     getUsersCached()
   ]);
-  const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const dayMap = {};
   const addToDay = (key, item) => {
     if (!dayMap[key]) dayMap[key] = [];
@@ -6186,7 +6528,7 @@ async function renderCalendarPage() {
   tasks.filter(t => t.dueDate).forEach(t => {
     const key = t.dueDate.slice(0, 10);
     const p = projects.find(pr => pr.id === t.projectId);
-    addToDay(key, { kind: 'due', title: t.title, projectName: p?.name || 'Project', id: t.id, projectId: t.projectId });
+    addToDay(key, { kind: 'due', title: t.title, projectName: p?.name || 'Project', id: t.id, projectId: t.projectId, status: t.status, priority: t.priority });
   });
   users.filter(u => u.birthDate).forEach(u => {
     const bd = u.birthDate.slice(5);
@@ -6195,30 +6537,60 @@ async function renderCalendarPage() {
       if (key.slice(5) === bd) addToDay(key, { kind: 'birthday', title: `${u.displayName || u.username}'s birthday`, userId: u.id });
     }
   });
+  const visibleItems = (items = []) => items.filter(it => {
+    if (it.kind === 'event') return state.calendarFilters.events;
+    if (it.kind === 'birthday') return state.calendarFilters.birthday;
+    if (it.kind === 'due') return state.calendarFilters.due && (state.calendarFilters.completed || it.status !== 'done');
+    return true;
+  });
+  const itemLabel = (it) => it.kind === 'due'
+    ? `${it.status === 'done' ? 'Done' : 'Due'} - ${it.title}`
+    : it.title;
+  const upcomingDue = tasks
+    .filter(t => t.dueDate && t.dueDate >= todayKey && t.status !== 'done')
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const overdueDue = tasks.filter(t => t.dueDate && t.dueDate < todayKey && t.status !== 'done');
+  const monthBirthdays = Object.values(dayMap).flat().filter(it => it.kind === 'birthday').length;
+  const todayItems = visibleItems(dayMap[todayKey] || []);
+  const summaryCards = [
+    { label: 'Today', value: todayItems.length, hint: formatDateShort(todayKey), tone: 'accent' },
+    { label: 'Upcoming', value: upcomingDue.length, hint: upcomingDue[0] ? formatDateShort(upcomingDue[0].dueDate) : 'No due tasks', tone: 'blue' },
+    { label: 'Overdue', value: overdueDue.length, hint: overdueDue.length ? 'Needs attention' : 'Clear', tone: 'red' },
+    { label: 'Birthdays', value: monthBirthdays, hint: monthLabel, tone: 'purple' },
+    { label: 'Events', value: events.length, hint: 'Team calendar', tone: 'green' }
+  ].map(card => `<div class="calendar-summary-card calendar-summary-card--${card.tone}">
+      <strong>${card.value}</strong>
+      <span>${esc(card.label)}</span>
+      <small>${esc(card.hint)}</small>
+    </div>`).join('');
+  const filterButton = (key, label) => `<button type="button" class="calendar-filter ${state.calendarFilters[key] ? 'active' : ''}" data-action="calendar-toggle-filter" data-filter="${key}">${esc(label)}</button>`;
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push('<div class="cal-cell cal-cell-empty"></div>');
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   for (let d = 1; d <= daysInMonth; d++) {
     const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const items = dayMap[key] || [];
+    const items = visibleItems(dayMap[key] || []);
     const isToday = key === todayKey;
     const isSelected = state.calendarSelectedDay === key;
     cells.push(`<button type="button" class="cal-cell${isToday ? ' cal-cell-today' : ''}${isSelected ? ' cal-cell-selected' : ''}" data-action="calendar-select-day" data-day="${key}">
       <span class="cal-day-num">${d}</span>
-      <div class="cal-day-dots">${items.slice(0, 3).map(it => `<span class="cal-dot cal-dot--${it.kind}"></span>`).join('')}</div>
+      <div class="cal-day-chips">
+        ${items.slice(0, 3).map(it => `<span class="cal-chip cal-chip--${it.kind}${it.status === 'done' ? ' is-done' : ''}">${esc(itemLabel(it))}</span>`).join('')}
+        ${items.length > 3 ? `<span class="cal-chip cal-chip--more">+${items.length - 3}</span>` : ''}
+      </div>
     </button>`);
   }
-  const selectedItems = state.calendarSelectedDay ? (dayMap[state.calendarSelectedDay] || []) : [];
-  const sideHtml = state.calendarSelectedDay ? `
+  const selectedKey = state.calendarSelectedDay || todayKey;
+  const selectedItems = visibleItems(dayMap[selectedKey] || []);
+  const agendaTitle = selectedKey === todayKey ? `Today - ${formatDateShort(selectedKey)}` : formatDateShort(selectedKey);
+  const sideHtml = `
     <section class="dash-panel cal-side-panel">
-      <div class="dash-panel-head"><h3>${formatDateShort(state.calendarSelectedDay)}</h3>
-        <button type="button" class="btn btn-sm btn-primary" data-action="add-calendar-event" data-day="${state.calendarSelectedDay}">${ICONS.plus} Event</button>
+      <div class="dash-panel-head"><h3>${esc(agendaTitle)}</h3>
+        <button type="button" class="btn btn-sm btn-primary" data-action="add-calendar-event" data-day="${selectedKey}">${ICONS.plus} Event</button>
       </div>
       <div class="cal-side-list">
         ${selectedItems.length ? selectedItems.map(it => {
           if (it.kind === 'event') {
-            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">${esc(it.description || 'Team event')}</span>
+            return `<div class="cal-side-item cal-side-item--event"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">${esc(it.description || 'Team event')}</span>
               <button type="button" class="btn-icon" data-action="delete-calendar-event" data-id="${it.id}" title="Delete">${ICONS.trash}</button></div>`;
           }
           if (it.kind === 'due') {
@@ -6226,13 +6598,14 @@ async function renderCalendarPage() {
               <a href="#/projects/${it.projectId}" class="btn btn-sm btn-ghost">Open</a></div>`;
           }
           if (it.kind === 'birthday') {
-            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong>
+            return `<div class="cal-side-item cal-side-item--birthday"><strong>${esc(it.title)}</strong>
               <button type="button" class="btn btn-sm btn-ghost" data-action="show-user-profile" data-user-id="${it.userId}">Profile</button></div>`;
           }
           return '';
         }).join('') : '<p class="text-muted text-sm">Nothing scheduled this day.</p>'}
       </div>
-    </section>` : '';
+    </section>
+    </div>`;
   content.innerHTML = `
     <div class="view-page calendar-page">
       <div class="projects-page-header">
@@ -6242,6 +6615,13 @@ async function renderCalendarPage() {
           <button type="button" class="btn btn-ghost" data-action="calendar-today">Today</button>
           <button type="button" class="btn btn-ghost" data-action="calendar-next-month">→</button>
         </div>
+      </div>
+      <div class="calendar-summary-grid">${summaryCards}</div>
+      <div class="calendar-filter-row">
+        ${filterButton('events', 'Events')}
+        ${filterButton('due', 'Due tasks')}
+        ${filterButton('birthday', 'Birthdays')}
+        ${filterButton('completed', 'Completed')}
       </div>
       <div class="calendar-layout">
         <section class="dash-panel cal-grid-panel">
@@ -6302,15 +6682,9 @@ async function renderActivityPage() {
 async function renderAboutPage() {
   const content = document.getElementById('content');
   const version = getAppVersion();
-  const ascii = `
- ██████╗ ██████╗ ██████╗ ██╗████████╗ █████╗ ███████╗██╗  ██╗
-██╔═══██╗██╔══██╗██╔══██╗██║╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝
-██║   ██║██████╔╝██████╔╝██║   ██║   ███████║███████╗█████╔╝
-██║   ██║██╔══██╗██╔══██╗██║   ██║   ██╔══██║╚════██║██╔═██╗
-╚██████╔╝██║  ██║██████╔╝██║   ██║   ██║  ██║███████║██║  ██╗
- ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝`;
 
   const releases = [
+    { version: '3.0.10', date: 'June 2026', features: ['Orbitask-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports', 'Production build excludes the local AI Copilot'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
     { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
     { version: '2.2.21', date: 'May 2026', features: ['Fixed self-DM routing bug', 'Enhanced message delivery tracking'] },
@@ -6319,12 +6693,25 @@ async function renderAboutPage() {
 
   content.innerHTML = `
     <div class="about-page">
-      <div class="about-hero" style="background: linear-gradient(135deg, rgba(15,118,110,0.1) 0%, rgba(34,197,94,0.05) 100%); padding: 40px 30px; border-radius: var(--radius-lg); margin-bottom: 30px; text-align: center">
-        <pre style="font-family:monospace;font-size:11px;margin:0 0 20px;color:var(--text-muted);overflow-x:auto">${ascii}</pre>
-        <h1 style="margin:0 0 8px">Orbitask</h1>
-        <p style="margin:0;color:var(--text-secondary)">Team Project & Task Management Platform</p>
-        <p style="margin:6px 0 0;font-size:0.9rem;color:var(--text-muted)">Version ${esc(version)} · Designed for fast-moving teams</p>
-      </div>
+      <header class="about-header">
+        <div class="about-header-mark">${ICONS.target || ICONS.sparkles || ''}</div>
+        <div class="about-header-text">
+          <h1>Orbitask</h1>
+          <p class="about-header-tagline">Team project &amp; task management platform</p>
+        </div>
+        <div class="about-header-meta">
+          <span class="about-version-pill">Version ${esc(version)}</span>
+          <span class="about-header-sub">Designed for fast-moving teams</span>
+        </div>
+      </header>
+
+      <section class="dash-panel">
+        <div class="dash-panel-head"><h3>Personal Reports</h3></div>
+        <p>Generate your own progress report with profile details, tasks you created, tasks you are involved in, current status, recent activity, and remarks.</p>
+        <div class="form-actions" style="justify-content:flex-start;position:static;background:transparent;border-top:0;padding-top:10px">
+          <button type="button" class="btn btn-primary" data-action="generate-my-report">${ICONS.download} Generate My Report</button>
+        </div>
+      </section>
 
       <section class="dash-panel">
         <div class="dash-panel-head"><h3>About Orbitask</h3></div>
@@ -6431,16 +6818,16 @@ function showAboutModal() {
           <div class="about-version">Version ${esc(getAppVersion())} · Built by Everlasting</div>
         </div>
       </div>
-      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, attach files to tasks, and collaborate — all in one place.</p>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports — all in one place.</p>
       <div class="about-features">
-        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Status tracking, milestones, progress bars, and department filters.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Status tracking, milestones, activity, documents, and project details in a focused slide drawer.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">📝</span><div><strong>Task Details</strong><span> — Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>Files</strong><span> — Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Timeline</strong><span> — Visual Gantt-style timeline by due date with today marker.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Calendar</strong><span> — Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team channels with Discord webhook integration.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
       </div>
       <div class="about-footer">
         <span class="text-muted text-sm">Local-first with secure cloud sync · Built with ❤️</span>
@@ -6732,7 +7119,7 @@ async function handleFormSubmit(e) {
         bustWorkspaceCache();
         const unsaved = projectSaveMismatchFields(data, created);
         if (unsaved.length) showToast(`Project created, but ${unsaved.join(', ')} could not be saved yet.`, 'warning');
-        else showToast('Project created', 'success');
+        showProjectCreatedPopup(created || { id: nid, name: data.name });
         hideModal();
         window.location.hash = `#/projects/${nid}`; return;
       }
@@ -6891,66 +7278,7 @@ async function handleFormSubmit(e) {
         showToast(`Webhook saved for ${project.name}`, 'success');
       }
     } else if (type === 'chat-send') {
-      const channelId = form.dataset.channelId;
-      const content = fd.get('content')?.trim();
-      if (!content) return;
-      const session = getSession();
-      if (channelId?.startsWith('dm-')) {
-        const toUserId = Number(channelId.slice(3));
-        const uMap = state.chatUsersMap || {};
-        const optimistic = {
-          id: `optimistic-${Date.now()}`,
-          userId: uid,
-          details: content.slice(0, 2000),
-          source: 'direct',
-          createdAt: new Date().toISOString()
-        };
-        form.reset();
-        appendChatMessageToPane(optimistic, uMap);
-        markChatChannelRead(channelId);
-        try {
-          await DB.createDirectMessage({ fromUserId: uid, toUserId, content });
-        } catch (err) {
-          console.warn('DM send failed:', err);
-          showToast('Message could not be sent. Please try again.', 'warning');
-          await refreshChatPane();
-        }
-        return;
-      }
-      let hook = null;
-      if (channelId === 'general') hook = await DB.getGeneralWebhook();
-      else if (channelId?.startsWith('project-')) hook = await DB.getProjectWebhook(Number(channelId.split('-')[1]));
-      if (hook?.url) {
-        const result = await postToDiscordWebhook(hook.url, {
-          username: discordWebhookUsername(session),
-          content
-        });
-        if (!result.ok) showToast(discordFailToast(result), 'warning');
-      }
-      form.reset();
-      const projectId = hook?.projectId ?? (channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null);
-      const uMap = state.chatUsersMap || {};
-      const optimistic = {
-        userId: uid,
-        projectId,
-        action: 'sent_message',
-        entityType: 'chat',
-        details: content.slice(0, 2000),
-        createdAt: new Date().toISOString()
-      };
-      appendChatMessageToPane(optimistic, uMap);
-      try {
-        const saved = await DB.logActivity({ userId: uid, projectId, action: 'sent_message', entityType: 'chat', details: optimistic.details });
-        if (!saved) {
-          showToast('Posted to Discord but could not save in app', 'warning');
-          await refreshChatPane();
-        }
-      } catch (err) {
-        console.warn(err);
-        showToast('Posted to Discord but could not save in app', 'warning');
-        await refreshChatPane();
-      }
-      markChatChannelRead(channelId);
+      await window.WTChat?.handleSend?.(form, fd, uid);
       return;
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
@@ -7169,8 +7497,27 @@ async function handleFormSubmit(e) {
 
 const actions = {
   'add-project': () => showProjectModal(),
-  'open-notes': () => (_notesPanelOpen ? closeNotesPanel() : openNotesPanel()),
-  'close-notes': () => closeNotesPanel(),
+  'create-starter-project': async () => { await createStarterProject(); },
+  'open-command-palette': async () => { await showCommandPalette(); },
+  'command-create-project': async () => { hideModal(); await showProjectModal(); },
+  'command-create-task': async () => { hideModal(); await showTaskModal(state.currentProjectId || null); },
+  'command-route': (b) => {
+    hideModal();
+    const route = b.dataset.route || '/projects';
+    window.location.hash = `#${route}`;
+  },
+  'command-open-project': (b) => {
+    hideModal();
+    const pid = Number(b.dataset.projectId);
+    if (pid) window.location.hash = `#/projects/${pid}`;
+  },
+  'command-open-task': async (b) => {
+    hideModal();
+    const taskId = Number(b.dataset.taskId);
+    if (taskId) await showTaskDetailModal(taskId);
+  },
+  'open-notes': () => window.WTNotes?.toggle?.(),
+  'close-notes': () => window.WTNotes?.close?.(),
   'app-refresh': () => { closeUserMenu(); location.reload(); },
   'reload-and-sync': async () => {
     closeUserMenu();
@@ -7221,28 +7568,13 @@ const actions = {
     state.adminTab = b.dataset.tab || 'overview';
     await renderAdminTabbed();
   },
-  'add-personal-note': async () => {
-    const uid = getSession()?.userId;
-    if (!uid || !DB.createPersonalNote) return;
-    const id = await DB.createPersonalNote({ userId: uid, content: '' });
-    await renderNotesPanel(id);
-  },
+  'add-personal-note': async () => { await window.WTNotes?.addNote?.(); },
   'toggle-ranking-panel': async () => {
     state.rankingPanelOpen = !state.rankingPanelOpen;
     await renderRankingPanel();
   },
-  'toggle-personal-note': async (btn) => {
-    const id = Number(btn.dataset.id);
-    if (!id || !DB.updatePersonalNote) return;
-    await DB.updatePersonalNote(id, { done: btn.checked });
-    await renderNotesPanel();
-  },
-  'delete-personal-note': async (btn) => {
-    const id = Number(btn.dataset.id);
-    if (!id || !DB.deletePersonalNote) return;
-    await DB.deletePersonalNote(id);
-    await renderNotesPanel();
-  },
+  'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
+  'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
@@ -7251,7 +7583,12 @@ const actions = {
     if (!canDeleteProject()) { showToast('Only admins can delete projects', 'error'); return; }
     const p = await DB.getProject(Number(b.dataset.id));
     if (!p) { showToast('Project not found', 'error'); return; }
-    if (!confirm('Delete this project and all its data?')) return;
+    if (!await showConfirmDialog({
+      title: 'Delete project?',
+      message: 'Delete this project and all its data? This cannot be undone.',
+      confirmLabel: 'Delete project',
+      tone: 'danger'
+    })) return;
     await DB.deleteProject(p.id, actorId());
     await recordProjectActivity({
       userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'project',
@@ -7342,16 +7679,38 @@ const actions = {
     });
     showToast('Note deleted', 'success'); bustWorkspaceCache(); await router();
   },
-  'toggle-doc-panel': async () => {
-    state.docPanelOpen = !state.docPanelOpen;
+  'toggle-doc-panel': async (b) => {
+    state.projectPanelOpen = !state.projectPanelOpen;
+    state.docPanelOpen = state.projectPanelOpen;
     const hash = window.location.hash.slice(1) || '';
     const m = hash.match(/^\/projects\/(\d+)/);
-    const projectId = m ? Number(m[1]) : null;
+    const projectId = Number(b?.dataset?.projectId) || (m ? Number(m[1]) : null);
     if (!projectId) return;
     const project = await DB.getProject(projectId);
     if (!project) return;
-    if (state.docPanelOpen) await renderDocumentPanel(projectId, canEdit(project));
+    if (state.projectPanelOpen) await renderDocumentPanel(projectId, canEdit(project));
     else closeDocumentPanelAnimated();
+  },
+  'project-panel-tab': async (b) => {
+    state.projectPanelTab = b.dataset.tab || 'overview';
+    state.projectPanelOpen = true;
+    state.docPanelOpen = true;
+    const projectId = Number(b.dataset.projectId) || state.currentProjectId;
+    if (!projectId) return;
+    const project = await DB.getProject(projectId);
+    if (project) await renderDocumentPanel(projectId, canEdit(project));
+  },
+  'project-report-options': async (b) => {
+    if (!window.WTReports?.showProjectReportOptions) { showToast('Reports module not loaded', 'error'); return; }
+    await window.WTReports.showProjectReportOptions(Number(b.dataset.projectId));
+  },
+  'generate-project-report': async (b) => {
+    if (!window.WTReports?.generateProjectReportFromModal) { showToast('Reports module not loaded', 'error'); return; }
+    await window.WTReports.generateProjectReportFromModal(Number(b.dataset.projectId));
+  },
+  'print-report-preview': () => {
+    if (!window.WTReports?.printCurrentPreview) { showToast('Reports module not loaded', 'error'); return; }
+    window.WTReports.printCurrentPreview();
   },
   'toggle-notification-sounds': () => {
     const muted = NotificationSounds?.isMuted?.() ?? false;
@@ -7365,6 +7724,10 @@ const actions = {
   'user-view-profile': async () => { closeUserMenu(); await showProfileModal(); },
   'edit-my-profile': async () => { await showProfileModal(); },
   'report-bug': () => { closeUserMenu(); showBugReportModal(); },
+  'generate-my-report': async () => {
+    if (!window.WTReports?.generateCurrentUserReport) { showToast('Reports module not loaded', 'error'); return; }
+    await window.WTReports.generateCurrentUserReport();
+  },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'goto-support': () => { closeUserMenu(); window.location.hash = '#/support'; },
   'calendar-prev-month': async () => {
@@ -7389,9 +7752,22 @@ const actions = {
     state.calendarSelectedDay = b.dataset.day;
     await renderCalendarPage();
   },
+  'calendar-toggle-filter': async (b) => {
+    const key = b.dataset.filter;
+    state.calendarFilters = { events: true, due: true, birthday: true, completed: false, ...(state.calendarFilters || {}) };
+    if (key && Object.prototype.hasOwnProperty.call(state.calendarFilters, key)) {
+      state.calendarFilters[key] = !state.calendarFilters[key];
+    }
+    await renderCalendarPage();
+  },
   'add-calendar-event': (b) => showAddCalendarEventModal(b.dataset.day || state.calendarSelectedDay || _calendarMonthKey(new Date()) + '-01'),
   'delete-calendar-event': async (b) => {
-    if (!confirm('Delete this event?')) return;
+    if (!await showConfirmDialog({
+      title: 'Delete event?',
+      message: 'Remove this calendar event?',
+      confirmLabel: 'Delete event',
+      tone: 'danger'
+    })) return;
     await DB.deleteCalendarEvent(Number(b.dataset.id), actorId());
     showToast('Event deleted', 'success');
     await renderCalendarPage();
@@ -7527,7 +7903,12 @@ const actions = {
     }
   },
   'sync-clear-failed': async () => {
-    if (!confirm('Remove failed sync jobs from the queue? Your screen may still show local edits that never reached the cloud.')) return;
+    if (!await showConfirmDialog({
+      title: 'Clear failed sync jobs?',
+      message: 'Remove failed sync jobs from the queue? Your screen may still show local edits that never reached the cloud.',
+      confirmLabel: 'Clear failed jobs',
+      tone: 'warning'
+    })) return;
     const removed = (window.SyncEngine && SyncEngine.clearFailed)
       ? SyncEngine.clearFailed()
       : (DB.clearFailedSyncJobs ? DB.clearFailedSyncJobs() : 0);
@@ -7701,7 +8082,9 @@ const actions = {
   'switch-tab': async (b) => {
     const tab = b.dataset.tab; const pid = Number(b.dataset.projectId);
     state.projectTab = tab;
-    document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active')); b.classList.add('active');
+    document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+    const tabBtn = b.classList.contains('tab-btn') ? b : document.querySelector(`.tab-btn[data-tab="${CSS.escape(tab)}"][data-project-id="${pid}"]`);
+    tabBtn?.classList.add('active');
     const p = await DB.getProject(pid);
     await renderTab(tab, pid, p ? canEdit(p) : false);
   },
@@ -7794,7 +8177,12 @@ const actions = {
     if (!row) return;
     const p = await DB.getProject(row.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
-    if (!confirm('Remove this file from the project?')) return;
+    if (!await showConfirmDialog({
+      title: 'Remove file?',
+      message: 'Remove this file from the project?',
+      confirmLabel: 'Remove file',
+      tone: 'danger'
+    })) return;
     await DB.deleteAttachment(row.id, actorId());
     if (isLogisticsWorkflow(p) && row.documentType) {
       const tasks = await DB.getTasks({ projectId: p.id });
@@ -7830,7 +8218,12 @@ const actions = {
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
     if (uid === s.userId) { showToast('Cannot delete yourself', 'error'); return; }
-    if (!confirm('Delete this user? Their projects will be transferred to you.')) return;
+    if (!await showConfirmDialog({
+      title: 'Delete user?',
+      message: 'Delete this user? Their projects will be transferred to you.',
+      confirmLabel: 'Delete user',
+      tone: 'danger'
+    })) return;
     await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'save-tasks-as-template': async (b) => {
@@ -7840,7 +8233,12 @@ const actions = {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
     const id = Number(b.dataset.id);
     if (!id) return;
-    if (!confirm('Delete this workflow template? Projects already created keep their tasks.')) return;
+    if (!await showConfirmDialog({
+      title: 'Delete workflow template?',
+      message: 'Projects already created from this template will keep their tasks.',
+      confirmLabel: 'Delete template',
+      tone: 'danger'
+    })) return;
     await DB.deleteWorkflowTemplate(id);
     showToast('Template deleted', 'success');
     await (window.location.hash.slice(1).startsWith('/admin') ? renderAdminTabbed() : renderSettings());
@@ -7849,7 +8247,12 @@ const actions = {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
     const key = b.dataset.key;
     if (!key) return;
-    if (!confirm(`Remove department "${departmentLabel(key)}"? Users and projects keep the key until you change them.`)) return;
+    if (!await showConfirmDialog({
+      title: 'Remove department?',
+      message: `Remove department "${departmentLabel(key)}"? Users and projects keep the key until you change them.`,
+      confirmLabel: 'Remove department',
+      tone: 'warning'
+    })) return;
     await DB.deleteDepartment(key);
     _departmentCfgLoaded = false;
     await refreshDepartmentCfg();
@@ -7858,7 +8261,12 @@ const actions = {
   },
   'delete-classroom': async (b) => {
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
-    if (!confirm('Remove this classroom? Projects will move to another classroom.')) return;
+    if (!await showConfirmDialog({
+      title: 'Remove classroom?',
+      message: 'Remove this classroom? Projects will move to another classroom.',
+      confirmLabel: 'Remove classroom',
+      tone: 'warning'
+    })) return;
     try {
       await DB.deleteClassroom(Number(b.dataset.id));
       bustWorkspaceCache();
@@ -7887,7 +8295,12 @@ const actions = {
     } catch (err) { showToast(err?.message || 'Could not update visibility', 'error'); }
   },
   'reset-sample-data': async () => {
-    if (!confirm('This will delete ALL data and replace with sample data. Continue?')) return;
+    if (!await showConfirmDialog({
+      title: 'Reset sample data?',
+      message: 'This will delete ALL data and replace it with sample data.',
+      confirmLabel: 'Reset data',
+      tone: 'danger'
+    })) return;
     await DB.importAll({ projects: [], tasks: [], milestones: [], updates: [] });
     await DB.createSampleData(getSession().userId);
     showToast('Data reset', 'success'); bustWorkspaceCache(); await router();
@@ -7917,28 +8330,14 @@ const actions = {
   },
   'select-chat-channel': async (b) => {
     hideModal();
-    openChatDock(b.dataset.channelId);
+    window.WTChat?.openDock?.(b.dataset.channelId);
   },
   'dismiss-celebration': () => { dismissCelebration(); },
-  'toggle-chat-dock': () => { toggleChatDock(); },
-  'close-chat-dock': () => { closeChatDock(); },
-  'chat-dock-back': () => { state.chatDockView = 'list'; renderChatDock(); },
-  'open-chat-channel': (b) => { openChatDock(b.dataset.channelId); },
-  'toggle-chat-favorite': async (b) => {
-    const favUserId = Number(b.dataset.userId);
-    const meId = actorId();
-    if (!favUserId || !meId || !DB.getFavorites) return;
-    const favs = await DB.getFavorites(meId).catch(() => []);
-    const isFav = favs.some(f => Number(f.favoriteUserId) === favUserId);
-    if (isFav) await DB.removeFavorite(meId, favUserId);
-    else await DB.addFavorite({ userId: meId, favoriteUserId: favUserId });
-    if (_chatDockData) {
-      if (isFav) _chatDockData.favIds.delete(favUserId);
-      else _chatDockData.favIds.add(favUserId);
-      const list = document.getElementById('chat-dock-list');
-      if (list) list.innerHTML = chatDockListBodyHtml();
-    }
-  },
+  'toggle-chat-dock': () => { window.WTChat?.toggleDock?.(); },
+  'close-chat-dock': () => { window.WTChat?.closeDock?.(); },
+  'chat-dock-back': () => { window.WTChat?.backToList?.(); },
+  'open-chat-channel': (b) => { window.WTChat?.openChannel?.(b.dataset.channelId); },
+  'toggle-chat-favorite': async (b) => { await window.WTChat?.toggleFavorite?.(b); },
   'export-report-pdf': async () => { await exportMonthlyReportPdf(); },
   'generate-ai-report': async () => { await generateAIReport(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
@@ -7958,7 +8357,12 @@ const actions = {
   },
   'delete-webhook': async (b) => {
     if (!isAdmin()) return;
-    if (!confirm('Remove this Discord webhook?')) return;
+    if (!await showConfirmDialog({
+      title: 'Remove webhook?',
+      message: 'Remove this Discord webhook?',
+      confirmLabel: 'Remove webhook',
+      tone: 'danger'
+    })) return;
     await DB.deleteWebhook(Number(b.dataset.id));
     _webhooksCache = null;
     _webhooksCacheAt = 0;
@@ -7976,10 +8380,48 @@ function showToast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
   const t = document.createElement('div');
   t.className = `toast toast-${type}`;
-  t.innerHTML = `<span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span><span>${esc(msg)}</span>`;
+  t.setAttribute('role', 'status');
+  t.innerHTML = `
+    <span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
+    <span class="toast-message">${esc(msg)}</span>
+    <button type="button" class="toast-close" aria-label="Dismiss">&times;</button>`;
+  const dismiss = () => {
+    t.classList.remove('toast-visible');
+    setTimeout(() => t.remove(), 240);
+  };
+  t.querySelector('.toast-close')?.addEventListener('click', dismiss);
   c.appendChild(t);
   requestAnimationFrame(() => t.classList.add('toast-visible'));
-  setTimeout(() => { t.classList.remove('toast-visible'); setTimeout(() => t.remove(), 300); }, 3200);
+  setTimeout(dismiss, 4400);
+}
+
+function showProjectCreatedPopup(project) {
+  const c = document.getElementById('toast-container') || document.body;
+  const id = Number(project?.id || project?.projectId || 0);
+  const name = project?.name || 'Untitled project';
+  const popup = document.createElement('div');
+  popup.className = 'project-created-popup';
+  popup.innerHTML = `
+    <button type="button" class="project-created-close" aria-label="Dismiss">${ICONS.x}</button>
+    <div class="project-created-heading">
+      <span class="project-created-check">${ICONS.checkCircle}</span>
+      <strong>Project created</strong>
+    </div>
+    <div class="project-created-name">
+      <span class="project-created-cube" aria-hidden="true"></span>
+      <span>${esc(name)}</span>
+    </div>
+    ${id ? `<a class="project-created-link" href="#/projects/${id}">View project</a>` : ''}
+  `;
+  const dismiss = () => {
+    popup.classList.remove('is-visible');
+    setTimeout(() => popup.remove(), 240);
+  };
+  popup.querySelector('.project-created-close')?.addEventListener('click', dismiss);
+  popup.querySelector('.project-created-link')?.addEventListener('click', dismiss);
+  c.appendChild(popup);
+  requestAnimationFrame(() => popup.classList.add('is-visible'));
+  setTimeout(dismiss, 6500);
 }
 
 let _lastAutoErrorAt = 0;
@@ -8183,8 +8625,11 @@ function rankingExplanationBodyHtml() {
 
 function hideRankingPanel() {
   const panel = document.getElementById('ranking-panel');
+  const backdrop = document.getElementById('ranking-panel-backdrop');
   const main = document.getElementById('main-content');
+  state.rankingPanelOpen = false;
   if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+  backdrop?.classList.add('hidden');
   if (main) main.classList.remove('with-ranking-panel');
 }
 
@@ -8194,11 +8639,13 @@ async function renderRankingPanel() {
   if (!panel) return;
   if (!state.rankingPanelOpen || window.location.hash.slice(1) !== '/users') {
     panel.classList.add('hidden');
+    document.getElementById('ranking-panel-backdrop')?.classList.add('hidden');
     if (main) main.classList.remove('with-ranking-panel');
     return;
   }
   panel.classList.remove('hidden');
-  if (main) main.classList.add('with-ranking-panel');
+  document.getElementById('ranking-panel-backdrop')?.classList.remove('hidden');
+  if (main) main.classList.remove('with-ranking-panel');
   panel.innerHTML = `
     <div class="ranking-panel-head">
       <h3>How ranking works</h3>
@@ -8255,7 +8702,7 @@ async function renderUsers() {
     </div>`;
   }).join('');
 
-  const heatmapHtml = users.length ? await buildTeamActivityHeatmapHtml(users) : '';
+  const heatmapHtml = users.length ? await buildTeamActivityHeatmapHtml(users, projects, tasks) : '';
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} · ranked by contribution</p></div>
@@ -8305,7 +8752,7 @@ async function router() {
   }
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/users') await renderUsers();
-  else if (hash === '/chat') await renderChat();
+  else if (hash === '/chat') await window.WTChat?.renderRoute?.();
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/support') await renderSupportPage();
@@ -8363,7 +8810,12 @@ function setupImport() {
     try {
       const data = JSON.parse(await file.text());
       if (!data.projects || !data.tasks) { showToast('Invalid file', 'error'); return; }
-      if (!confirm('Replace all current data?')) return;
+      if (!await showConfirmDialog({
+        title: 'Replace all data?',
+        message: 'Replace all current data with the imported file?',
+        confirmLabel: 'Replace data',
+        tone: 'danger'
+      })) return;
       const result = await DB.importAll(data);
       bustWorkspaceCache();
       let msg = `Imported ${data.projects?.length || 0} projects and ${data.tasks?.length || 0} tasks.`;
@@ -8487,8 +8939,8 @@ function setupRealtimeHandlers() {
   window._wtRealtimeHandlersBound = true;
 
   window.addEventListener('wt-realtime-status', () => {
-    startChatUnreadPolling();
-    if (state.chatDockOpen) startChatDockPolling();
+    window.WTChat?.startUnreadPolling?.();
+    if (state.chatDockOpen) window.WTChat?.startDockPolling?.();
     renderSyncStatusIndicator();
   });
 
@@ -8512,40 +8964,8 @@ function setupRealtimeHandlers() {
   });
 
   window.addEventListener('wt-realtime-chat', (e) => {
-    const { channelId, message } = e.detail || {};
-    if (!channelId || !message) return;
-    const me = actorId();
-    const senderId = message.userId ?? message.fromUserId;
-    const isMine = senderId && Number(senderId) === Number(me);
-    if (!isMine && e.detail?.eventType === 'INSERT') {
-      const chatActive = state.chatDockOpen && state.chatDockView === 'convo' && state.chatChannel === channelId;
-      if (!chatActive) NotificationSounds?.play?.('chat');
-      if (!state.chatUnreadChannels) state.chatUnreadChannels = new Set();
-      if (!state.chatUnreadCounts) state.chatUnreadCounts = {};
-      state.chatUnreadChannels.add(channelId);
-      state.chatUnreadCounts[channelId] = (state.chatUnreadCounts[channelId] || 0) + 1;
-      updateChatUnreadBadge();
-      if (state.chatDockOpen && state.chatDockView === 'list') {
-        const list = document.getElementById('chat-dock-list');
-        if (list && _chatDockData) list.innerHTML = chatDockListBodyHtml();
-      }
-    }
-    const active = state.chatChannel === channelId
-      && (state.chatDockOpen && state.chatDockView === 'convo');
-    if (active && e.detail?.eventType === 'INSERT' && !isMine) {
-      const uMap = state.chatUsersMap || {};
-      appendChatMessageToPane(message, uMap);
-      markChatChannelRead(channelId);
-    } else if (active && e.detail?.eventType === 'INSERT' && isMine) {
-      // Own INSERT: optimistic message already shown — skip to avoid duplicate
-    } else if (active && e.detail?.eventType === 'UPDATE') {
-      // UPDATE fires when delivered_at / read_at changes — refresh to show ticks
-      refreshChatPane().catch(() => {});
-    } else if (active) {
-      refreshChatPane().catch(() => {});
-    }
+    window.WTChat?.handleRealtimeEvent?.(e);
   });
-
   window.addEventListener('wt-realtime-access-request', (e) => {
     const row = e.detail?.row;
     if (!row || e.detail?.eventType !== 'INSERT') return;
@@ -8591,24 +9011,8 @@ function setupRealtimeHandlers() {
   // send uses the correct channel and doesn't hit "User X not found".
   window.addEventListener('wt-user-id-resolved', (e) => {
     const { staleId, canonicalId } = e.detail || {};
-    if (!staleId || !canonicalId || staleId === canonicalId) return;
-    const staleChannel = `dm-${staleId}`;
-    const canonicalChannel = `dm-${canonicalId}`;
-    if (state.chatChannel === staleChannel) {
-      state.chatChannel = canonicalChannel;
-    }
-    // Also update any user entry in the cached contact list so the channel links are correct
-    if (_chatDockData?.users) {
-      _chatDockData.users = _chatDockData.users.map(u =>
-        u.id === staleId ? { ...u, id: canonicalId } : u
-      );
-    }
-    if (state.chatUsersMap?.[staleId]) {
-      state.chatUsersMap[canonicalId] = { ...state.chatUsersMap[staleId], id: canonicalId };
-      delete state.chatUsersMap[staleId];
-    }
+    window.WTChat?.handleUserIdResolved?.(staleId, canonicalId);
   });
-
   window.addEventListener('wt-realtime-user', () => {
     bustWorkspaceCache();
     if (wtAppBootstrapped) router().catch(() => {});
@@ -8634,9 +9038,9 @@ function onSyncPulled() {
   if (!wtAppBootstrapped) return;
   bustWorkspaceCache();
   refreshNotificationBadge().catch(() => {});
-  refreshChatUnreadState().catch(() => {});
+  window.WTChat?.refreshUnreadState?.().catch(() => {});
   refreshActivityViews().catch(() => {});
-  if (state.chatDockOpen && state.chatDockView === 'convo') refreshChatPane().catch(() => {});
+  if (state.chatDockOpen && state.chatDockView === 'convo') window.WTChat?.refreshPane?.().catch(() => {});
   router().catch(() => {});
 }
 
@@ -8694,6 +9098,27 @@ async function init() {
       }
     });
     document.addEventListener('keydown', (e) => {
+      const typingTarget = e.target.closest?.('input, textarea, select, [contenteditable="true"]');
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        showCommandPalette().catch(err => console.error('[command]', err));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (e.shiftKey) showProjectModal().catch(err => console.error('[shortcut:new-project]', err));
+        else showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
+        return;
+      }
+      if (!typingTarget && e.key === '/' && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
+        const search = document.querySelector('.orbi-task-search-input, .projects-search-input');
+        if (search) {
+          e.preventDefault();
+          search.focus();
+          search.select?.();
+          return;
+        }
+      }
       const card = e.target.matches?.('.project-card-v2[data-action="open-project-card"]') ? e.target : null;
       if (card && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
@@ -8709,15 +9134,9 @@ async function init() {
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
-    document.getElementById('notes-panel-search')?.addEventListener('input', (e) => {
-      state.notesSearch = e.target.value || '';
-      renderNotesPanel();
-    });
-    document.getElementById('notes-panel-list')?.addEventListener('input', (e) => {
-      const ta = e.target.closest('[data-note-edit]');
-      if (ta) scheduleNoteSave(ta.dataset.noteEdit, ta.value);
-    });
-    document.getElementById('notes-backdrop')?.addEventListener('click', closeNotesPanel);
+    window.WTNotes?.bindEvents?.();
+    document.getElementById('project-panel-backdrop')?.addEventListener('click', hideDocumentPanel);
+    document.getElementById('ranking-panel-backdrop')?.addEventListener('click', hideRankingPanel);
     document.getElementById('chat-dock-root')?.addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('input', async (e) => {
       const target = e.target;
@@ -8726,6 +9145,15 @@ async function init() {
         state.projectSearch = target.value || '';
         await renderProjects();
         const next = document.getElementById('project-search');
+        if (next) {
+          next.focus();
+          try { next.setSelectionRange(caret, caret); } catch (_) {}
+        }
+      } else if (target?.dataset?.taskFilterInput === 'search') {
+        const caret = target.selectionStart ?? String(target.value || '').length;
+        state.globalTaskSearch = target.value || '';
+        await renderTasks();
+        const next = document.getElementById('global-task-search');
         if (next) {
           next.focus();
           try { next.setSelectionRange(caret, caret); } catch (_) {}
@@ -8749,10 +9177,20 @@ async function init() {
         await renderReportsPage();
       }
     });
-    document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') hideModal(); });
+    document.getElementById('modal-overlay').addEventListener('click', (e) => {
+      if (e.target.id !== 'modal-overlay') return;
+      if (e.currentTarget.dataset.confirmDialog === 'true' && window._activeConfirmCancel) {
+        window._activeConfirmCancel();
+        return;
+      }
+      hideModal();
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (_notesPanelOpen) closeNotesPanel();
+        if (window._activeConfirmCancel) window._activeConfirmCancel();
+        else if (state.projectPanelOpen) hideDocumentPanel();
+        else if (state.rankingPanelOpen) hideRankingPanel();
+        else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
         else if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
         else hideModal();
       }
@@ -8844,35 +9282,3 @@ async function init() {
     document.getElementById('content').innerHTML = `<div class="empty-state" style="margin-top:60px;text-align:center"><h2>Something went wrong</h2><p>${esc(String(err.message || err))}</p></div>`;
   }
 }
-
-// Safety net: force dismiss after 12s if boot hangs (error path only)
-setTimeout(() => { if (!_splashReady) { _splashReady = true; hideSplash(); } }, 12000);
-
-applyTheme();
-document.documentElement.classList.add('splash-lock');
-document.getElementById('splash')?.classList.add('is-visible');
-
-(async () => {
-  try {
-    setSplashStatus('Loading local database…');
-    await _splashDelay(800);
-    await bootstrapDB();
-    if (window.WT_STORAGE_MODE === 'hybrid' || window.WT_STORAGE_MODE === 'hybrid-v3') {
-      setSplashStatus('Connecting to cloud…');
-      await _splashDelay(700);
-    }
-    if (window.WT_INITIAL_SYNC) {
-      setSplashStatus('Syncing workspace…');
-      await window.WT_INITIAL_SYNC.catch(() => {});
-      await _splashDelay(600);
-    }
-    setSplashStatus('Ready');
-    await _splashDelay(500);
-    await init();
-  } catch (err) {
-    console.error('Bootstrap failed:', err);
-    requestSplashDismiss();
-  } finally {
-    dismissSplashWhenReady();
-  }
-})();

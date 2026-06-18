@@ -61,8 +61,9 @@ ${JSON.stringify(data, null, 2)}
 
 Requirements:
 1. Return ONLY a complete <!DOCTYPE html> document — no markdown fences, no explanation.
-2. Include all CSS inline in a <style> tag. Use a professional dark-header / light-body layout.
-   Primary accent: #4f46e5 (indigo). Font: system-ui, sans-serif.
+2. Include all CSS inline in a <style> tag. Use a refined printable progress-brief layout:
+   warm paper background (#fcfcfa), ink text (#181b22), thin separators (#e9e7e0), accent #2f5d7c, soft accent panels #eaf1f6.
+   Use Space Grotesk-style display typography if available through CSS font-family fallback, and Inter/system-ui for body text.
 3. Structure:
    a) Header bar — report title, month, generated timestamp
    b) Executive Summary — 2–3 sentence narrative

@@ -8,6 +8,25 @@ let autoCheckDone = false;
 let autoUpdater;
 
 const isDev = !app.isPackaged;
+const packageMeta = getPackageMeta();
+const launchMode = process.env.WT_APP_MODE || packageMeta.orbitaskMode || '';
+const useModularApp = process.env.WT_MODULAR === '1' || launchMode === 'workspace' || launchMode === 'control';
+const modularDevUrl = process.env.WT_MODULAR_URL || 'http://127.0.0.1:5174/modular/';
+const modularStartRoute = process.env.WT_MODULAR_ROUTE || (launchMode === 'control' ? '#/control' : '#/app');
+
+function getPackageMeta() {
+  try {
+    return require(path.join(__dirname, '..', 'package.json'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function modularUrlWithRoute(url) {
+  const next = new URL(url);
+  next.hash = modularStartRoute;
+  return next.toString();
+}
 
 function sendUpdateStatus(payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -37,7 +56,7 @@ function createWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    title: 'Orbitask',
+    title: app.getName() || 'Orbitask',
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     show: false,
@@ -52,7 +71,15 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
+  if (isDev && useModularApp) {
+    mainWindow.loadURL(modularUrlWithRoute(modularDevUrl));
+  } else if (useModularApp) {
+    mainWindow.loadFile(path.join(__dirname, '..', 'modular-dist', 'modular', 'index.html'), {
+      hash: modularStartRoute.replace(/^#/, '')
+    });
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
+  }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -213,7 +240,7 @@ ipcMain.handle('updater:install', () => {
 });
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('com.everlasting.worktracker');
+  app.setAppUserModelId(packageMeta.orbitaskAppId || 'com.everlasting.worktracker');
   session.defaultSession.setSpellCheckerLanguages(['en-US']);
   createWindow();
   createMenu();

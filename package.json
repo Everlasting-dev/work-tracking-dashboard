@@ -1,6 +1,6 @@
 {
   "name": "worktracker-desktop",
-  "version": "3.0.9",
+  "version": "3.0.10",
   "description": "Orbitask Black Edition — project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
@@ -13,6 +13,9 @@
   "scripts": {
     "start": "electron .",
     "desktop": "electron .",
+    "ui:dev": "npm --prefix orbitrack-ui run dev",
+    "ui:build": "npm --prefix orbitrack-ui run build",
+    "ui:preview": "npm --prefix orbitrack-ui run preview",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win nsis",
     "dist:win": "electron-builder --win nsis",
@@ -23,7 +26,8 @@
   },
   "devDependencies": {
     "electron": "^33.4.11",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "lucide": "^1.20.0"
   },
   "build": {
     "appId": "com.everlasting.worktracker",
@@ -37,6 +41,11 @@
     "files": [
       "index.html",
       "app.js",
+      "notes.js",
+      "chat.js",
+      "reports.js",
+      "ui.js",
+      "bootstrap.js",
       "styles.css",
       "db.js",
       "db-supabase.js",

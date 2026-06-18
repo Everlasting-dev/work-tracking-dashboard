@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.10
+
+### Added
+- **Themed confirm dialogs** — native browser/desktop confirmation windows were replaced with Orbitask-styled dialogs that work in both light and dark themes.
+- **Project side drawer** — Properties, Milestones, Activity, and Documents now live in a Notes-style slide panel with Overview, Milestones, Activity, and Documents tabs.
+- **Interactive calendar refresh** — month cells now show meaningful chips, summary cards, filters, and an always-visible agenda panel.
+- **Expanded team activity map** — the Users page map now fills its workspace and adds D3 zoom/pan, drag, fit/reset controls, filters, tooltips, online pulse, activity heat, department clustering, and collaboration links.
+- **Brief-style reports** — generated HTML, monthly previews, PDF export styling, and AI report prompts now follow the attached progress-brief design.
+
+### Changed
+- **Ranking help drawer** — ranking help no longer opens automatically and now appears as a floating slide panel.
+- **Project workspace tabs** — Tasks, Board, Timeline, and Map remain in the main workspace while project metadata and documents move into the drawer.
+- **Production packaging** — the local AI Copilot drawer and Ollama bridge are excluded from the shipped app.
+- **GitHub Pages metadata** — public app/page version references were refreshed for this update.
+
 ## 3.0.8
 
 ### Fixed

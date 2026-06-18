@@ -686,16 +686,13 @@ const SupabaseDB = {
     let q = this._sb().from('wt_activity_log').select('*').order('created_at', { ascending: false });
     if (filters.projectId != null) q = q.eq('project_id', filters.projectId);
     if (filters.userId != null) q = q.eq('user_id', filters.userId);
+    if (filters.viewerUserId != null && !filters.isAdmin) q = q.eq('user_id', filters.viewerUserId);
     if (filters.action) q = q.eq('action', filters.action);
     if (filters.entityType) q = q.eq('entity_type', filters.entityType);
     if (filters.limit != null) q = q.limit(filters.limit);
     const { data, error } = await q;
     if (error) throw error;
-    let rows = (data || []).map(r => this._mapActivity(r));
-    if (filters.viewerUserId != null && !filters.isAdmin) {
-      rows = rows.filter(r => r.userId === filters.viewerUserId);
-    }
-    return rows;
+    return (data || []).map(r => this._mapActivity(r));
   },
 
   async getDiscordMessages(channelId, { limit = 100 } = {}) {
