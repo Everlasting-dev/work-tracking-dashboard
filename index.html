@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=3.0.11">
+  <!-- React Flow (xyflow) island styles for the project task map -->
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.0.11">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js"></script>
   <!-- Quill rich-text editor for notes -->
@@ -191,6 +193,7 @@
     <div class="file-preview-toolbar">
       <span id="file-preview-title" class="file-preview-title"></span>
       <div class="file-preview-actions">
+        <span id="file-preview-count" class="file-preview-count" aria-live="polite"></span>
         <a id="file-preview-download" class="file-preview-download" download href="#" aria-label="Download file" title="Download file">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
           <span>Download</span>
@@ -200,7 +203,13 @@
         </button>
       </div>
     </div>
+    <button type="button" class="file-preview-nav file-preview-nav-prev hidden" id="file-preview-prev" aria-label="Previous file" title="Previous (←)">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+    </button>
     <div id="file-preview-body" class="file-preview-body"></div>
+    <button type="button" class="file-preview-nav file-preview-nav-next hidden" id="file-preview-next" aria-label="Next file" title="Next (→)">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
   </div>
   <div class="toast-container" id="toast-container"></div>
   <div id="upload-progress-bar" class="upload-progress-bar hidden">
@@ -230,5 +239,9 @@
   <script src="ui.js?v=3.0.11"></script>
   <script src="bootstrap.js?v=3.0.11"></script>
   <script src="desktop/updates.js?v=3.0.11"></script>
+  <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
+  <script src="vendor/orbiflow/orbiflow.js?v=3.0.11"></script>
+  <!-- Fun pack — confetti, Motion micro-animations, procedural health orb -->
+  <script src="vendor/orbifun/orbifun.js?v=3.0.11"></script>
 </body>
 </html>

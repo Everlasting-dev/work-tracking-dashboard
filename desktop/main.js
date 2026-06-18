@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, ipcMain, session, shell, clipboard } = require('electron');
 
 let mainWindow;
 let checkingForUpdates = false;
@@ -100,6 +100,7 @@ function createWindow() {
 
   mainWindow.webContents.on('context-menu', (_event, params) => {
     const menu = new Menu();
+    const hasText = !!(params.selectionText && params.selectionText.trim());
 
     if (params.misspelledWord && params.dictionarySuggestions?.length) {
       for (const suggestion of params.dictionarySuggestions.slice(0, 6)) {
@@ -112,11 +113,25 @@ function createWindow() {
     }
 
     if (params.isEditable) {
+      // Inputs, textareas, and rich-text fields get the full editing menu.
       menu.append(new MenuItem({ role: 'cut', enabled: params.editFlags.canCut }));
       menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }));
       menu.append(new MenuItem({ role: 'paste', enabled: params.editFlags.canPaste }));
       menu.append(new MenuItem({ type: 'separator' }));
       menu.append(new MenuItem({ role: 'selectAll' }));
+    } else if (hasText) {
+      // Read-only text (e.g. a project description) — let users copy the selection.
+      menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }));
+      menu.append(new MenuItem({ role: 'selectAll' }));
+    }
+
+    // Offer to copy a link's address whether or not it sits in an editable field.
+    if (params.linkURL) {
+      if (menu.items.length) menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({
+        label: 'Copy Link Address',
+        click: () => clipboard.writeText(params.linkURL)
+      }));
     }
 
     if (menu.items.length) menu.popup();

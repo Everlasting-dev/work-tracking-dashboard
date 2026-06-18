@@ -503,6 +503,105 @@ function isProjectOwner(project) { const s = getSession(); return !!s && !!proje
 function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
+/* ──── Orbitrack Copilot write bridge ────────────────────────────────────
+   The Copilot is read-only EXCEPT for this one authorized action: turning an
+   AI project proposal into a real project + tasks. It is only ever invoked
+   from the "Create project" button on a proposal card the user explicitly
+   approves — it never updates or deletes existing data. */
+async function copilotCreateProjectWithTasks(spec, opts = {}) {
+  if (!spec || !spec.name) throw new Error('No project to create.');
+  const uid = actorId();
+
+  const STATUS_MAP = {
+    'done': 'done', 'landed': 'done', 'complete': 'done', 'completed': 'done', 'finished': 'done',
+    'in progress': 'doing', 'in-progress': 'doing', 'inprogress': 'doing', 'doing': 'doing',
+    'burning': 'doing', 'review': 'doing', 'in review': 'doing', 'active': 'doing', 'started': 'doing',
+    'blocked': 'doing', 'on hold': 'doing', 'waiting': 'doing',
+    'not started': 'todo', 'notstarted': 'todo', 'todo': 'todo', 'to do': 'todo',
+    'docked': 'todo', 'backlog': 'todo', 'planned': 'todo', 'new': 'todo'
+  };
+  const PRIO = new Set(['low', 'medium', 'high']);
+  const normStatus = (s) => STATUS_MAP[String(s || '').toLowerCase().trim()] || 'todo';
+  const normPrio = (p) => { const v = String(p || '').toLowerCase().trim(); return PRIO.has(v) ? v : 'medium'; };
+  const isBlocked = (s) => /block|on hold|waiting/i.test(String(s || ''));
+  const validDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '').trim()) ? String(d).trim() : '';
+
+  const projectId = await DB.createProject({
+    name: String(spec.name).slice(0, 120),
+    notes: String(spec.description || '').slice(0, 2000),
+    priority: normPrio(spec.priority),
+    ownerId: uid || undefined,
+    classroomId: opts.classroomId != null && opts.classroomId !== '' ? Number(opts.classroomId) : undefined,
+    status: 'active',
+    actorUserId: uid
+  });
+
+  const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
+  const titleToId = new Map();
+  const created = [];
+
+  for (const t of tasks) {
+    const title = String(t?.title || t?.name || '').trim();
+    if (!title) continue;
+    const tags = Array.isArray(t.tags)
+      ? t.tags.map(x => String(x).trim()).filter(Boolean)
+      : (t.tags ? String(t.tags).split(',').map(x => x.trim()).filter(Boolean) : []);
+    if (isBlocked(t.status) && !tags.some(x => /^blocked$/i.test(x))) tags.unshift('Blocked');
+    const effortRaw = t.effort ?? t.effortEstimate ?? t['effort estimate'];
+    const customFields = [];
+    if (tags.length) customFields.push({ label: 'Tags', value: tags.join(', '), type: 'text', showInProject: true });
+    if (effortRaw != null && String(effortRaw).trim()) {
+      const eff = /^\d+(\.\d+)?$/.test(String(effortRaw).trim())
+        ? `${effortRaw} day${Number(effortRaw) === 1 ? '' : 's'}`
+        : String(effortRaw).trim();
+      customFields.push({ label: 'Effort', value: eff, type: 'text', showInProject: false });
+    }
+    const taskId = await DB.createTask({
+      projectId,
+      title: title.slice(0, 200),
+      status: normStatus(t.status),
+      priority: normPrio(t.priority),
+      dueDate: validDate(t.dueDate ?? t['due date']),
+      notes: String(t.note || t.notes || t.description || '').slice(0, 1000),
+      customFields,
+      assigneeId: uid || undefined,
+      actorUserId: uid
+    });
+    titleToId.set(title.toLowerCase(), taskId);
+    created.push({ taskId, deps: t.dependencies || t.deps || [] });
+  }
+
+  // Wire dependencies once every task has an id (task is "blocked by" its deps).
+  for (const { taskId, deps } of created) {
+    const blockerIds = (Array.isArray(deps) ? deps : [])
+      .map(d => {
+        const dt = typeof d === 'string' ? d : (d?.['task title'] || d?.title || d?.name || '');
+        return titleToId.get(String(dt).toLowerCase().trim());
+      })
+      .filter(id => id && id !== taskId);
+    if (blockerIds.length) {
+      try { await DB.setTaskBlockedBy(taskId, blockerIds, uid); } catch (_) {}
+    }
+  }
+
+  return { id: projectId, name: spec.name, taskCount: created.length };
+}
+window.copilotCreateProjectWithTasks = copilotCreateProjectWithTasks;
+
+// Classrooms the current user may create projects in (admins see all). Used by
+// the Copilot to let the user pick a classroom before creating a project.
+async function copilotGetClassrooms() {
+  try {
+    const all = DB.getClassrooms ? await DB.getClassrooms() : [];
+    const allowed = await userClassroomIds(); // null = admin → all classrooms
+    const list = (allowed === null)
+      ? all
+      : all.filter(c => allowed.map(Number).includes(Number(c.id)));
+    return list.map(c => ({ id: c.id, name: c.name }));
+  } catch (_) { return []; }
+}
+window.copilotGetClassrooms = copilotGetClassrooms;
+
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
 
 const WORKSPACE_CACHE_MS = 120000;
@@ -3042,7 +3141,10 @@ async function renderProjectDetail(projectId) {
     </div>` : '';
 
   const progressLine = canSeeTasks
-    ? `<div class="project-hero-progress">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>${currentTaskBanner}`
+    ? `<div class="project-hero-progress project-hero-progress--orb">
+        <canvas class="project-health-orb" width="76" height="76" title="Project health"></canvas>
+        <div class="project-hero-progress-bar">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>
+      </div>${currentTaskBanner}`
     : '';
   const requestAccessBtn = !editable && s?.userId !== project.ownerId
     ? `<button class="btn btn-ghost" data-action="request-project-access" data-project-id="${project.id}">${ICONS.userCog} Request edit access</button>` : '';
@@ -3087,6 +3189,8 @@ async function renderProjectDetail(projectId) {
       </section>
     </div>
   </div>`;
+  const orbEl = content.querySelector('.project-health-orb');
+  if (orbEl) window.OrbiFun?.healthOrb(orbEl, progress);
   await renderTab(tab, projectId, editable);
 }
 
@@ -3255,15 +3359,29 @@ function closeFilePreview() {
     try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
     state._previewUrl = null;
   }
+  state._previewList = null;
+  state._previewIndex = 0;
   const ov = document.getElementById('file-preview-overlay');
   if (ov) {
     ov.classList.add('hidden');
     document.getElementById('file-preview-body').innerHTML = '';
     document.getElementById('file-preview-title').textContent = '';
+    const count = document.getElementById('file-preview-count');
+    if (count) count.textContent = '';
   }
 }
 
-async function openFilePreview(attachmentId) {
+async function openFilePreview(attachmentId, list = null) {
+  // Track the surrounding set of attachments so the viewer can page through
+  // them with the arrows, keyboard, or scroll wheel. `list` is supplied only
+  // when opening fresh; navigation re-calls with an id already in the list.
+  if (Array.isArray(list) && list.length) {
+    state._previewList = list.slice();
+  } else if (!Array.isArray(state._previewList) || !state._previewList.includes(attachmentId)) {
+    state._previewList = [attachmentId];
+  }
+  state._previewIndex = state._previewList.indexOf(attachmentId);
+
   const item = await DB.getAttachment(attachmentId);
   if (!item) { showToast('File not found', 'error'); return; }
   // Local blob (offline / pending) vs. cloud file fetched on demand by URL.
@@ -3321,7 +3439,42 @@ async function openFilePreview(attachmentId) {
       <p class="text-muted">Use the Download button above to save this file.</p>
     </div>`;
   }
+  _updatePreviewNav();
   ov.classList.remove('hidden');
+}
+
+// Reflect the current position in the attachment set: counter + arrow state.
+function _updatePreviewNav() {
+  const list = state._previewList || [];
+  const multi = list.length > 1;
+  const count = document.getElementById('file-preview-count');
+  const prev = document.getElementById('file-preview-prev');
+  const next = document.getElementById('file-preview-next');
+  if (count) count.textContent = multi ? `${state._previewIndex + 1} / ${list.length}` : '';
+  [prev, next].forEach(btn => { if (btn) btn.classList.toggle('hidden', !multi); });
+}
+
+// Page through the attachment set; wraps around at both ends.
+function previewNav(delta) {
+  const list = state._previewList || [];
+  if (list.length < 2) return;
+  let i = (state._previewIndex ?? 0) + delta;
+  if (i < 0) i = list.length - 1;
+  if (i >= list.length) i = 0;
+  openFilePreview(list[i]);
+}
+
+// Collect the ids of every preview button sharing the nearest list container,
+// so opening one image lets the user step through its siblings in order.
+function previewSiblingIds(btn) {
+  let node = btn, container = btn;
+  while (node && node !== document.body) {
+    if (node.querySelectorAll('[data-action="preview-attachment"]').length > 1) { container = node; break; }
+    node = node.parentElement;
+  }
+  return Array.from(container.querySelectorAll('[data-action="preview-attachment"]'))
+    .map(el => Number(el.dataset.id))
+    .filter(n => Number.isFinite(n));
 }
 
 async function renderTab(tab, projectId, editable) {
@@ -3382,7 +3535,34 @@ async function renderTab(tab, projectId, editable) {
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     const deps = await DB.getTaskDependencies(projectId);
     el.classList.add('tab-content-enter');
-    el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
+    if (window.OrbiFlow && allTasks.length) {
+      // Interactive React Flow (xyflow) map: draggable cards, curved links,
+      // zoom/pan/minimap, and drag-to-connect dependencies when editable.
+      el.innerHTML = `<p class="text-muted text-sm tab-hint">${editable ? 'Drag cards to arrange. Drag from a card edge to another card to link a dependency. Click a card to open it.' : 'Task dependency flow diagram. Scroll to zoom, drag to pan.'}</p><div id="orbi-flow-mount" class="orbi-flow-mount"></div>`;
+      const mountEl = el.querySelector('#orbi-flow-mount');
+      const flowData = {
+        editable,
+        nodes: allTasks.map(t => {
+          const st = FLOW_STATUS[t.status] || FLOW_STATUS.todo;
+          const a = uMap[t.assigneeId];
+          return { id: String(t.id), title: (t.title || 'Task'), statusLabel: st.label, headerColor: st.header, who: a ? (a.displayName || a.username) : 'Unassigned', priority: t.priority || 'medium' };
+        }),
+        edges: deps.filter(d => d.type === 'blocks').map(d => ({ source: String(d.fromTaskId), target: String(d.toTaskId) })),
+      };
+      window.OrbiFlow.mount(mountEl, flowData, {
+        onNodeClick: (id) => showTaskDetailModal(Number(id)),
+        onConnect: editable ? async (sourceId, targetId) => {
+          try {
+            const blockers = await DB.getTaskBlockers(Number(targetId));
+            await DB.setTaskBlockedBy(Number(targetId), [...blockers, Number(sourceId)], actorId());
+            showToast('Dependency linked', 'success');
+            state._detailCache = null;
+          } catch (_) { showToast('Could not link dependency', 'error'); }
+        } : null,
+      });
+    } else {
+      el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
+    }
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -4900,6 +5080,7 @@ function showModal(title, body) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal"><div class="modal-header"><h2>${title}</h2><button class="btn-icon" data-action="close-modal">${ICONS.x}</button></div><div class="modal-body">${body}</div></div>`;
   ov.classList.remove('hidden');
+  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
   enableSpellcheckOn(ov);
   const inp = ov.querySelector('input:not([type=hidden]),textarea,select');
   if (inp) setTimeout(() => inp.focus(), 50);
@@ -6291,13 +6472,36 @@ function initializeTeamActivityD3() {
         .text(departmentLabel(dept));
     });
 
+    // Smooth, curved collaboration links (cubic bezier with horizontal
+    // tangents) drawn as paths instead of straight lines.
+    const baseLinkOpacity = d => Math.min(0.55, 0.18 + d.weight * 0.08);
+    const baseLinkWidth = d => Math.min(6, 1.2 + d.weight);
     const linkSel = g.append('g').attr('class', 'team-map-links')
-      .selectAll('line')
+      .selectAll('path')
       .data(links)
       .enter()
-      .append('line')
-      .attr('stroke-width', d => Math.min(6, 1 + d.weight))
-      .attr('opacity', d => Math.min(0.5, 0.16 + d.weight * 0.08));
+      .append('path')
+      .attr('fill', 'none')
+      .attr('stroke-linecap', 'round')
+      .attr('stroke-width', baseLinkWidth)
+      .attr('opacity', baseLinkOpacity);
+
+    // Adjacency for hover highlighting: which node ids each node connects to.
+    const neighbors = new Map();
+    links.forEach(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      if (!neighbors.has(s)) neighbors.set(s, new Set());
+      if (!neighbors.has(t)) neighbors.set(t, new Set());
+      neighbors.get(s).add(t);
+      neighbors.get(t).add(s);
+    });
+    let filterMode = 'all';
+    const touchesNode = (l, id) => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return s === id || t === id;
+    };
 
     const nodeSel = g.append('g').attr('class', 'team-map-nodes')
       .selectAll('g')
@@ -6317,13 +6521,25 @@ function initializeTeamActivityD3() {
       .attr('stroke', 'var(--card)')
       .attr('stroke-width', 3)
       .on('click', (_event, d) => showUserProfileModal(Number(d.id)))
+      .on('mouseenter', (_event, d) => {
+        // Spotlight this person and their collaborators; dim everyone else.
+        const near = neighbors.get(d.id) || new Set();
+        nodeSel.transition().duration(140).style('opacity', n => (n.id === d.id || near.has(n.id)) ? 1 : 0.12);
+        linkSel.transition().duration(140)
+          .style('opacity', l => touchesNode(l, d.id) ? 0.9 : 0.03)
+          .attr('stroke-width', l => touchesNode(l, d.id) ? Math.min(7.5, 2.2 + l.weight) : baseLinkWidth(l));
+      })
       .on('mousemove', (event, d) => {
         tooltip.classList.remove('hidden');
         tooltip.style.left = `${event.offsetX + 14}px`;
         tooltip.style.top = `${event.offsetY + 14}px`;
         tooltip.innerHTML = `<strong>${esc(d.name)}</strong><span>${departmentLabel(d.department)} - ${(d.activity / 60).toFixed(1)}h this week</span><small>${d.projectCount} owned projects - ${d.taskCount} assigned tasks</small>`;
       })
-      .on('mouseleave', () => tooltip.classList.add('hidden'));
+      .on('mouseleave', () => {
+        tooltip.classList.add('hidden');
+        // Restore to whatever the active filter dictates.
+        applyFilter(filterMode);
+      });
     nodeSel.append('text')
       .attr('text-anchor', 'middle')
       .attr('dy', '0.36em')
@@ -6349,28 +6565,32 @@ function initializeTeamActivityD3() {
       .force('collide', d3.forceCollide(d => 42 + Math.min(20, Math.sqrt(d.activity || 1) * 1.4)));
 
     simulation.on('tick', () => {
-      linkSel
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
+      linkSel.attr('d', d => {
+        const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
+        const mx = (sx + tx) / 2;
+        // Horizontal-tangent S-curve: control points share the midpoint x.
+        return `M${sx},${sy} C ${mx},${sy} ${mx},${ty} ${tx},${ty}`;
+      });
       nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 
     const applyFilter = (mode) => {
+      filterMode = mode;
       el.querySelectorAll('[data-map-filter]').forEach(btn => btn.classList.toggle('active', btn.dataset.mapFilter === mode));
       nodeSel.transition().duration(160).style('opacity', d => {
         if (mode === 'online') return d.online ? 1 : 0.18;
         if (mode === 'active') return d.activity > 0 ? 1 : 0.18;
         return 1;
       });
-      linkSel.transition().duration(160).style('opacity', d => {
-        const s = d.source;
-        const t = d.target;
-        if (mode === 'online') return s.online && t.online ? 0.42 : 0.04;
-        if (mode === 'active') return s.activity > 0 && t.activity > 0 ? 0.42 : 0.04;
-        return Math.min(0.5, 0.16 + d.weight * 0.08);
-      });
+      linkSel.transition().duration(160)
+        .attr('stroke-width', baseLinkWidth)
+        .style('opacity', d => {
+          const s = d.source;
+          const t = d.target;
+          if (mode === 'online') return s.online && t.online ? 0.5 : 0.04;
+          if (mode === 'active') return s.activity > 0 && t.activity > 0 ? 0.5 : 0.04;
+          return baseLinkOpacity(d);
+        });
     };
     const reset = () => svg.transition().duration(220).call(zoomBehavior.transform, d3.zoomIdentity);
     const fit = () => {
@@ -7627,6 +7847,11 @@ const actions = {
     await DB.updateTask(t.id, { status: nextStatus }, uid);
     patchTaskInCache(t.id, { status: nextStatus });
     await applyTaskStatusSideEffects(p, t, nextStatus, uid, projectTasks, projectAttachments);
+    // Celebrate only the big moment: this task was the last one to finish.
+    if (nextStatus === 'done' && projectTasks.length > 1
+      && projectTasks.filter(x => x.id !== t.id && x.status !== 'done').length === 0) {
+      window.OrbiFun?.celebrate({ big: true });
+    }
     await router();
   },
   'assign-task': (b) => showAssignTaskModal(Number(b.dataset.id)),
@@ -7668,7 +7893,9 @@ const actions = {
       details: `${ms.title} (completed)`,
       discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} completed milestone "${ms.title}" in "${p.name}".`
     });
-    showToast('Milestone completed', 'success'); bustWorkspaceCache(); await router();
+    showToast('Milestone completed', 'success');
+    window.OrbiFun?.celebrate({ big: true });
+    bustWorkspaceCache(); await router();
   },
   'delete-update': async (b) => {
     const row = await DB.getUpdate(Number(b.dataset.id));
@@ -7720,7 +7947,7 @@ const actions = {
     renderUserMenu();
     showToast(!muted ? 'Notification sounds muted' : 'Notification sounds on', 'info');
   },
-  'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id)); },
+  'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id), previewSiblingIds(b)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
   'user-view-profile': async () => { closeUserMenu(); await showProfileModal(); },
@@ -9195,9 +9422,26 @@ async function init() {
         else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
         else if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
         else hideModal();
+      } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        && !document.getElementById('file-preview-overlay')?.classList.contains('hidden')) {
+        // Page through attachments with the arrow keys while the viewer is open.
+        e.preventDefault();
+        previewNav(e.key === 'ArrowRight' ? 1 : -1);
       }
     });
     document.getElementById('file-preview-close')?.addEventListener('click', closeFilePreview);
+    document.getElementById('file-preview-prev')?.addEventListener('click', () => previewNav(-1));
+    document.getElementById('file-preview-next')?.addEventListener('click', () => previewNav(1));
+    // Scroll-wheel navigation (images/text); throttled so one flick = one step.
+    let _previewWheelAt = 0;
+    document.getElementById('file-preview-overlay')?.addEventListener('wheel', (e) => {
+      const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (Math.abs(delta) < 8) return;
+      const now = Date.now();
+      if (now - _previewWheelAt < 400) return;
+      _previewWheelAt = now;
+      previewNav(delta > 0 ? 1 : -1);
+    }, { passive: true });
     document.getElementById('file-preview-overlay')?.addEventListener('click', (e) => {
       if (e.target.id === 'file-preview-overlay') closeFilePreview();
     });
