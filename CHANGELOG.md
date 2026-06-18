@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.11
+
+### Fixed
+- **In-app updater** — the "Check for updates" button no longer falls back to "Updates are managed in the installed desktop app" on installed builds. The sandboxed preload no longer calls `require()` on a file path, so the `workTrackerDesktop` bridge loads correctly.
+
+### Changed
+- **Self-healing updates** — downloaded updates now install automatically on quit (`autoInstallOnAppQuit`), so a failed update prompt can't permanently block updates.
+
 ## 3.0.10
 
 ### Added

@@ -179,7 +179,9 @@ function configureAutoUpdater() {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
+  // Install downloaded updates on quit so a broken renderer/preload bridge
+  // can never fully block updates — the app self-heals on next launch.
+  autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.verifyUpdateCodeSignature = false;
 

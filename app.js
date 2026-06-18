@@ -83,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.0.10'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.0.11'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -6018,6 +6018,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.0.11', date: '2026-06-18', items: ['Fixed the in-app updater showing "Updates are managed in the installed desktop app" on installed builds', 'Downloaded updates now install automatically on quit so the app self-heals if the update prompt fails'] },
   { version: '3.0.10', date: '2026-06-18', items: ['Orbitask-themed confirm dialogs in light and dark mode', 'Project properties, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, tooltips, heat, clusters, and collaboration links', 'Brief-style reports across HTML previews, PDF export, and AI report prompts', 'Local AI Copilot removed from production builds'] },
   { version: '3.0.8', date: '2026-06-17', items: ['Dark theme polish: readable popups, sync banner, headings, and completed tasks', 'Download button for project & task attachments (any file type)', 'Neater task List view using grouped tables', 'Documents panel no longer opens automatically on a project', 'Assignee sync, ID-map, and classroom access fixes'] },
   { version: '3.0.7', date: '2026-06-12', items: ['Fixed queued task updates and sync error loops', 'Removed ghost users from team views', 'More reliable realtime sync'] },
@@ -6684,6 +6685,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
     { version: '3.0.10', date: 'June 2026', features: ['Orbitask-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports', 'Production build excludes the local AI Copilot'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
     { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
