@@ -19,6 +19,7 @@
     "pack": "electron-builder --dir",
     "build:orbiflow": "esbuild build-src/orbiflow.jsx --bundle --format=iife --jsx=automatic --minify --outfile=vendor/orbiflow/orbiflow.js",
     "build:orbifun": "esbuild build-src/orbifun.js --bundle --format=iife --minify --outfile=vendor/orbifun/orbifun.js",
+    "build:orbicanvas": "esbuild build-src/orbicanvas.jsx --bundle --format=iife --jsx=automatic --minify --outfile=vendor/orbicanvas/orbicanvas.js",
     "dist": "electron-builder --win nsis",
     "dist:win": "electron-builder --win nsis",
     "publish:win": "electron-builder --win nsis --publish always"
@@ -35,7 +36,10 @@
     "lucide": "^1.20.0",
     "motion": "^12.40.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tldraw": "^5.1.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.31"
   },
   "build": {
     "appId": "com.everlasting.worktracker",

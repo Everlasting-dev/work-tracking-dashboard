@@ -602,6 +602,50 @@ async function copilotGetClassrooms() {
 }
 window.copilotGetClassrooms = copilotGetClassrooms;
 
+/* ──── Collaborative canvas persistence ──────────────────────────────────
+   Canvas docs are stored OUTSIDE the normal sync queue (own IndexedDB +
+   a dedicated wt_canvas_documents table) so the Yjs blob never collides with
+   the task/project last-write-wins pipeline. Local saves keep it offline; the
+   cloud upsert lets other machines load it (live edits flow over Realtime). */
+let _canvasDB = null;
+function _getCanvasDB() {
+  if (_canvasDB !== null) return _canvasDB;
+  try {
+    _canvasDB = new Dexie('orbitrack-canvas');
+    _canvasDB.version(1).stores({ docs: '&projectId' });
+  } catch (_) { _canvasDB = false; }
+  return _canvasDB;
+}
+async function canvasLoadDoc(projectId) {
+  const pid = Number(projectId);
+  try {
+    const cdb = _getCanvasDB();
+    const row = cdb ? await cdb.docs.get(pid) : null;
+    if (row?.doc) return row.doc;
+  } catch (_) {}
+  try {
+    if (isCloudMode() && !isOffline()) {
+      const sb = window.SupabaseDB?._client;
+      if (sb) {
+        const { data } = await sb.from('wt_canvas_documents').select('doc').eq('project_id', pid).maybeSingle();
+        if (data?.doc) return data.doc;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+async function canvasSaveDoc(projectId, b64) {
+  const pid = Number(projectId);
+  const now = new Date().toISOString();
+  try { const cdb = _getCanvasDB(); if (cdb) await cdb.docs.put({ projectId: pid, doc: b64, updatedAt: now }); } catch (_) {}
+  try {
+    if (isCloudMode() && !isOffline()) {
+      const sb = window.SupabaseDB?._client;
+      if (sb) await sb.from('wt_canvas_documents').upsert({ project_id: pid, doc: b64, updated_at: now }, { onConflict: 'project_id' });
+    }
+  } catch (_) {}
+}
+
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
 
 const WORKSPACE_CACHE_MS = 120000;
@@ -3184,6 +3228,7 @@ async function renderProjectDetail(projectId) {
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'board' ? 'active' : ''}" data-action="switch-tab" data-tab="board" data-project-id="${projectId}">Board</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'canvas' ? 'active' : ''}" data-action="switch-tab" data-tab="canvas" data-project-id="${projectId}">Canvas</button>` : ''}
         </div>
         <div id="tab-content"></div>
       </section>
@@ -3562,6 +3607,24 @@ async function renderTab(tab, projectId, editable) {
       });
     } else {
       el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
+    }
+  } else if (tab === 'canvas') {
+    // Real-time collaborative whiteboard (tldraw + Yjs over Supabase Realtime).
+    if (window.OrbiCanvas) {
+      el.innerHTML = `<p class="text-muted text-sm tab-hint">Brainstorm together — sketch notes, boxes, and arrows. Edits sync live with everyone in this project.</p><div id="orbi-canvas-mount" class="orbi-canvas-mount"></div>`;
+      const mountEl = el.querySelector('#orbi-canvas-mount');
+      const s = getSession();
+      window.OrbiCanvas.mount(mountEl, {
+        projectId,
+        channelName: `canvas:project:${projectId}`,
+        user: { id: s?.userId, name: s?.displayName || s?.username || 'Teammate', color: s?.color || '#38bdf8' },
+        supabase: window.SupabaseDB?._client,
+      }, {
+        loadDoc: () => canvasLoadDoc(projectId),
+        saveDoc: (b64) => canvasSaveDoc(projectId, b64),
+      });
+    } else {
+      el.innerHTML = emptyState({ icon: 'edit', title: 'Canvas unavailable', description: 'The collaborative canvas module failed to load.' });
     }
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
@@ -5472,6 +5535,7 @@ async function showCommandPalette(initialQuery = '') {
   const input = document.getElementById('command-palette-input');
   const results = document.getElementById('command-palette-results');
   const routeCommands = [
+    { label: 'Open Orbit Map', sub: 'Team activity & connections map', route: '/users' },
     { label: 'Go to Projects', sub: 'Project grid and onboarding', route: '/projects' },
     { label: 'Go to Tasks', sub: 'Board and table views', route: '/tasks' },
     { label: 'Go to Reports', sub: 'Workspace reporting', route: '/reports' },
@@ -5497,6 +5561,9 @@ async function showCommandPalette(initialQuery = '') {
         <button type="button" class="command-item" data-action="command-create-project">
           <span>${ICONS.folder}</span><strong>Create project</strong><em>Ctrl Shift N</em>
         </button>
+        ${window.WTCopilot ? `<button type="button" class="command-item" data-action="command-ai-generate">
+          <span>${ICONS.sparkles || '✦'}</span><strong>Generate project with AI</strong><em>Copilot</em>
+        </button>` : ''}
       </div>
       ${routeMatches.length ? `<div class="command-group">
         <div class="command-group-label">Navigate</div>
@@ -5519,17 +5586,31 @@ async function showCommandPalette(initialQuery = '') {
       ${!projectMatches.length && !taskMatches.length && !routeMatches.length ? '<p class="command-empty">No matching command.</p>' : ''}
     `;
   };
-  input?.addEventListener('input', render);
+  // Keyboard navigation: ↑/↓ move the highlight, Enter runs it (cmdk feel).
+  let activeIdx = 0;
+  const items = () => Array.from(results?.querySelectorAll('.command-item') || []);
+  const highlight = () => {
+    const list = items();
+    if (!list.length) return;
+    activeIdx = Math.max(0, Math.min(activeIdx, list.length - 1));
+    list.forEach((el, i) => el.classList.toggle('command-item--active', i === activeIdx));
+    list[activeIdx]?.scrollIntoView({ block: 'nearest' });
+  };
+  const renderAndHighlight = () => { render(); activeIdx = 0; highlight(); };
+  input?.addEventListener('input', renderAndHighlight);
   input?.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      const first = results?.querySelector('.command-item');
-      if (first) {
-        event.preventDefault();
-        first.click();
-      }
-    }
+    const list = items();
+    if (event.key === 'ArrowDown') { event.preventDefault(); if (list.length) { activeIdx = (activeIdx + 1) % list.length; highlight(); } }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); if (list.length) { activeIdx = (activeIdx - 1 + list.length) % list.length; highlight(); } }
+    else if (event.key === 'Enter') { event.preventDefault(); (list[activeIdx] || list[0])?.click(); }
   });
-  render();
+  results?.addEventListener('mousemove', (event) => {
+    const item = event.target.closest('.command-item');
+    if (!item) return;
+    const i = items().indexOf(item);
+    if (i >= 0 && i !== activeIdx) { activeIdx = i; highlight(); }
+  });
+  renderAndHighlight();
   setTimeout(() => input?.focus(), 30);
 }
 
@@ -7723,6 +7804,7 @@ const actions = {
   'open-command-palette': async () => { await showCommandPalette(); },
   'command-create-project': async () => { hideModal(); await showProjectModal(); },
   'command-create-task': async () => { hideModal(); await showTaskModal(state.currentProjectId || null); },
+  'command-ai-generate': () => { hideModal(); window.WTCopilot?.open?.(); },
   'command-route': (b) => {
     hideModal();
     const route = b.dataset.route || '/projects';
