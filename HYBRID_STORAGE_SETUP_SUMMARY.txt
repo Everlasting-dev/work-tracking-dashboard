@@ -1,0 +1,135 @@
+================================================================================
+ ORBITRACK — HYBRID GOOGLE DRIVE + SUPABASE STORAGE
+ What we built and set up on 2026-06-19
+================================================================================
+
+GOAL
+--------------------------------------------------------------------------------
+Move uploaded FILE CONTENT (images, PDFs, videos, docs, zips) out of Supabase
+Storage and into Google Drive, while keeping EVERYTHING ELSE in Supabase
+(auth, users, projects, membership, tasks, comments, activity, notifications,
+realtime, and now file METADATA + access permissions).
+
+Secrets (Google refresh token, Supabase service-role key) live ONLY on the
+backend — never in the desktop app or browser.
+
+
+HOW IT WORKS (ARCHITECTURE)
+--------------------------------------------------------------------------------
+1. The app (Electron/browser) never talks to Google directly. It calls three
+   authenticated Supabase Edge Functions:
+      files-upload    - validates you, checks project membership, uploads to
+                        Drive, saves a metadata row.
+      files-content   - streams a file back from Drive (preview/download).
+      files-delete    - trashes the Drive file + soft-deletes the metadata.
+
+2. Identity: the app's normal login also signs you into Supabase Auth behind the
+   scenes (no change to the login screen). The Edge Functions validate that
+   token and re-check the SAME permission rules the app already uses
+   (admin / project owner / editor / classroom member).
+
+3. Storage layout in Google Drive (one dedicated account "akramfariz@gmail.com"):
+      Orbitrack Storage/
+         project_<projectId>/
+            images/        documents/        videos/        other/
+   Folder ids are stored in Supabase (table project_storage_folders), so files
+   are always found by id, never by guessing folder names.
+
+4. Metadata lives in Supabase table project_files (file name, type, size, Drive
+   file id, who uploaded, when, soft-delete flag). Row-Level Security only lets
+   project members read it; all writes go through the backend.
+
+
+WHAT WAS CREATED / CHANGED
+--------------------------------------------------------------------------------
+Backend (Supabase Edge Functions, Deno):
+  supabase/functions/files-upload/index.ts
+  supabase/functions/files-content/index.ts
+  supabase/functions/files-delete/index.ts
+  supabase/functions/_shared/{auth,drive,validation,cors}.ts
+  supabase/functions/tests/{validation,auth}_test.ts
+
+Database:
+  supabase/migrations/20260618_project_files_drive_storage.sql
+    - tables project_files + project_storage_folders (bigint ids to match Orbitrack)
+    - helper functions wt_is_project_member() / wt_can_edit_project()
+    - Row-Level Security policies
+
+Frontend:
+  storage-drive.js          - client that calls the Edge Functions (window.DriveStorage)
+  db.js                     - attachment upload/list/get/delete routed to Drive when enabled
+  db-supabase.js            - login establishes a Supabase Auth session; pads short
+                              passwords to satisfy Supabase's 6-char minimum
+  app.js                    - file preview streams from Drive; UUID-safe ids;
+                              ADDED a delete button on documents in the project panel
+  config.js                 - storageProvider: 'google_drive'  (the on/off switch)
+  index.html                - loads storage-drive.js
+
+Tooling / scripts:
+  scripts/google-drive-oauth-bootstrap.mjs   - one-time: connect the Google account,
+                                               get the refresh token + root folder id
+  scripts/migrate-storage-to-drive.mjs       - copy existing Supabase files -> Drive
+  .env.example / .gitignore                  - secret placeholders; ignore real secrets
+  docs/DRIVE_STORAGE.md                      - full technical doc
+
+
+SETUP WE COMPLETED TODAY
+--------------------------------------------------------------------------------
+1. Google Cloud: enabled Drive API, made an OAuth client (Web app), added the
+   storage account as a test user, scope = drive.file only.
+2. Ran the bootstrap -> got GOOGLE_REFRESH_TOKEN + GOOGLE_DRIVE_ROOT_FOLDER_ID,
+   created the "Orbitrack Storage" root folder.
+3. Created the database tables via the Supabase SQL editor.
+4. Set Edge Function secrets (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN/ROOT_FOLDER_ID).
+5. Deployed the three Edge Functions.
+6. Turned Email auth on, "Confirm email" off.
+7. Turned on the app flag (storageProvider: 'google_drive') and tested:
+   upload -> Drive, preview, delete -- all working.
+8. Migrated existing files: 60 found, 59 migrated to Drive, 1 skipped
+   (attachment 29 - its file was already missing from Supabase Storage).
+
+
+PROBLEMS WE HIT AND FIXED (for future reference)
+--------------------------------------------------------------------------------
+- Google "Access blocked: response_type missing": Windows split the consent URL
+  at '&'. Fixed the bootstrap to open URLs with rundll32.
+- Google "Access blocked / access_denied": account wasn't a Test user. Added it.
+- Drive folder confusion: nothing was uploading because config.js had a missing
+  comma (syntax error) so the storageProvider flag never loaded.
+- "Not signed in to storage": the app password was under 6 characters, which
+  Supabase Auth rejects. Now short passwords are padded to a valid internal one.
+- "Upload failed": traced to malformed secrets/.env values (key names and the
+  "Dashboard ->" instruction text got pasted INTO the values). Cleaned the .env.
+
+
+SECRETS / ENV (never commit these)
+--------------------------------------------------------------------------------
+Edge Function secrets (set with `supabase secrets set`):
+  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN,
+  GOOGLE_DRIVE_ROOT_FOLDER_ID
+  (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY are injected automatically.)
+
+Local .env (used only by the scripts on your machine):
+  GOOGLE_* (above) + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+
+
+HOW TO OPERATE IT LATER
+--------------------------------------------------------------------------------
+- Turn the system OFF (revert to Supabase Storage): remove the line
+  `storageProvider: 'google_drive',` from config.js and restart. Nothing is lost.
+- Re-run a migration any time (idempotent, skips done files):
+    node scripts/migrate-storage-to-drive.mjs
+- If Google authorization is ever revoked, re-run:
+    node scripts/google-drive-oauth-bootstrap.mjs   (then update the secret)
+
+
+REMAINING / OPTIONAL
+--------------------------------------------------------------------------------
+- Remove the now-redundant file bytes from Supabase Storage (the project-files
+  bucket) once you're satisfied. Originals were intentionally kept until verified.
+- Commit this work to git (currently uncommitted) and decide rollout:
+  keep the flag local for now, or ship it to all users in the next release.
+- Known limits: very large video streaming through Edge Functions is constrained;
+  authenticated media is fetched into temporary object URLs (fine for normal use).
+
+================================================================================

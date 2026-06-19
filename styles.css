@@ -5320,6 +5320,20 @@ body.theme-black .chat-message-mine .chat-bubble a { color: #1d4ed8 !important; 
 }
 .doc-panel-item-v2:last-child { border-bottom: none; }
 .doc-panel-item-v2:hover { background: rgba(15,23,42,0.035); }
+.doc-panel-item-wrap { position: relative; }
+.doc-panel-item-wrap .doc-panel-item-v2 { padding-right: 40px; }
+.doc-panel-del {
+  position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border: none; background: none; border-radius: 6px; cursor: pointer;
+  color: var(--text-muted); opacity: 0;
+  transition: opacity .15s ease, background .15s ease, color .15s ease;
+}
+.doc-panel-item-wrap:hover .doc-panel-del,
+.doc-panel-del:focus-visible { opacity: 1; }
+.doc-panel-del:hover { background: rgba(248,113,113,0.14); color: #ef4444; }
+body.theme-black .doc-panel-del:hover { background: rgba(248,113,113,0.2); color: #fca5a5; }
+.doc-panel-del svg { width: 16px; height: 16px; }
 .doc-panel-thumb-wrap { flex-shrink: 0; width: 52px; height: 44px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; background: var(--border-light); }
 .doc-panel-thumb { width: 100%; height: 100%; object-fit: cover; }
 .doc-panel-thumb--pdf { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 0.5rem; font-weight: 700; color: var(--red); background: var(--red-light); width: 100%; height: 100%; }

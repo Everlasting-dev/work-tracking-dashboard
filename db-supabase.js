@@ -1017,18 +1017,24 @@ const SupabaseDB = {
     const client = this._sb();
     if (!client) return null;
 
+    // Supabase Auth requires passwords >= 6 chars. This Auth credential is an
+    // internal detail (users never type it), so derive a valid one from the real
+    // password when it's too short — deterministic, so sign-in works on every
+    // login. Passwords already >= 6 are used as-is for backward compatibility.
+    const authPassword = (password && password.length >= 6) ? password : `wtk_${password || ''}_orbitrack`;
+
     let authUser = null;
 
     // Try sign-in first
-    const { data: signInData } = await client.auth.signInWithPassword({ email, password });
+    const { data: signInData } = await client.auth.signInWithPassword({ email, password: authPassword });
     if (signInData?.user) authUser = signInData.user;
 
     if (!authUser) {
       // Not yet in auth.users — create the account
-      const { data: signUpData, error: signUpError } = await client.auth.signUp({ email, password });
+      const { data: signUpData, error: signUpError } = await client.auth.signUp({ email, password: authPassword });
       if (signUpError) { console.warn('Supabase Auth signUp:', signUpError.message); return null; }
       // Sign in immediately so we have a valid JWT session
-      const { data: loginData, error: loginError } = await client.auth.signInWithPassword({ email, password });
+      const { data: loginData, error: loginError } = await client.auth.signInWithPassword({ email, password: authPassword });
       if (loginError) { console.warn('Supabase Auth signIn after signUp:', loginError.message); return null; }
       authUser = loginData?.user;
     }

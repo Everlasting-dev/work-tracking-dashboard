@@ -385,6 +385,22 @@ function attachmentsCloudReady() {
     && !!window.SupabaseDB._client
     && (typeof navigator === 'undefined' || navigator.onLine !== false);
 }
+// Map a project_files row (Google Drive storage) to the shape the attachment UI
+// expects. `_drive: true` signals openFilePreview to stream via the backend.
+function _mapDriveAttachment(row) {
+  return {
+    id: row.id,
+    projectId: Number(row.project_id),
+    taskId: row.task_id != null ? Number(row.task_id) : null,
+    uploadedBy: row.uploaded_by != null ? Number(row.uploaded_by) : null,
+    fileName: row.original_name || 'file',
+    mimeType: row.mime_type || 'application/octet-stream',
+    documentType: '',
+    size: row.size_bytes || 0,
+    createdAt: row.created_at,
+    _drive: true,
+  };
+}
 
 const LocalDB = {
   db,
@@ -1037,6 +1053,16 @@ const LocalDB = {
     const now = new Date().toISOString();
     const fileName = data.fileName || 'file';
 
+    // Hybrid Google Drive storage (flag-gated). Content → Drive via the backend;
+    // metadata → project_files. Returns the new project_files row id (uuid).
+    if (window.DriveStorage?.enabled?.() && data.blob) {
+      const file = new File([data.blob], fileName, { type: data.mimeType || 'application/octet-stream' });
+      const rec = await window.DriveStorage.upload(data.projectId, { file, taskId: data.taskId || null, description: data.documentType || '' });
+      await db.projects.update(data.projectId, { updatedAt: now });
+      if (data.uploadedBy) await LocalDB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: rec.id, details: fileName });
+      return rec.id;
+    }
+
     if (attachmentsCloudReady() && data.blob) {
       try {
         const meta = await window.SupabaseDB.addAttachment(data);
@@ -1076,12 +1102,22 @@ const LocalDB = {
   },
 
   async getAttachments(projectId, opts = {}) {
+    if (window.DriveStorage?.enabled?.()) {
+      try { return (await window.DriveStorage.list(projectId)).map(_mapDriveAttachment); }
+      catch (err) { console.warn('[attachments] drive list failed:', err); return []; }
+    }
     const rows = await db.attachments.where('projectId').equals(projectId).toArray();
     const visible = opts.includeHidden ? rows : rows.filter(row => !row.isHidden && !row.deletedAt);
     return visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   },
 
-  async getAttachment(id) { return db.attachments.get(id); },
+  async getAttachment(id) {
+    if (window.DriveStorage?.enabled?.()) {
+      try { const row = await window.DriveStorage.getOne(id); return row ? _mapDriveAttachment(row) : null; }
+      catch (err) { console.warn('[attachments] drive get failed:', err); return null; }
+    }
+    return db.attachments.get(id);
+  },
 
   // Build a direct (public bucket) URL for a cloud-stored file so it can be
   // viewed/downloaded on demand without persisting the blob locally.
@@ -1099,6 +1135,10 @@ const LocalDB = {
   },
 
   async deleteAttachment(id, actorUserId = null) {
+    if (window.DriveStorage?.enabled?.()) {
+      await window.DriveStorage.remove(id);
+      return;
+    }
     const row = await db.attachments.get(id);
     let cloudDeleted = false;
     const now = new Date().toISOString();

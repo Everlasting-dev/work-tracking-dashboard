@@ -3269,6 +3269,7 @@ async function renderDocumentPanel(projectId, editable) {
   if (!panel.classList.contains('is-open')) openDocumentPanelAnimated();
   else panel.classList.remove('hidden');
 
+  const canDeleteDocs = canEdit(project);
   const listHtml = items.length === 0
     ? `<p class="doc-panel-empty">No documents yet.</p>`
     : items.map(item => {
@@ -3287,7 +3288,8 @@ async function renderDocumentPanel(projectId, editable) {
       } else {
         thumbHtml = attachmentIconTileHtml(item, 'doc-panel-file-tile');
       }
-      return `<button type="button" class="doc-panel-item-v2" data-action="preview-attachment" data-id="${item.id}">
+      return `<div class="doc-panel-item-wrap">
+        <button type="button" class="doc-panel-item-v2" data-action="preview-attachment" data-id="${item.id}">
         <div class="doc-panel-thumb-wrap">${thumbHtml}</div>
         <div class="doc-panel-info">
           <span class="doc-panel-name">${esc(item.fileName)}</span>
@@ -3297,7 +3299,9 @@ async function renderDocumentPanel(projectId, editable) {
             ${item.documentType ? ` · <em>${esc(documentTypeLabel(item.documentType))}</em>` : ''}
           </span>
         </div>
-      </button>`;
+        </button>
+        ${canDeleteDocs ? `<button type="button" class="doc-panel-del" data-action="delete-attachment" data-id="${item.id}" title="Delete document" aria-label="Delete document">${ICONS.trash}</button>` : ''}
+      </div>`;
     }).join('');
 
   const milestoneHtml = milestones.length
@@ -3394,6 +3398,11 @@ async function openFilePreview(attachmentId, list = null) {
   if (item.blob) {
     url = URL.createObjectURL(item.blob);
     isBlobUrl = true;
+  } else if (item._drive && window.DriveStorage?.objectUrl) {
+    // Stream from Google Drive through the authenticated backend, into an object
+    // URL (revoked on close/next like any blob URL).
+    try { url = await window.DriveStorage.objectUrl(item.id); isBlobUrl = true; }
+    catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
   } else if (item.storagePath && DB.getAttachmentUrl) {
     url = DB.getAttachmentUrl(item.storagePath);
   }
@@ -3477,8 +3486,14 @@ function previewSiblingIds(btn) {
     node = node.parentElement;
   }
   return Array.from(container.querySelectorAll('[data-action="preview-attachment"]'))
-    .map(el => Number(el.dataset.id))
-    .filter(n => Number.isFinite(n));
+    .map(el => attachmentDatasetId(el.dataset.id))
+    .filter(v => v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && Number.isNaN(v)));
+}
+
+// Drive file ids are UUIDs (strings); legacy attachment ids are numbers. Coerce
+// a data-id to the right type for the active storage backend.
+function attachmentDatasetId(raw) {
+  return window.DriveStorage?.enabled?.() ? raw : Number(raw);
 }
 
 async function renderTab(tab, projectId, editable) {
@@ -7972,7 +7987,7 @@ const actions = {
     renderUserMenu();
     showToast(!muted ? 'Notification sounds muted' : 'Notification sounds on', 'info');
   },
-  'preview-attachment': async (b) => { await openFilePreview(Number(b.dataset.id), previewSiblingIds(b)); },
+  'preview-attachment': async (b) => { await openFilePreview(attachmentDatasetId(b.dataset.id), previewSiblingIds(b)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
   'user-view-profile': async () => { closeUserMenu(); await showProfileModal(); },
@@ -8427,7 +8442,7 @@ const actions = {
     inp.click();
   },
   'delete-attachment': async (b) => {
-    const row = await DB.getAttachment(Number(b.dataset.id));
+    const row = await DB.getAttachment(attachmentDatasetId(b.dataset.id));
     if (!row) return;
     const p = await DB.getProject(row.projectId);
     if (!p || !canEdit(p)) { showToast('Permission denied', 'error'); return; }
@@ -8464,6 +8479,7 @@ const actions = {
     showToast('File removed', 'success');
     bustWorkspaceCache();
     await router();
+    if (state.projectPanelOpen) { try { await renderDocumentPanel(p.id, canEdit(p)); } catch (_) {} }
   },
   'add-user': () => showAddUserModal(),
   'edit-user': (b) => showEditUserModalBlack(Number(b.dataset.id)),

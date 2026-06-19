@@ -8,5 +8,6 @@ window.WT_CONFIG = window.WT_CONFIG || {
   // For a staging v3 test build, set this to 'v3' and point the URL/key at staging.
   supabaseSchemaVersion: 'v2',
   supabaseUrl: 'https://ewexbdilrhmlpbalmpfj.supabase.co',
-  supabaseAnonKey: 'sb_publishable_QvcfeV3hQjFaIigiP-nYpg_D_oPU1wW'
+  supabaseAnonKey: 'sb_publishable_QvcfeV3hQjFaIigiP-nYpg_D_oPU1wW',
+  storageProvider: 'google_drive',
 };
