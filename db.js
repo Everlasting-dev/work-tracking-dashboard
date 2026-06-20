@@ -1122,6 +1122,10 @@ const LocalDB = {
   // Build a direct (public bucket) URL for a cloud-stored file so it can be
   // viewed/downloaded on demand without persisting the blob locally.
   getAttachmentUrl(storagePath) {
+    // Drive mode never serves files from Supabase Storage — returning '' makes
+    // any stray legacy item fall back to an icon instead of 404ing on a deleted
+    // Storage object.
+    if (window.DriveStorage?.enabled?.()) return '';
     if (!storagePath) return '';
     try {
       if (window.SupabaseDB?._client?.storage) return window.SupabaseDB.getAttachmentUrl(storagePath);

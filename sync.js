@@ -168,8 +168,16 @@ const SyncEngine = (() => {
     try { return JSON.parse(JSON.stringify(v)); } catch (_) { return null; }
   }
 
+  const _ATTACHMENT_OPS = new Set(['addAttachment', 'createAttachment', 'deleteAttachment', 'updateAttachment']);
+
   function _enqueue(method, args, result) {
     if (!_client) return;
+
+    // Hybrid Google Drive storage: attachments are managed by DriveStorage
+    // (project_files + Edge Functions), NOT the legacy wt_attachments sync. Never
+    // queue attachment ops in Drive mode — their ids are UUIDs and would fail the
+    // bigint wt_attachments path ("invalid input syntax for type bigint").
+    if (window.DriveStorage?.enabled?.() && _ATTACHMENT_OPS.has(method)) return;
 
     if (method === 'requestProjectAccess' && args[0] && typeof args[0] === 'object') {
       const data = args[0];
@@ -348,6 +356,9 @@ const SyncEngine = (() => {
   async function _execOp(op) {
     const sb = window.SupabaseDB;
     if (!sb?._client) throw new Error('Supabase client not ready');
+
+    // Drive mode owns attachments — never push legacy attachment ops to Supabase.
+    if (window.DriveStorage?.enabled?.() && _ATTACHMENT_OPS.has(op.method)) return;
 
     const remapped = _remapArgs(op.method, op.args || []);
     if (typeof sb[op.method] !== 'function') {
@@ -589,12 +600,16 @@ const SyncEngine = (() => {
           if (error) throw error;
           return (data || []).map(r => ({ id: r.id, userId: r.user_id, classroomId: r.classroom_id, createdAt: r.created_at }));
         }),
-        // Attachment metadata only — never the file blobs. Files are fetched on
-        // demand from Supabase Storage when a user actually opens them.
-        sb._sb().from('wt_attachments').select('*').then(({ data, error }) => {
-          if (error) throw error;
-          return (data || []).map(r => sb._mapAttachment(r));
-        }),
+        // Attachment metadata only — never the file blobs. In Drive mode the
+        // legacy wt_attachments table is unused (files live in project_files via
+        // DriveStorage); skip it so stale rows (whose Storage objects were
+        // removed after migration) don't land locally and 404 on open.
+        (window.DriveStorage?.enabled?.()
+          ? Promise.resolve([])
+          : sb._sb().from('wt_attachments').select('*').then(({ data, error }) => {
+              if (error) throw error;
+              return (data || []).map(r => sb._mapAttachment(r));
+            })),
         sb.getWorkflowTemplates ? sb.getWorkflowTemplates() : Promise.resolve([]),
         (async () => {
           const session = _getSession();
@@ -864,6 +879,14 @@ const SyncEngine = (() => {
     if (!window.SupabaseDB) return;
 
     _loadQueue();
+    // In Drive mode, drop any legacy attachment ops left in the queue (e.g. a
+    // deleteAttachment with a UUID id that keeps failing the bigint wt_attachments
+    // path). DriveStorage already handled them.
+    if (window.DriveStorage?.enabled?.() && Array.isArray(_queue)) {
+      const before = _queue.length;
+      _queue = _queue.filter(op => !_ATTACHMENT_OPS.has(op?.method));
+      if (_queue.length !== before) _saveQueue();
+    }
     _loadIdMap();
 
     // Create the shared Supabase client and inject into SupabaseDB

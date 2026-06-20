@@ -344,6 +344,9 @@ const SyncEngineV3 = (() => {
 
   async function _mirror(method, result, args) {
     const now = _now();
+    // Drive mode owns attachments (project_files via DriveStorage); skip the
+    // legacy v3 `documents` path so UUID ids don't collide with it.
+    if (window.DriveStorage?.enabled?.() && (method === 'addAttachment' || method === 'deleteAttachment' || method === 'updateAttachment')) return;
     if (method === 'updateUser') {
       const [id, changes] = args;
       const uuid = _uuid('profiles', id);

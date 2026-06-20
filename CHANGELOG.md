@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.2
+
+### Added
+- **Faster image previews** — images now open instantly at low resolution, with a **View HD** button to load full quality on demand.
+
+### Fixed
+- **Cloud sync errors on file delete** ("invalid input syntax for type bigint") — the legacy attachment sync no longer runs alongside Drive storage.
+- **"Object not found" on opening files** — stale legacy file records are no longer used in Drive mode, so files load reliably.
+
 ## 3.1.1
 
 ### Fixed

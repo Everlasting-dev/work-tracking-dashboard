@@ -80,9 +80,12 @@
 
   // Fetch file content through the backend and return an object URL (caller must
   // URL.revokeObjectURL when done). `download` toggles inline vs attachment.
-  async function objectUrl(fileRecordId, { download = false } = {}) {
+  async function objectUrl(fileRecordId, { download = false, thumb = false, size } = {}) {
     const jwt = await token();
-    const res = await fetch(`${fnBase()}/files-content?id=${encodeURIComponent(fileRecordId)}${download ? "&download=1" : ""}`, {
+    const params = new URLSearchParams({ id: fileRecordId });
+    if (download) params.set("download", "1");
+    if (thumb) { params.set("thumb", "1"); if (size) params.set("sz", String(size)); }
+    const res = await fetch(`${fnBase()}/files-content?${params.toString()}`, {
       headers: { Authorization: `Bearer ${jwt}`, apikey: anonKey() },
     });
     if (!res.ok) throw new Error(`Could not load file (${res.status})`);

@@ -197,6 +197,30 @@ export async function downloadStream(fileId: string, range?: string | null): Pro
   return api(`/files/${encodeURIComponent(fileId)}?alt=media&acknowledgeAbuse=false`, { headers });
 }
 
+// Low-res preview from Drive's auto-generated thumbnail (images/PDFs/videos).
+// Returns a fetched image Response, or null if the file has no thumbnail (caller
+// then falls back to streaming the full file). `size` = max edge in px.
+export async function thumbnailResponse(fileId: string, size = 1024): Promise<Response | null> {
+  let link = "";
+  try {
+    const meta = await api(`/files/${encodeURIComponent(fileId)}?fields=thumbnailLink`);
+    link = (await meta.json()).thumbnailLink || "";
+  } catch (_) { return null; }
+  if (!link) return null;
+  // thumbnailLink ends with "=sNNN" (and maybe "-c"); request a larger size.
+  const sized = /=s\d+/.test(link) ? link.replace(/=s\d+(-[a-z]+)?/, `=s${size}`) : `${link}=s${size}`;
+  // These are short-lived pre-signed Google URLs — usually no auth needed; try
+  // plain first, then with the access token as a fallback.
+  try {
+    let r = await fetch(sized);
+    if (!r.ok) {
+      const token = await accessToken();
+      r = await fetch(sized, { headers: { Authorization: `Bearer ${token}` } });
+    }
+    return r.ok ? r : null;
+  } catch (_) { return null; }
+}
+
 export async function getMeta(fileId: string): Promise<{ id: string; name: string; size: number; mimeType: string }> {
   const res = await api(`/files/${encodeURIComponent(fileId)}?fields=id,name,size,mimeType,md5Checksum`);
   const j = await res.json();

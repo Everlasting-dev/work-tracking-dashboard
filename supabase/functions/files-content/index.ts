@@ -5,7 +5,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, json, preflight, log } from "../_shared/cors.ts";
 import { getAuthedUser, serviceClient, loadProject, isMember } from "../_shared/auth.ts";
-import { downloadStream, DriveAuthRevokedError } from "../_shared/drive.ts";
+import { downloadStream, thumbnailResponse, DriveAuthRevokedError } from "../_shared/drive.ts";
 
 serve(async (req) => {
   const pf = preflight(req); if (pf) return pf;
@@ -18,6 +18,8 @@ serve(async (req) => {
     const url = new URL(req.url);
     const recordId = url.searchParams.get("id");
     const asDownload = url.searchParams.get("download") === "1";
+    const asThumb = url.searchParams.get("thumb") === "1";
+    const thumbSize = Math.min(2048, Math.max(64, Number(url.searchParams.get("sz")) || 1024));
     if (!recordId) return json({ error: "id is required" }, 400);
 
     const svc = serviceClient();
@@ -29,10 +31,24 @@ serve(async (req) => {
     const project = await loadProject(svc, Number(row.project_id));
     if (!(await isMember(svc, user, project))) return json({ error: "Forbidden" }, 403);
 
-    // ETag short-circuit (browser cache revalidation).
-    const etag = `"pf-${row.id}"`;
+    // ETag short-circuit (browser cache revalidation). Thumbs get their own tag.
+    const etag = `"pf-${row.id}${asThumb ? `-t${thumbSize}` : ""}"`;
     if (req.headers.get("if-none-match") === etag) {
       return new Response(null, { status: 304, headers: { ...corsHeaders, ETag: etag } });
+    }
+
+    // Low-quality fast preview: serve Drive's auto thumbnail when requested.
+    if (asThumb) {
+      const thumb = await thumbnailResponse(row.drive_file_id, thumbSize);
+      if (thumb && thumb.body) {
+        const h = new Headers(corsHeaders);
+        h.set("Content-Type", thumb.headers.get("content-type") || "image/jpeg");
+        h.set("Content-Disposition", "inline");
+        h.set("Cache-Control", "private, max-age=600");
+        h.set("ETag", etag);
+        return new Response(thumb.body, { status: 200, headers: h });
+      }
+      // No thumbnail available → fall through to the full file.
     }
 
     const driveRes = await downloadStream(row.drive_file_id, req.headers.get("range"));

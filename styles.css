@@ -2533,6 +2533,16 @@ body.theme-normal .form-group select:focus {
   transition: background 0.18s ease;
 }
 .file-preview-download:hover { background: rgba(255,255,255,0.26); }
+.file-preview-hd {
+  padding: 8px 14px; border-radius: var(--radius);
+  background: rgba(255,255,255,0.14); color: white;
+  font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.16);
+  transition: background 0.18s ease;
+}
+.file-preview-hd:hover { background: rgba(255,255,255,0.26); }
+.file-preview-hd:disabled { opacity: 0.7; cursor: default; }
+.file-preview-hd.hidden { display: none; }
 .file-preview-download svg { flex-shrink: 0; }
 .file-preview-close { color: white; }
 .file-preview-close:hover { background: rgba(255,255,255,0.1); }

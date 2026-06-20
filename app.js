@@ -83,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.1.1'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.1.2'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -3393,6 +3393,9 @@ async function openFilePreview(attachmentId, list = null) {
   const item = await DB.getAttachment(attachmentId);
   if (!item) { showToast('File not found', 'error'); return; }
   // Local blob (offline / pending) vs. cloud file fetched on demand by URL.
+  // For Drive images we load a fast low-res thumbnail first; "View HD" swaps in
+  // the full resolution on demand.
+  const driveImg = !!item._drive && (item.mimeType || '').startsWith('image/');
   let url = '';
   let isBlobUrl = false;
   if (item.blob) {
@@ -3401,7 +3404,7 @@ async function openFilePreview(attachmentId, list = null) {
   } else if (item._drive && window.DriveStorage?.objectUrl) {
     // Stream from Google Drive through the authenticated backend, into an object
     // URL (revoked on close/next like any blob URL).
-    try { url = await window.DriveStorage.objectUrl(item.id); isBlobUrl = true; }
+    try { url = await window.DriveStorage.objectUrl(item.id, driveImg ? { thumb: true, size: 1280 } : {}); isBlobUrl = true; }
     catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
   } else if (item.storagePath && DB.getAttachmentUrl) {
     url = DB.getAttachmentUrl(item.storagePath);
@@ -3423,8 +3426,11 @@ async function openFilePreview(attachmentId, list = null) {
     dl.onclick = async (ev) => {
       ev.preventDefault();
       try {
-        const blob = item.blob || await (await fetch(url)).blob();
-        const objUrl = URL.createObjectURL(blob);
+        // Always download the FULL file (never the thumbnail).
+        let objUrl;
+        if (item.blob) objUrl = URL.createObjectURL(item.blob);
+        else if (item._drive) objUrl = await window.DriveStorage.objectUrl(item.id, { download: true });
+        else objUrl = URL.createObjectURL(await (await fetch(url)).blob());
         const a = document.createElement('a');
         a.href = objUrl;
         a.download = item.fileName || 'file';
@@ -3451,6 +3457,35 @@ async function openFilePreview(attachmentId, list = null) {
       <p>Preview not available for this file type.</p>
       <p class="text-muted">Use the Download button above to save this file.</p>
     </div>`;
+  }
+  // "View HD": for Drive images the preview is a low-res thumbnail; load the
+  // full resolution on demand and swap it in.
+  const hdBtn = document.getElementById('file-preview-hd');
+  if (hdBtn) {
+    if (driveImg) {
+      hdBtn.classList.remove('hidden');
+      hdBtn.disabled = false;
+      hdBtn.textContent = 'View HD';
+      hdBtn.onclick = async () => {
+        hdBtn.disabled = true;
+        hdBtn.textContent = 'Loading HD…';
+        try {
+          const full = await window.DriveStorage.objectUrl(item.id);
+          const img = body.querySelector('img.file-preview-image');
+          if (img) img.src = full;
+          if (state._previewUrl) { try { URL.revokeObjectURL(state._previewUrl); } catch (_) {} }
+          state._previewUrl = full;
+          hdBtn.textContent = 'HD';
+        } catch (_) {
+          hdBtn.disabled = false;
+          hdBtn.textContent = 'View HD';
+          showToast('Could not load full resolution.', 'error');
+        }
+      };
+    } else {
+      hdBtn.classList.add('hidden');
+      hdBtn.onclick = null;
+    }
   }
   _updatePreviewNav();
   ov.classList.remove('hidden');
@@ -6236,6 +6271,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.1.2', date: '2026-06-20', items: ['Faster image previews — images open instantly in low resolution with a "View HD" button for full quality', 'Fixed cloud sync errors when deleting files and "Object not found" when opening files (legacy file sync no longer conflicts with Drive storage)'] },
   { version: '3.1.1', date: '2026-06-20', items: ['Fixed images and documents not loading ("Object not found") in the desktop app — files now load correctly from Google Drive'] },
   { version: '3.1.0', date: '2026-06-19', items: ['File storage moved to Google Drive — uploaded images, PDFs, videos and documents are now stored in the team Google Drive (faster and more scalable); existing files were migrated automatically', 'Added a delete button on project documents', 'More reliable cloud sign-in so files load and upload everywhere'] },
   { version: '3.0.11', date: '2026-06-18', items: ['Fixed the in-app updater showing "Updates are managed in the installed desktop app" on installed builds', 'Downloaded updates now install automatically on quit so the app self-heals if the update prompt fails'] },
@@ -6944,6 +6980,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
     { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app — files now load from Google Drive'] },
     { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) — existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
     { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
