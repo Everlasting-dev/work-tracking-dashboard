@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1.0
+
+### Added
+- **Google Drive file storage** — uploaded files (images, PDFs, videos, documents, archives) are now stored in the team's Google Drive instead of the app database. Faster, more scalable, and keeps the database lean. Existing files were migrated automatically.
+- **Delete button on project documents** in the project panel (editors only).
+
+### Changed
+- File content is streamed through a secure backend (Supabase Edge Functions) — file access is gated by your existing project membership/roles, and no storage credentials are exposed in the app.
+- More reliable cloud sign-in, so files load, preview, and upload consistently.
+
 ## 3.0.11
 
 ### Fixed
