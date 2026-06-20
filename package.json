@@ -78,6 +78,7 @@
       "db-bridge.js",
       "splash-sphere.js",
       "config.js",
+      "storage-drive.js",
       "vendor/**/*",
       "favicon.svg",
       "desktop/**/*",

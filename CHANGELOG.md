@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.1
+
+### Fixed
+- **Files not loading ("Object not found")** — the desktop build was missing the storage client, so it fell back to the old (now-empty) storage and couldn't show images or documents. Files now load correctly from Google Drive.
+
 ## 3.1.0
 
 ### Added
