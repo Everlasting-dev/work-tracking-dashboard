@@ -427,11 +427,21 @@ async function renderChatDock() {
   const panel = open ? await chatDockPanelHtml() : '';
   const notesOpen = !!window.WTNotes?.isOpen?.();
   const chatUnread = !open && state.chatUnreadChannels?.size > 0;
+  const projectMatch = String(window.location.hash || '').match(/^#\/projects\/(\d+)/);
+  const projectDocProjectId = projectMatch ? Number(projectMatch[1]) : 0;
+  const projectDocCount = projectDocProjectId && Number(state._detailCache?.projectId) === projectDocProjectId
+    ? (state._detailCache?.attList?.length || 0)
+    : 0;
+  const notesIcon = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M16 4v4h4"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>';
   root.innerHTML = `
     ${panel}
     <div class="dock-launchers">
+      ${projectDocProjectId ? `<button type="button" class="dock-launcher project-doc-dock-launcher${state.projectPanelOpen ? ' is-active' : ''}" data-action="toggle-doc-panel" data-project-id="${projectDocProjectId}" title="Documents" aria-label="Documents">
+        ${ICONS.folder}
+        ${projectDocCount ? `<span class="dock-launcher-count">${projectDocCount}</span>` : ''}
+      </button>` : ''}
       <button type="button" class="dock-launcher notes-dock-launcher${notesOpen ? ' is-active' : ''}" data-action="open-notes" title="Notes" aria-label="Notes">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+        ${notesIcon}
       </button>
       <button type="button" class="dock-launcher chat-dock-launcher${open ? ' is-active' : ''}${chatUnread ? ' has-unread' : ''}" data-action="toggle-chat-dock" title="Messages" aria-label="Messages">
         ${open ? (ICONS.close || '×') : ICONS.chat}

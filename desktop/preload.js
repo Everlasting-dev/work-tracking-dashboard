@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const PKG_VERSION = process.env.npm_package_version || '3.1.2';
+const PKG_VERSION = process.env.npm_package_version || '3.1.8';
 
 contextBridge.exposeInMainWorld('workTrackerDesktop', {
   isDesktop: true,
@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
     ipcRenderer.on('idle:state', listener);
     return () => ipcRenderer.removeListener('idle:state', listener);
   }
+});
+
+contextBridge.exposeInMainWorld('orbitrackAI', {
+  status: () => ipcRenderer.invoke('ai:status'),
+  chat: (payload) => ipcRenderer.invoke('ai:chat', payload)
 });
 
 // Inject app version into window for the app to read

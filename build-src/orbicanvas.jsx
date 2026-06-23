@@ -8,7 +8,7 @@
  *
  * Bundled by esbuild into vendor/orbicanvas/orbicanvas.js (IIFE) exposing
  * window.OrbiCanvas.mount(container, data, handlers).
- *   data:     { projectId, channelName, user:{id,name,color}, supabase }
+ *   data:     { projectId, channelName, user:{id,name,color}, supabase, readonly, mobileReadonly, theme }
  *   handlers: { loadDoc(): Promise<base64|null>, saveDoc(base64): void }
  *
  * Rebuild after editing:  npm run build:orbicanvas
@@ -18,7 +18,7 @@ import { createRoot } from 'react-dom/client';
 import {
   Tldraw, createTLStore, defaultShapeUtils, defaultBindingUtils,
   InstancePresenceRecordType, createPresenceStateDerivation,
-  react, atom,
+  react, atom, toRichText, createShapeId,
 } from 'tldraw';
 import 'tldraw/tldraw.css';
 import * as Y from 'yjs';
@@ -27,9 +27,23 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwareness
 // Uint8Array <-> base64 so binary Yjs updates survive Supabase's JSON broadcast.
 const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s); };
 const fromB64 = (b64) => { const s = atob(b64); const u8 = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i); return u8; };
+const colorSchemeForTheme = (theme) => theme === 'black' || theme === 'dark' ? 'dark' : 'light';
+
+function applyCanvasMode(editor, data = {}) {
+  if (!editor) return;
+  const readonly = !!(data.readonly || data.mobileReadonly);
+  try { editor.setColorMode(colorSchemeForTheme(data.theme)); } catch (_) {}
+  try { editor.updateInstanceState({ isReadonly: readonly }); } catch (_) {}
+  if (readonly) {
+    try { editor.setCurrentTool('hand'); } catch (_) {}
+  }
+}
 
 function CanvasApp({ data, handlers }) {
   const [store] = useState(() => createTLStore({ shapeUtils: defaultShapeUtils, bindingUtils: defaultBindingUtils }));
+  const mobileReadonly = !!data.mobileReadonly;
+  const readonly = !!(data.readonly || mobileReadonly);
+  const colorScheme = colorSchemeForTheme(data.theme);
 
   useEffect(() => {
     const doc = new Y.Doc();
@@ -141,14 +155,23 @@ function CanvasApp({ data, handlers }) {
         awareness.on('update', onAwareness);
         cleanups.push(() => awareness.off('update', onAwareness));
 
+        // Push our full local awareness state (name/color/cursor) so existing
+        // peers immediately render our avatar — incremental 'update' events only
+        // fire on later changes, which is why joiners were invisible before.
+        const broadcastPresence = () => {
+          try { channel.send({ type: 'broadcast', event: 'awareness', payload: toB64(encodeAwarenessUpdate(awareness, [clientId])) }); } catch (_) {}
+        };
         channel.on('broadcast', { event: 'doc' }, ({ payload }) => { try { Y.applyUpdate(doc, fromB64(payload), 'remote'); } catch (_) {} });
         channel.on('broadcast', { event: 'awareness' }, ({ payload }) => { try { applyAwarenessUpdate(awareness, fromB64(payload), 'remote'); } catch (_) {} });
         channel.on('broadcast', { event: 'sync-req' }, () => {
+          // A new peer joined: send them the current doc AND our presence.
           try { channel.send({ type: 'broadcast', event: 'doc', payload: toB64(Y.encodeStateAsUpdate(doc)) }); } catch (_) {}
+          broadcastPresence();
         });
         channel.subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             try { channel.send({ type: 'broadcast', event: 'sync-req', payload: '1' }); } catch (_) {}
+            broadcastPresence();
           }
         });
         cleanups.push(() => { try { channel.unsubscribe(); } catch (_) {} });
@@ -162,8 +185,22 @@ function CanvasApp({ data, handlers }) {
     return () => { disposed = true; cleanups.forEach(fn => { try { fn(); } catch (_) {} }); };
   }, [store, data, handlers]);
 
-  return React.createElement('div', { style: { position: 'absolute', inset: 0 } },
-    React.createElement(Tldraw, { store, onMount: (editor) => { data.__onEditor && data.__onEditor(editor); } })
+  return React.createElement('div', {
+    className: `orbi-canvas-app ${readonly ? 'orbi-canvas-app-readonly' : ''} ${mobileReadonly ? 'orbi-canvas-app-mobile-readonly' : ''}`,
+    style: { position: 'absolute', inset: 0 }
+  },
+    React.createElement(Tldraw, {
+      store,
+      hideUi: mobileReadonly,
+      forceMobile: mobileReadonly,
+      autoFocus: !mobileReadonly,
+      initialState: mobileReadonly ? 'hand' : undefined,
+      colorScheme,
+      onMount: (editor) => {
+        applyCanvasMode(editor, data);
+        data.__onEditor && data.__onEditor(editor);
+      }
+    })
   );
 }
 
@@ -184,6 +221,29 @@ function extractText(editor) {
   } catch (_) { return ''; }
 }
 
+function normalizeCanvasNote(input) {
+  if (typeof input === 'string') {
+    const text = input.trim();
+    return text ? { title: '', text } : null;
+  }
+  if (!input) return null;
+  const title = String(input.title || input.noteTitle || '').trim().slice(0, 140);
+  const text = String(input.text || input.content || '').trim().slice(0, 2000);
+  if (!title && !text) return null;
+  return { title, text };
+}
+
+function canvasNoteText(input) {
+  const note = normalizeCanvasNote(input);
+  if (!note) return '';
+  return [note.title, note.text].filter(Boolean).join('\n\n');
+}
+
+function estimateNoteWidth(text) {
+  const longest = Math.max(0, ...String(text || '').split(/\n/).map(line => line.length));
+  return Math.max(260, Math.min(460, longest * 8 + 42));
+}
+
 const roots = new WeakMap();
 
 function mount(container, data = {}, handlers = {}) {
@@ -192,7 +252,46 @@ function mount(container, data = {}, handlers = {}) {
   if (!root) { root = createRoot(container); roots.set(container, root); }
   const handle = {
     _editor: null,
+    _readonly: !!(data.readonly || data.mobileReadonly),
     getText() { return extractText(this._editor); },
+    setReadonly(value) {
+      this._readonly = !!value;
+      data.readonly = !!value;
+      try { this._editor?.updateInstanceState?.({ isReadonly: this._readonly }); } catch (_) {}
+      if (this._readonly) {
+        try { this._editor?.setCurrentTool?.('hand'); } catch (_) {}
+      }
+    },
+    setTheme(theme) {
+      data.theme = colorSchemeForTheme(theme) === 'dark' ? 'black' : 'normal';
+      try { this._editor?.setColorMode?.(colorSchemeForTheme(data.theme)); } catch (_) {}
+    },
+    // Create a sticky note at a screen position (used for drag-drop from the
+    // notes panel). tldraw 5 uses richText; fall back to plain text/older APIs.
+    addNote(input, clientX, clientY) {
+      if (this._readonly) return false;
+      const e = this._editor;
+      if (!e) return false;
+      const str = canvasNoteText(input);
+      if (!str) return false;
+      const width = estimateNoteWidth(str);
+      let pt = { x: 120, y: 120 };
+      try { pt = e.screenToPage({ x: clientX, y: clientY }); } catch (_) {}
+      const tries = [];
+      try { tries.push({ type: 'note', props: { richText: toRichText(str), w: width, color: 'yellow', size: 'm' } }); } catch (_) {}
+      try { tries.push({ type: 'text', props: { richText: toRichText(str), w: width, color: 'black', size: 'm' } }); } catch (_) {}
+      tries.push({ type: 'note', props: { text: str, w: width, color: 'yellow', size: 'm' } });
+      tries.push({ type: 'text', props: { text: str, w: width, color: 'black', size: 'm' } });
+      for (const shape of tries) {
+        const id = createShapeId();
+        try {
+          e.createShape({ id, x: pt.x, y: pt.y, ...shape });
+          try { e.select(id); } catch (_) {}
+          return true;
+        } catch (_) {}
+      }
+      return false;
+    },
     unmount() { try { root.unmount(); } catch (_) {} roots.delete(container); },
   };
   data.__onEditor = (editor) => { handle._editor = editor; };

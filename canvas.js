@@ -14,6 +14,8 @@
   let _db = null;
   let _handle = null;       // current mounted island handle
   let _room = null;         // current room object
+  let _mobileReadonly = false;
+  let _modeTimer = null;
 
   function db() {
     if (_db !== null) return _db;
@@ -25,6 +27,92 @@
   }
   const sb = () => (window.SupabaseDB && window.SupabaseDB._client) || null;
   const newId = () => (window.crypto?.randomUUID ? crypto.randomUUID() : 'room-' + Date.now() + '-' + Math.floor(Math.random() * 1e6));
+  function currentThemeMode() {
+    try {
+      if (document.documentElement.dataset.theme === 'black' || document.body.classList.contains('theme-black')) return 'black';
+    } catch (_) {}
+    return 'normal';
+  }
+  function isMobileCanvasView() {
+    try {
+      return window.matchMedia('(max-width: 760px)').matches
+        || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    } catch (_) {
+      return window.innerWidth <= 760;
+    }
+  }
+  function syncCanvasMode() {
+    const mount = document.getElementById('orbi-canvas-mount');
+    if (!mount || !_handle) return;
+    _mobileReadonly = isMobileCanvasView();
+    mount.classList.toggle('orbi-canvas-mobile-readonly', _mobileReadonly);
+    mount.classList.toggle('orbi-canvas-readonly', _mobileReadonly);
+    try { _handle.setReadonly?.(_mobileReadonly); } catch (_) {}
+  }
+  function scheduleCanvasModeSync() {
+    clearTimeout(_modeTimer);
+    _modeTimer = setTimeout(() => {
+      syncCanvasMode();
+      if (_handle) window.dispatchEvent(new Event('resize'));
+    }, 120);
+  }
+
+  function normalizeNotePayload(input) {
+    if (!input) return null;
+    if (typeof input === 'string') {
+      const text = input.trim();
+      return text ? { type: 'personal-note', title: '', text } : null;
+    }
+    const title = String(input.title || input.noteTitle || '').trim().slice(0, 140);
+    const text = String(input.text || input.content || '').replace(/\s+\n/g, '\n').trim().slice(0, 2000);
+    if (!title && !text) return null;
+    return {
+      type: 'personal-note',
+      noteId: input.noteId || input.id || null,
+      title,
+      text,
+      updatedAt: input.updatedAt || ''
+    };
+  }
+
+  function parseDroppedNote(dataTransfer) {
+    if (!dataTransfer) return null;
+    const json = dataTransfer.getData('application/x-wt-note-json');
+    if (json) {
+      try { return normalizeNotePayload(JSON.parse(json)); } catch (_) {}
+    }
+    return normalizeNotePayload(
+      dataTransfer.getData('application/x-wt-note')
+      || dataTransfer.getData('text/plain')
+      || ''
+    );
+  }
+
+  function isNoteTransfer(dataTransfer) {
+    const types = Array.from(dataTransfer?.types || []);
+    return types.includes('application/x-wt-note-json')
+      || types.includes('application/x-wt-note')
+      || types.includes('text/plain');
+  }
+
+  function addNoteFromPayload(payload, clientX = null, clientY = null) {
+    if (!_handle?.addNote) return false;
+    if (_mobileReadonly || isMobileCanvasView()) {
+      showToast?.('Canvas is read-only on mobile', 'info');
+      return false;
+    }
+    const note = normalizeNotePayload(payload);
+    if (!note) return false;
+    let x = clientX;
+    let y = clientY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      const mount = document.getElementById('orbi-canvas-mount');
+      const rect = mount?.getBoundingClientRect?.();
+      x = rect ? rect.left + rect.width * 0.5 : window.innerWidth * 0.5;
+      y = rect ? rect.top + rect.height * 0.5 : window.innerHeight * 0.5;
+    }
+    return !!_handle.addNote(note, x, y);
+  }
 
   /* ── Rooms ──────────────────────────────────────────────────── */
   async function listRooms() {
@@ -127,36 +215,137 @@
     const content = document.getElementById('content');
     if (!content) return;
     const canConvert = !!window.copilotCreateProjectWithTasks;
+    _mobileReadonly = isMobileCanvasView();
+    const theme = currentThemeMode();
     content.innerHTML = `
       <div class="view-header canvas-room-header">
         <div class="breadcrumb"><a href="#/canvas" class="breadcrumb-link" id="canvas-back">${ICONS.arrowLeft || '←'} Canvases</a><span class="breadcrumb-sep">/</span><span>${esc(_room.name)}</span></div>
         <div class="view-actions">
+          <button type="button" class="btn btn-ghost" id="canvas-notes" title="Open notes — drag a note onto the canvas">${ICONS.edit || '✎'} Notes</button>
+          <button type="button" class="btn btn-ghost" id="canvas-fs" title="Fullscreen (Esc to exit)">⛶ Fullscreen</button>
           ${canConvert ? `<button type="button" class="btn btn-primary" id="canvas-to-project">${ICONS.sparkles || '✦'} Make this a project</button>` : ''}
         </div>
       </div>
-      <div id="orbi-canvas-mount" class="orbi-canvas-mount"></div>`;
-    content.querySelector('#canvas-back')?.addEventListener('click', () => closeRoom());
+      <div id="orbi-canvas-mount" class="orbi-canvas-mount${_mobileReadonly ? ' orbi-canvas-mobile-readonly orbi-canvas-readonly' : ''}" data-canvas-theme="${theme}"></div>`;
+    // Opening a room never changes the hash (it's still #/canvas), so a plain
+    // <a href="#/canvas"> fires no hashchange and the user gets stuck. Re-render
+    // the room list directly instead (renderRoute() unmounts the island first).
+    content.querySelector('#canvas-back')?.addEventListener('click', (e) => { e.preventDefault(); renderRoute(); });
     content.querySelector('#canvas-to-project')?.addEventListener('click', () => convertToProject());
+    content.querySelector('#canvas-notes')?.addEventListener('click', () => window.WTNotes?.open?.());
+    content.querySelector('#canvas-fs')?.addEventListener('click', () => toggleFullscreen());
 
+    const mountEl = document.getElementById('orbi-canvas-mount');
     if (!window.OrbiCanvas) {
-      document.getElementById('orbi-canvas-mount').innerHTML = '<p class="text-muted" style="padding:20px">The canvas module failed to load.</p>';
+      mountEl.innerHTML = '<p class="text-muted" style="padding:20px">The canvas module failed to load.</p>';
       return;
     }
     const s = getSession();
-    _handle = window.OrbiCanvas.mount(document.getElementById('orbi-canvas-mount'), {
+    _handle = window.OrbiCanvas.mount(mountEl, {
       roomId,
       channelName: `canvas:room:${roomId}`,
       user: { id: s?.userId, name: s?.displayName || s?.username || 'Teammate', color: s?.color || '#38bdf8' },
       supabase: sb(),
+      readonly: _mobileReadonly,
+      mobileReadonly: _mobileReadonly,
+      theme,
     }, {
       loadDoc: () => loadDoc(roomId),
       saveDoc: (b64) => saveDoc(roomId, b64),
     });
+    syncCanvasMode();
+
+    // Drag a note from the notes panel onto the canvas and drop it as a text box.
+    let dragDepth = 0;
+    mountEl.addEventListener('dragenter', (e) => {
+      if (_mobileReadonly) return;
+      if (!isNoteTransfer(e.dataTransfer)) return;
+      dragDepth += 1;
+      mountEl.classList.add('is-note-dragover');
+    });
+    mountEl.addEventListener('dragleave', () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) mountEl.classList.remove('is-note-dragover');
+    });
+    mountEl.addEventListener('dragover', (e) => {
+      if (_mobileReadonly) return;
+      if (!isNoteTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+    mountEl.addEventListener('drop', (e) => {
+      if (_mobileReadonly) {
+        e.preventDefault();
+        mountEl.classList.remove('is-note-dragover');
+        showToast?.('Canvas is read-only on mobile', 'info');
+        return;
+      }
+      const payload = parseDroppedNote(e.dataTransfer);
+      if (!payload) return;
+      e.preventDefault();
+      dragDepth = 0;
+      mountEl.classList.remove('is-note-dragover');
+      if (addNoteFromPayload(payload, e.clientX, e.clientY)) showToast?.('Note added to canvas', 'success');
+    });
   }
+
+  // Figma-style fullscreen: the tldraw mount (with its own side panels/toolbars)
+  // expands to fill the viewport; toggle off via the button or Escape.
+  function toggleFullscreen() {
+    const m = document.getElementById('orbi-canvas-mount');
+    if (!m) return;
+    const on = m.classList.toggle('orbi-canvas-fullscreen');
+    document.body.classList.toggle('canvas-fs-lock', on);
+    if (on) {
+      let controls = document.getElementById('canvas-fs-controls');
+      if (!controls) {
+        controls = document.createElement('div');
+        controls.id = 'canvas-fs-controls';
+        controls.className = 'canvas-fs-controls';
+        const boardsBtn = document.createElement('button');
+        const exitBtn = document.createElement('button');
+        const notesBtn = document.createElement('button');
+        boardsBtn.id = 'canvas-fs-boards';
+        boardsBtn.type = 'button';
+        boardsBtn.className = 'canvas-fs-btn canvas-fs-boards';
+        boardsBtn.textContent = 'Boards';
+        boardsBtn.title = 'Return to the canvas list';
+        boardsBtn.addEventListener('click', () => {
+          if (m.classList.contains('orbi-canvas-fullscreen')) toggleFullscreen();
+          renderRoute();
+        });
+        exitBtn.id = 'canvas-fs-exit';
+        exitBtn.type = 'button';
+        exitBtn.className = 'canvas-fs-btn canvas-fs-exit';
+        exitBtn.textContent = 'Exit';
+        exitBtn.addEventListener('click', toggleFullscreen);
+        notesBtn.id = 'canvas-fs-notes';
+        notesBtn.type = 'button';
+        notesBtn.className = 'canvas-fs-btn canvas-fs-notes';
+        notesBtn.textContent = 'Notes';
+        notesBtn.title = 'Open notes and drag notes onto the canvas';
+        notesBtn.addEventListener('click', () => window.WTNotes?.open?.());
+        controls.append(boardsBtn, notesBtn, exitBtn);
+        m.appendChild(controls);
+      }
+      document.addEventListener('keydown', _onFsEsc);
+    } else {
+      document.getElementById('canvas-fs-controls')?.remove();
+      document.removeEventListener('keydown', _onFsEsc);
+    }
+    // Nudge tldraw to re-measure its container.
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+  }
+  function _onFsEsc(e) { if (e.key === 'Escape') toggleFullscreen(); }
 
   function closeRoom() {
     try { _handle?.unmount?.(); } catch (_) {}
     _handle = null;
+    _mobileReadonly = false;
+    clearTimeout(_modeTimer);
+    document.getElementById('canvas-fs-controls')?.remove();
+    document.body.classList.remove('canvas-fs-lock');
+    document.removeEventListener('keydown', _onFsEsc);
   }
 
   async function convertToProject() {
@@ -169,5 +358,36 @@
     }
   }
 
-  window.WTCanvas = { renderRoute, openRoom, createRoom, listRooms, convertToProject };
+  // Tear down the live island (unsubscribe the Realtime channel, unmount tldraw)
+  // whenever the user navigates away from the canvas route via the sidebar or a
+  // breadcrumb — otherwise the room's channel subscription leaks.
+  window.addEventListener('hashchange', () => {
+    const h = (window.location.hash || '').slice(1);
+    if (h !== '/canvas' && _handle) closeRoom();
+  });
+  window.addEventListener('wt-notes-panel-toggle', () => {
+    if (!_handle) return;
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+  });
+  window.addEventListener('resize', scheduleCanvasModeSync);
+  window.addEventListener('orientationchange', scheduleCanvasModeSync);
+  window.addEventListener('wt-theme-changed', (event) => {
+    if (!_handle) return;
+    const theme = event?.detail?.theme || currentThemeMode();
+    const mount = document.getElementById('orbi-canvas-mount');
+    if (mount) mount.dataset.canvasTheme = theme;
+    try { _handle.setTheme?.(theme); } catch (_) {}
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+  });
+
+  window.WTCanvas = {
+    renderRoute,
+    openRoom,
+    createRoom,
+    listRooms,
+    convertToProject,
+    addNoteFromPayload,
+    isRoomOpen: () => !!_handle,
+    isFullscreen: () => !!document.querySelector('.orbi-canvas-fullscreen')
+  };
 })();

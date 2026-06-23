@@ -1,56 +1,91 @@
-/* orbinotes.jsx — BlockNote rich-text editor island (replaces Quill for notes).
+/* orbinotes.jsx - Quill rich-text editor island for Orbitask notes.
  *
- * Keeps the existing storage format (HTML string): imports note HTML on mount
- * and exports HTML on change, so no DB/schema migration is needed.
+ * Stable API:
+ *   window.OrbiNotes.mount(container, { initialHTML, placeholder, theme }, { onChangeHTML })
  *
- * window.OrbiNotes.mount(container, { initialHTML, theme }, { onChangeHTML })
+ * Returns:
+ *   { getHTML, setHTML, focus, unmount }
  *
- * Rebuild after editing:  npm run build:orbinotes
+ * Rebuild after editing: npm run build:orbinotes
  */
-import React, { useEffect } from 'react';
-import { createRoot } from 'react-dom/client';
-import { useCreateBlockNote } from '@blocknote/react';
-import { BlockNoteView } from '@blocknote/mantine';
-import '@blocknote/core/fonts/inter.css';
-import '@blocknote/mantine/style.css';
+import Quill from 'quill';
+import 'quill/dist/quill.snow.css';
 
-function Editor({ data, handlers }) {
-  const editor = useCreateBlockNote();
+const handles = new WeakMap();
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const html = (data.initialHTML || '').trim();
-      if (!html) return;
-      try {
-        const blocks = await editor.tryParseHTMLToBlocks(html);
-        if (!cancelled && Array.isArray(blocks) && blocks.length) {
-          editor.replaceBlocks(editor.document, blocks);
-        }
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; };
-  }, [editor]);
-
-  const onChange = async () => {
-    if (!handlers.onChangeHTML) return;
-    try {
-      const html = await editor.blocksToHTMLLossy(editor.document);
-      handlers.onChangeHTML(html);
-    } catch (_) {}
-  };
-
-  return React.createElement(BlockNoteView, { editor, theme: data.theme || 'light', onChange });
+function htmlOrEmpty(html) {
+  const value = String(html || '');
+  return value === '<p><br></p>' ? '' : value;
 }
 
-const roots = new WeakMap();
+function pasteHTML(quill, html) {
+  const value = htmlOrEmpty(html);
+  try {
+    quill.setText('', 'silent');
+    if (value) quill.clipboard.dangerouslyPasteHTML(0, value, 'silent');
+  } catch (_) {
+    try {
+      quill.root.innerHTML = value;
+    } catch (_) {}
+  }
+}
 
 function mount(container, data = {}, handlers = {}) {
-  if (!container) return;
-  let root = roots.get(container);
-  if (!root) { root = createRoot(container); roots.set(container, root); }
-  root.render(React.createElement(Editor, { data, handlers }));
-  return { unmount() { try { root.unmount(); } catch (_) {} roots.delete(container); } };
+  if (!container) return null;
+  const existing = handles.get(container);
+  if (existing) {
+    try { existing.unmount(); } catch (_) {}
+  }
+
+  container.innerHTML = '';
+  container.classList.add('orbinotes-mounted');
+
+  const editor = document.createElement('div');
+  editor.className = 'orbinotes-quill-host';
+  container.appendChild(editor);
+
+  const quill = new Quill(editor, {
+    theme: data.theme || 'snow',
+    placeholder: data.placeholder || 'Write a note...',
+    modules: {
+      toolbar: [
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link', 'blockquote', 'code-block'],
+        ['clean']
+      ]
+    }
+  });
+
+  pasteHTML(quill, data.initialHTML || '');
+
+  const emit = () => {
+    try {
+      handlers.onChangeHTML && handlers.onChangeHTML(htmlOrEmpty(quill.root.innerHTML));
+    } catch (_) {}
+  };
+  quill.on('text-change', emit);
+
+  const handle = {
+    getHTML() {
+      return htmlOrEmpty(quill.root.innerHTML);
+    },
+    setHTML(html) {
+      pasteHTML(quill, html);
+    },
+    focus() {
+      try { quill.focus(); } catch (_) {}
+    },
+    unmount() {
+      try { quill.off('text-change', emit); } catch (_) {}
+      try { container.innerHTML = ''; } catch (_) {}
+      try { container.classList.remove('orbinotes-mounted'); } catch (_) {}
+      handles.delete(container);
+    }
+  };
+
+  handles.set(container, handle);
+  return handle;
 }
 
 window.OrbiNotes = { mount };

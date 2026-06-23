@@ -256,6 +256,51 @@ ipcMain.handle('updater:install', () => {
   }
 });
 
+const OLLAMA_BASE_URL = process.env.WT_OLLAMA_URL || 'http://127.0.0.1:11434';
+
+async function ollamaJson(pathname, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 90000);
+  try {
+    const res = await fetch(`${OLLAMA_BASE_URL}${pathname}`, {
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+    if (!res.ok) return { ok: false, error: `Ollama error ${res.status}` };
+    return { ok: true, data: await res.json() };
+  } catch (error) {
+    return { ok: false, error: error?.name === 'AbortError' ? 'Ollama timed out.' : 'Ollama is not reachable at localhost:11434.' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+ipcMain.handle('ai:status', async () => {
+  const result = await ollamaJson('/api/tags', { timeoutMs: 8000 });
+  if (!result.ok) return result;
+  return { ok: true, models: (result.data?.models || []).map(m => m.name).filter(Boolean) };
+});
+
+ipcMain.handle('ai:chat', async (_event, payload = {}) => {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (!messages.length) return { ok: false, error: 'No messages supplied.' };
+  const model = payload.model || 'llama3.1:8b';
+  const result = await ollamaJson('/api/chat', {
+    method: 'POST',
+    timeoutMs: 120000,
+    body: {
+      model,
+      messages,
+      stream: false,
+      options: { temperature: Number(payload.temperature ?? 0.3) }
+    }
+  });
+  if (!result.ok) return result;
+  return { ok: true, content: result.data?.message?.content || '', model };
+});
+
 app.whenReady().then(() => {
   app.setAppUserModelId(packageMeta.orbitaskAppId || 'com.everlasting.worktracker');
   session.defaultSession.setSpellCheckerLanguages(['en-US']);

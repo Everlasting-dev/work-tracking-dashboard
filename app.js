@@ -83,7 +83,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.1.2'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.1.8'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -1336,6 +1336,9 @@ const state = {
   reportMonth: formatMonthInput(),
   _libraryBlobUrls: [],
   _previewUrl: null,
+  _activeRoute: '',
+  _scrollPositions: {},
+  _scrollManagerInstalled: false,
   adminTab: 'overview'
 };
 
@@ -1354,6 +1357,7 @@ function applyTheme(mode = getThemeMode()) {
   document.body.classList.toggle('theme-normal', next !== 'black');
   document.documentElement.dataset.theme = next;
   localStorage.setItem(THEME_KEY, next);
+  try { window.dispatchEvent(new CustomEvent('wt-theme-changed', { detail: { theme: next } })); } catch (_) {}
   return next;
 }
 
@@ -1615,8 +1619,10 @@ async function showApp() {
   // Push any locally-known users that never made it to Supabase (prevents FK sync errors)
   if (isCloudMode()) window.SupabaseDB?.bootstrapMissingUsers?.().catch(() => {});
   updateOfflineSyncBanner();
+  installMainScrollManager();
   await router();
   appEl.style.display = 'flex';
+  requestAnimationFrame(() => restoreRouteScroll(state._activeRoute, { fallbackTop: false }));
   document.getElementById('menu-toggle').style.display = '';
   updateSidebarUser();
   wtAppBootstrapped = true;
@@ -2434,7 +2440,7 @@ function renderLinearTaskListHtml(tasks, uMap, editable, projectId, attachments 
 
   const sorted = applyTaskOrder(sortTasksByOrder(tasks), projectId);
   const statusGroups = [
-    { key: 'todo', label: 'Todo', color: '#8b949e' },
+    { key: 'todo', label: 'To do', color: '#8b949e' },
     { key: 'doing', label: 'In progress', color: '#f59e0b' },
     { key: 'done', label: 'Done', color: '#22c55e' },
   ];
@@ -3131,27 +3137,65 @@ async function renderProjectDetail(projectId) {
   await renderDocumentPanel(projectId, editable);
 
   const currentTask = canSeeTasks ? allProjectTasks.find(t => t.status === 'doing') : null;
-  const currentTaskAssignee = currentTask ? users.find(u => u.id === currentTask.assigneeId) : null;
   const visibleCustomFields = canSeeTasks ? projectVisibleCustomFields(allProjectTasks) : [];
-  const currentTaskBanner = currentTask ? `
-    <div class="current-task-banner">
-      <span class="current-task-pulse"></span>
-      <div class="current-task-info">
-        <span class="current-task-meta">In Progress</span>
-        <strong class="current-task-title">${esc(currentTask.title)}</strong>
-      </div>
-      ${currentTaskAssignee ? assigneeChipHtml(currentTaskAssignee) : ''}
-      ${currentTask.dueDate ? `<span class="current-task-due ${isOverdue(currentTask.dueDate) ? 'overdue' : isDueSoon(currentTask.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(currentTask.dueDate)}</span>` : ''}
-    </div>` : '';
-
-  const progressLine = canSeeTasks
-    ? `<div class="project-hero-progress project-hero-progress--orb">
-        <canvas class="project-health-orb" width="76" height="76" title="Project health"></canvas>
-        <div class="project-hero-progress-bar">${progressBar(progress, 'lg')}<span class="text-muted">${progress}% complete &middot; ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done</span></div>
-      </div>${currentTaskBanner}`
-    : '';
   const requestAccessBtn = !editable && s?.userId !== project.ownerId
     ? `<button class="btn btn-ghost" data-action="request-project-access" data-project-id="${project.id}">${ICONS.userCog} Request edit access</button>` : '';
+  const todoCount = allProjectTasks.filter(t => t.status === 'todo').length;
+  const doingCount = allProjectTasks.filter(t => t.status === 'doing').length;
+  const doneCount = allProjectTasks.filter(t => t.status === 'done').length;
+  const overdueCount = allProjectTasks.filter(t => t.status !== 'done' && isOverdue(t.dueDate)).length;
+  const focusTask = currentTask
+    || allProjectTasks.find(t => t.status !== 'done' && isOverdue(t.dueDate))
+    || allProjectTasks.find(t => t.status === 'todo')
+    || allProjectTasks.find(t => t.status !== 'done');
+  const focusAssignee = focusTask ? users.find(u => Number(u.id) === Number(focusTask.assigneeId)) : null;
+  const ownerName = owner ? (owner.displayName || owner.username || 'Unknown') : 'Unknown';
+  const ownerInitial = ownerName.trim().charAt(0).toUpperCase() || '?';
+  const ownerAvatarHtml = owner?.avatarBase64
+    ? `<img src="${esc(owner.avatarBase64)}" alt="${esc(ownerName)}">`
+    : esc(ownerInitial);
+  const taskTotal = allProjectTasks.length;
+  const remainingCount = Math.max(0, taskTotal - doneCount);
+  const progressMessage = taskTotal
+    ? (remainingCount ? `${remainingCount} to go, you're almost there` : 'Everything is complete')
+    : 'Add tasks to start tracking progress';
+  const doneRatio = `${doneCount}/${taskTotal || 0}`;
+  const progressRingHtml = canSeeTasks ? `
+    <aside class="project-command-progress" aria-label="Project progress">
+      <div class="project-command-ring" style="--project-progress:${progress}">
+        <strong>${progress}%</strong>
+        <span>Done</span>
+      </div>
+      <div class="project-command-progress-copy">
+        <strong>${doneRatio}</strong>
+        <span>tasks completed</span>
+        <em>${esc(progressMessage)}</em>
+      </div>
+    </aside>` : '';
+  const focusHtml = canSeeTasks ? `
+    <div class="project-command-focus">
+      <span class="project-command-focus-icon">${ICONS.sparkles}</span>
+      <div class="project-command-focus-copy">
+        <span>Current focus</span>
+        ${focusTask ? `<button type="button" data-action="open-task-detail" data-id="${focusTask.id}">${esc(focusTask.title)}</button>` : `<strong>No active task yet</strong>`}
+      </div>
+      ${focusAssignee ? `<div class="project-command-focus-owner">${assigneeChipHtml(focusAssignee)}</div>` : ''}
+    </div>` : '';
+  const metricCards = canSeeTasks ? [
+    { label: 'Tasks', value: taskTotal, icon: ICONS.target, action: 'switch-tab', tab: 'tasks' },
+    { label: 'Doing', value: doingCount, icon: ICONS.sparkles, action: 'switch-tab', tab: 'board', tone: 'gold' },
+    { label: 'Overdue', value: overdueCount, icon: ICONS.alertTriangle, action: 'switch-tab', tab: 'timeline', tone: overdueCount ? 'danger' : '' },
+    { label: 'Done', value: doneRatio, icon: ICONS.checkCircle, action: 'switch-tab', tab: 'tasks', tone: 'green' },
+    { label: 'Files', value: attCount, icon: ICONS.paperclip, action: 'toggle-doc-panel' },
+    { label: 'Activity', value: recentActivity.length, icon: ICONS.clock, action: 'toggle-doc-panel' },
+  ] : [];
+  const metricCardsHtml = metricCards.length ? `<section class="project-command-metrics">
+    ${metricCards.map(card => `<button type="button" class="project-command-metric ${card.tone ? `is-${card.tone}` : ''}" data-action="${card.action}" ${card.tab ? `data-tab="${card.tab}"` : ''} data-project-id="${projectId}">
+      <span class="project-command-metric-icon">${card.icon}</span>
+      <strong>${esc(String(card.value))}</strong>
+      <span>${esc(card.label)}</span>
+    </button>`).join('')}
+  </section>` : '';
 
   content.innerHTML = `<div class="project-detail-linear">
     <div class="view-header">
@@ -3161,6 +3205,7 @@ async function renderProjectDetail(projectId) {
       </div>
       <div class="view-actions">
         <button type="button" class="btn btn-ghost" data-action="project-report-options" data-project-id="${project.id}">${ICONS.download} Report</button>
+        <button type="button" class="btn btn-ghost project-docs-toggle ${state.projectPanelOpen ? 'active' : ''}" data-action="toggle-doc-panel" data-project-id="${project.id}">${ICONS.folder} Documents${attCount ? ` <span class="project-docs-count">${attCount}</span>` : ''}</button>
         ${requestAccessBtn}
         ${manageAccess ? `<button class="btn btn-ghost" data-action="manage-project-access" data-project-id="${project.id}">${ICONS.userCog} Access</button>` : ''}
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
@@ -3168,23 +3213,30 @@ async function renderProjectDetail(projectId) {
         ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
       </div>
     </div>
-    <button type="button" class="project-panel-launcher ${state.projectPanelOpen ? 'is-open' : ''}" data-action="toggle-doc-panel" data-project-id="${project.id}" title="Project panel" aria-label="Open project panel">
-      ${ICONS.sidebar || ICONS.file}
+    <button type="button" class="project-panel-launcher ${state.projectPanelOpen ? 'is-open' : ''}" data-action="toggle-doc-panel" data-project-id="${project.id}" title="Documents" aria-label="Open documents panel">
+      ${ICONS.folder}
       ${attCount ? `<span>${attCount}</span>` : ''}
     </button>
-    <div class="project-hero project-hero-animate">
-      <div class="project-hero-badges">${typeBadge(project.type)} ${statusBadge(project.status)} ${departmentBadge(department)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
-      <h1>${esc(project.name)}</h1>
-      <p class="text-secondary">${esc(project.notes || 'No description added.')}</p>
-      ${renderProjectVisibleFields(visibleCustomFields)}
-      <p class="text-muted text-sm" style="margin-top:6px">${ICONS.user} ${owner ? esc(owner.displayName) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</p>
-      ${progressLine}
+    <div class="project-hero project-command-hero project-hero-animate">
+      <div class="project-command-hero-main">
+        <div class="project-hero-badges">${statusBadge(project.status)} ${typeBadge(project.type)} ${prioBadge(project.priority)} ${projectModeBadge(project)} ${project.workflowTemplate ? badge(workflowTemplateLabel(project.workflowTemplate), 'accent') : ''}</div>
+        <h1>${esc(project.name)}</h1>
+        <p class="project-command-description">${esc(project.notes || 'No description added yet.')}</p>
+        ${renderProjectVisibleFields(visibleCustomFields)}
+        <div class="project-command-owner" ${owner ? `data-action="show-user-profile" data-user-id="${owner.id}"` : ''}>
+          <span class="project-command-owner-avatar" ${owner ? userColorStyle(owner) : ''}>${ownerAvatarHtml}</span>
+          <span>Owned by <strong>${esc(ownerName)}</strong>${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
+        </div>
+      </div>
+      ${progressRingHtml}
+      ${focusHtml}
     </div>
+    ${metricCardsHtml}
     ${isLogisticsWorkflow(project) ? renderLogisticsWorkflowCard(project, allProjectTasks, attList, editable) : ''}
     <div class="project-workspace-shell">
       <section class="project-workspace-main">
         <div class="tab-bar project-tab-bar">
-          ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks (${tasks.length})</button>` : ''}
+          ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks <span>${tasks.length}</span></button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'board' ? 'active' : ''}" data-action="switch-tab" data-tab="board" data-project-id="${projectId}">Board</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
@@ -3193,8 +3245,6 @@ async function renderProjectDetail(projectId) {
       </section>
     </div>
   </div>`;
-  const orbEl = content.querySelector('.project-health-orb');
-  if (orbEl) window.OrbiFun?.healthOrb(orbEl, progress);
   await renderTab(tab, projectId, editable);
 }
 
@@ -3223,7 +3273,11 @@ function closeDocumentPanelAnimated(done) {
 function hideDocumentPanel() {
   state.projectPanelOpen = false;
   state.docPanelOpen = false;
+  document.querySelectorAll('[data-action="toggle-doc-panel"]').forEach(el => {
+    el.classList.remove('active', 'is-open');
+  });
   closeDocumentPanelAnimated();
+  try { window.WTChat?.renderDock?.(); } catch (_) {}
 }
 
 function openDocumentPanelAnimated() {
@@ -3547,7 +3601,8 @@ async function renderTab(tab, projectId, editable) {
       <span class="linear-task-total">${tasks.length} task${tasks.length === 1 ? '' : 's'}</span>
       <span class="text-muted text-sm tab-hint">${editable ? 'Click the circle to change status. Drag rows to reorder.' : 'View project tasks. Click a row to open details.'}</span>
       ${editable ? `<div class="task-view-actions">
-        ${tasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">Save as template</button>` : ''}
+        ${tasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">${ICONS.file} Save as template</button>` : ''}
+        <button class="btn btn-sm btn-ghost" data-action="import-tasks" data-project-id="${projectId}">${ICONS.upload} Paste tasks</button>
         <button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add task</button>
       </div>` : ''}
     </div>
@@ -3567,7 +3622,8 @@ async function renderTab(tab, projectId, editable) {
     el.innerHTML = `<div class="task-view-header">
       <span class="text-muted text-sm tab-hint">${editable ? 'Drag cards between columns to change status or reorder.' : 'View project tasks by status.'}</span>
       ${editable ? `<div class="task-view-actions">
-        ${allTasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">Save as template</button>` : ''}
+        ${allTasks.length ? `<button class="btn btn-sm btn-ghost" data-action="save-tasks-as-template" data-project-id="${projectId}">${ICONS.file} Save as template</button>` : ''}
+        <button class="btn btn-sm btn-ghost" data-action="import-tasks" data-project-id="${projectId}">${ICONS.upload} Paste tasks</button>
         <button class="btn btn-sm btn-primary" data-action="add-task" data-project-id="${projectId}">${ICONS.plus} Add Task</button>
       </div>` : ''}
     </div>
@@ -3592,18 +3648,46 @@ async function renderTab(tab, projectId, editable) {
     if (window.OrbiFlow && allTasks.length) {
       // Interactive React Flow (xyflow) map: draggable cards, curved links,
       // zoom/pan/minimap, and drag-to-connect dependencies when editable.
-      el.innerHTML = `<p class="text-muted text-sm tab-hint">${editable ? 'Drag cards to arrange. Drag from a card edge to another card to link a dependency. Click a card to open it.' : 'Task dependency flow diagram. Scroll to zoom, drag to pan.'}</p><div id="orbi-flow-mount" class="orbi-flow-mount"></div>`;
+      const hint = editable
+        ? 'Drag cards to arrange · drag a card edge to another to link a dependency · click a link to remove it · click a card to open it'
+        : 'Task dependency flow · scroll to zoom, drag to pan';
+      el.innerHTML = `
+        <div class="orbi-flow-wrap" id="orbi-flow-wrap">
+          <div class="orbi-flow-toolbar">
+            <span class="text-muted text-sm tab-hint">${hint}</span>
+            <div class="orbi-flow-tools">
+              ${editable ? `<button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-add-task">${ICONS.plus} Task</button>` : ''}
+              <button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-fit" title="Fit all cards to view">Fit</button>
+              <button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-fs" title="Fullscreen (Esc to exit)">⛶ Fullscreen</button>
+            </div>
+          </div>
+          <div id="orbi-flow-mount" class="orbi-flow-mount"></div>
+        </div>`;
       const mountEl = el.querySelector('#orbi-flow-mount');
+      const nowMs = Date.now();
       const flowData = {
         editable,
         nodes: allTasks.map(t => {
           const st = FLOW_STATUS[t.status] || FLOW_STATUS.todo;
           const a = uMap[t.assigneeId];
-          return { id: String(t.id), title: (t.title || 'Task'), statusLabel: st.label, headerColor: st.header, who: a ? (a.displayName || a.username) : 'Unassigned', priority: t.priority || 'medium' };
+          const who = a ? (a.displayName || a.username) : 'Unassigned';
+          const dueMs = t.dueDate ? new Date(t.dueDate).getTime() : null;
+          return {
+            id: String(t.id),
+            title: (t.title || 'Task'),
+            statusLabel: st.label,
+            headerColor: st.header,
+            who,
+            priority: t.priority || 'medium',
+            due: dueMs ? new Date(dueMs).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+            overdue: !!(dueMs && dueMs < nowMs && t.status !== 'done'),
+            avatar: a ? who.charAt(0).toUpperCase() : '',
+            avatarColor: a?.color || '#64748b',
+          };
         }),
         edges: deps.filter(d => d.type === 'blocks').map(d => ({ source: String(d.fromTaskId), target: String(d.toTaskId) })),
       };
-      window.OrbiFlow.mount(mountEl, flowData, {
+      const flowHandle = window.OrbiFlow.mount(mountEl, flowData, {
         onNodeClick: (id) => showTaskDetailModal(Number(id)),
         onConnect: editable ? async (sourceId, targetId) => {
           try {
@@ -3613,7 +3697,31 @@ async function renderTab(tab, projectId, editable) {
             state._detailCache = null;
           } catch (_) { showToast('Could not link dependency', 'error'); }
         } : null,
+        onUnlink: editable ? async (sourceId, targetId) => {
+          try {
+            const blockers = await DB.getTaskBlockers(Number(targetId));
+            await DB.setTaskBlockedBy(Number(targetId), blockers.filter(b => b !== Number(sourceId)), actorId());
+            showToast('Dependency removed', 'success');
+            state._detailCache = null;
+          } catch (_) { showToast('Could not remove dependency', 'error'); }
+        } : null,
       });
+      // Toolbar: add task, fit-to-view, and fullscreen (with Esc to exit).
+      const wrap = el.querySelector('#orbi-flow-wrap');
+      const fsBtn = el.querySelector('#orbi-flow-fs');
+      const refit = () => setTimeout(() => flowHandle?.fitView?.(), 90);
+      el.querySelector('#orbi-flow-add-task')?.addEventListener('click', () => showTaskModal(projectId));
+      el.querySelector('#orbi-flow-fit')?.addEventListener('click', () => flowHandle?.fitView?.());
+      const onEsc = (e) => { if (e.key === 'Escape' && wrap.classList.contains('orbi-flow-fullscreen')) toggleFs(); };
+      const toggleFs = () => {
+        const on = wrap.classList.toggle('orbi-flow-fullscreen');
+        document.body.classList.toggle('orbi-flow-fs-lock', on);
+        if (fsBtn) fsBtn.innerHTML = on ? '✕ Exit' : '⛶ Fullscreen';
+        if (on) document.addEventListener('keydown', onEsc);
+        else document.removeEventListener('keydown', onEsc);
+        refit();
+      };
+      fsBtn?.addEventListener('click', toggleFs);
     } else {
       el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
     }
@@ -3896,14 +4004,48 @@ async function renderTasks() {
   const editableProjectIds = new Set(allProjects.filter(p => canEdit(p)).map(p => p.id));
   const uMap = Object.fromEntries(allUsers.map(u => [u.id, u]));
   const pMap = Object.fromEntries(allProjects.map(p => [p.id, p]));
+  const dependencyRows = DB.getTaskDependencies
+    ? (await Promise.all(allProjects.map(p => DB.getTaskDependencies(p.id).catch(() => [])))).flat()
+    : [];
+  const allTaskMap = new Map(allTasks.map(t => [Number(t.id), t]));
+  const blockedTaskIds = new Set(dependencyRows
+    .filter(d => d.type === 'blocks' && allTaskMap.get(Number(d.fromTaskId))?.status !== 'done')
+    .map(d => Number(d.toTaskId)));
   let all = allTasks.filter(t => visibleProjectIds.has(t.projectId));
   if (!isAdmin()) all = all.filter(t => visibleProjectIds.has(t.projectId));
   const taskQuery = normalizeSearchText(state.globalTaskSearch || '');
   if (taskQuery) all = all.filter(t => taskSearchHaystack(t, pMap[t.projectId], uMap[t.assigneeId]).includes(taskQuery));
-  const f = state.taskFilter;
-  const cnt = { all: all.length, todo: all.filter(t => t.status === 'todo').length, doing: all.filter(t => t.status === 'doing').length, done: all.filter(t => t.status === 'done').length };
-  const filteredTasks = f === 'all' ? all : f === 'done' ? all.filter(t => t.status === 'done') : all.filter(t => t.status === f);
-  const filterLabel = f === 'todo' ? 'to-do' : f === 'doing' ? 'in-progress' : f === 'done' ? 'done' : null;
+  const f = state.taskFilter || 'all';
+  const mineId = s?.userId;
+  const hasFiles = (t) => (taskAttachmentMap.get(Number(t.id)) || []).length > 0;
+  const focusPredicates = {
+    mine: (t) => Number(t.assigneeId) === Number(mineId),
+    soon: (t) => t.status !== 'done' && isDueSoon(t.dueDate),
+    overdue: (t) => t.status !== 'done' && isOverdue(t.dueDate),
+    blocked: (t) => t.status !== 'done' && blockedTaskIds.has(Number(t.id)),
+    unassigned: (t) => !t.assigneeId,
+    files: (t) => hasFiles(t)
+  };
+  const cnt = {
+    all: all.length,
+    todo: all.filter(t => t.status === 'todo').length,
+    doing: all.filter(t => t.status === 'doing').length,
+    done: all.filter(t => t.status === 'done').length,
+    mine: all.filter(focusPredicates.mine).length,
+    soon: all.filter(focusPredicates.soon).length,
+    overdue: all.filter(focusPredicates.overdue).length,
+    blocked: all.filter(focusPredicates.blocked).length,
+    unassigned: all.filter(focusPredicates.unassigned).length,
+    files: all.filter(focusPredicates.files).length
+  };
+  const filteredTasks = f === 'all'
+    ? all
+    : f === 'done'
+      ? all.filter(t => t.status === 'done')
+      : focusPredicates[f]
+        ? all.filter(focusPredicates[f])
+        : all.filter(t => t.status === f);
+  const filterLabel = f === 'todo' ? 'to-do' : f === 'doing' ? 'in-progress' : f === 'done' ? 'done' : f;
   const PRIO = { urgent: 0, high: 1, medium: 2, low: 3 };
   const sortPrio = ts => [...ts].sort((a,b) => (PRIO[a.priority]??2)-(PRIO[b.priority]??2));
 
@@ -4002,10 +4144,41 @@ async function renderTasks() {
     : vm === 'table'
       ? renderGlobalTasksTableHtml(filteredTasks, pMap, uMap, cMap, filterLabel)
       : body;
+  const doneCount = all.filter(t => t.status === 'done').length;
+  const openTasks = all.filter(t => t.status !== 'done');
+  const completion = all.length ? Math.round((doneCount / all.length) * 100) : 0;
+  const nextTask = [...openTasks].sort((a, b) => {
+    const aOver = isOverdue(a.dueDate) ? -12 : 0;
+    const bOver = isOverdue(b.dueDate) ? -12 : 0;
+    const aSoon = isDueSoon(a.dueDate) ? -4 : 0;
+    const bSoon = isDueSoon(b.dueDate) ? -4 : 0;
+    const aMine = Number(a.assigneeId) === Number(mineId) ? -3 : 0;
+    const bMine = Number(b.assigneeId) === Number(mineId) ? -3 : 0;
+    const aScore = (PRIO[a.priority] ?? 2) + aOver + aSoon + aMine;
+    const bScore = (PRIO[b.priority] ?? 2) + bOver + bSoon + bMine;
+    return aScore - bScore || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'));
+  })[0];
+  const momentumHtml = `
+    <section class="task-momentum">
+      <div class="task-momentum-ring" style="--pct:${completion}">
+        <span>${completion}%</span>
+      </div>
+      <div class="task-momentum-main">
+        <div class="task-momentum-kicker">Momentum</div>
+        <h2>${openTasks.length ? `${openTasks.length} open task${openTasks.length === 1 ? '' : 's'}` : 'All clear'}</h2>
+        <p>${nextTask ? `Next useful task: ${esc(nextTask.title)}` : 'No open tasks. Start a project or enjoy the quiet.'}</p>
+      </div>
+      <div class="task-momentum-stats">
+        <button type="button" data-action="filter-tasks" data-filter="doing"><strong>${cnt.doing}</strong><span>Doing</span></button>
+        <button type="button" data-action="filter-tasks" data-filter="overdue"><strong>${cnt.overdue}</strong><span>Overdue</span></button>
+        <button type="button" data-action="filter-tasks" data-filter="blocked"><strong>${cnt.blocked}</strong><span>Blocked</span></button>
+      </div>
+      ${nextTask ? `<button type="button" class="btn btn-primary task-momentum-cta" data-action="open-task-detail" data-id="${nextTask.id}">Focus next</button>` : `<button type="button" class="btn btn-primary task-momentum-cta" data-action="add-task">New task</button>`}
+    </section>`;
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Tasks</h1><span class="projects-page-count">${filteredTasks.length} visible</span></div>
-      <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}${(isAdmin() || editableProjectIds.size > 0) ? `<button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button>` : ''}</div>
+      <div class="projects-page-actions" style="display:flex;gap:8px;align-items:center">${viewToggle}${(isAdmin() || editableProjectIds.size > 0) ? `<button class="btn btn-ghost" data-action="import-tasks">${ICONS.sparkles || ICONS.plus} Paste tasks</button><button class="btn btn-primary" data-action="add-task">${ICONS.plus} New Task</button>` : ''}</div>
     </div>
     <div class="orbi-task-toolbar">
       <div class="orbi-task-search">
@@ -4015,11 +4188,18 @@ async function renderTasks() {
         <kbd>Ctrl K</kbd>
       </div>
     </div>
+    ${momentumHtml}
     <div class="projects-status-pills">
       <button class="status-pill ${f==='all'?'active':''}" data-action="filter-tasks" data-filter="all">All <span class="status-pill-count">${cnt.all}</span></button>
       <button class="status-pill ${f==='doing'?'active':''}" data-action="filter-tasks" data-filter="doing">In Progress <span class="status-pill-count">${cnt.doing}</span></button>
       <button class="status-pill ${f==='todo'?'active':''}" data-action="filter-tasks" data-filter="todo">To Do <span class="status-pill-count">${cnt.todo}</span></button>
       <button class="status-pill ${f==='done'?'active':''}" data-action="filter-tasks" data-filter="done">Done <span class="status-pill-count">${cnt.done}</span></button>
+      <button class="status-pill ${f==='mine'?'active':''}" data-action="filter-tasks" data-filter="mine">Mine <span class="status-pill-count">${cnt.mine}</span></button>
+      <button class="status-pill ${f==='soon'?'active':''}" data-action="filter-tasks" data-filter="soon">Due Soon <span class="status-pill-count">${cnt.soon}</span></button>
+      <button class="status-pill ${f==='overdue'?'active':''}" data-action="filter-tasks" data-filter="overdue">Overdue <span class="status-pill-count">${cnt.overdue}</span></button>
+      <button class="status-pill ${f==='blocked'?'active':''}" data-action="filter-tasks" data-filter="blocked">Blocked <span class="status-pill-count">${cnt.blocked}</span></button>
+      <button class="status-pill ${f==='unassigned'?'active':''}" data-action="filter-tasks" data-filter="unassigned">Unassigned <span class="status-pill-count">${cnt.unassigned}</span></button>
+      <button class="status-pill ${f==='files'?'active':''}" data-action="filter-tasks" data-filter="files">With Files <span class="status-pill-count">${cnt.files}</span></button>
     </div>
     ${viewBody}`;
 }
@@ -4657,6 +4837,19 @@ async function renderAdminDashboard() {
     .slice(0, 5);
   const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
 
+  // ── Dashboard tool widgets: brainstorm tile, weekly metrics, quick note ──
+  const within7 = (iso) => iso && (now - new Date(iso).getTime() < sevenDays);
+  const tasksDone7 = tasks.filter(t => t.status === 'done' && within7(t.completedAt || t.updatedAt)).length;
+  const newTasks7 = tasks.filter(t => within7(t.createdAt)).length;
+  const newProjects7 = projects.filter(p => within7(p.createdAt)).length;
+  let roomCount = 0;
+  try { roomCount = (await window.WTCanvas?.listRooms?.())?.length || 0; } catch (_) {}
+  let quickNote = null;
+  try {
+    const myNotes = (await DB.getPersonalNotes?.(getSession()?.userId)) || [];
+    quickNote = myNotes.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
+  } catch (_) {}
+
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Dashboard</h1><span class="projects-page-count">Admin</span></div>
@@ -4666,6 +4859,35 @@ async function renderAdminDashboard() {
       ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active · ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
       ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done · ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
       ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
+    </div>
+    <div class="dash-tools-row">
+      <a href="#/canvas" class="dash-tool-card dash-tool-card--canvas">
+        <div class="dash-tool-icon dash-tool-icon--canvas">${ICONS.sparkles}</div>
+        <div class="dash-tool-body">
+          <strong>Brainstorm canvas</strong>
+          <span class="dash-tool-sub">${roomCount ? `${roomCount} board${roomCount === 1 ? '' : 's'} · ` : ''}Sketch ideas, then turn them into a project</span>
+        </div>
+        <span class="dash-tool-cta">Open →</span>
+      </a>
+      <div class="dash-tool-card dash-tool-card--metrics">
+        <div class="dash-tool-icon dash-tool-icon--metrics">${ICONS.checkCircle}</div>
+        <div class="dash-tool-body">
+          <strong>This week</strong>
+          <div class="dash-metric-chips">
+            <span class="dash-metric-chip"><b>${tasksDone7}</b> done</span>
+            <span class="dash-metric-chip"><b>${newTasks7}</b> new tasks</span>
+            <span class="dash-metric-chip"><b>${newProjects7}</b> new projects</span>
+            <span class="dash-metric-chip"><b>${activeUsers.length}</b> active</span>
+          </div>
+        </div>
+      </div>
+      <div class="dash-tool-card dash-tool-card--note">
+        <div class="dash-tool-note-head">
+          <strong>${esc(quickNote?.title || 'Quick note')}</strong>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="open-notes" ${quickNote ? `data-note-id="${quickNote.id}"` : ''} title="Open notes">Notebook</button>
+        </div>
+        <div id="dash-quick-note" class="dash-quick-note">${quickNote ? '' : '<button type="button" class="btn btn-sm btn-primary" data-action="dash-new-note">Start a note</button>'}</div>
+      </div>
     </div>
     <div class="dash-graph-grid">
       <div class="dash-panel">
@@ -4725,6 +4947,18 @@ async function renderAdminDashboard() {
         </div>` : ''}
       </div>
     </div>`;
+
+  // Mount the inline quick-note editor (same reliable editor as the notes panel).
+  if (quickNote && window.WTNotes?.mountEditor) {
+    const el = document.getElementById('dash-quick-note');
+    if (el) {
+      try { window._dashNoteHandle?.unmount?.(); } catch (_) {}
+      window._dashNoteHandle = window.WTNotes.mountEditor(el, quickNote.content || '', (html) => {
+        clearTimeout(window._dashNoteTimer);
+        window._dashNoteTimer = setTimeout(() => { DB.updatePersonalNote?.(Number(quickNote.id), { content: html }); }, 500);
+      });
+    }
+  }
 }
 
 /* ──── Notifications dropdown ──── */
@@ -5243,8 +5477,20 @@ async function showProjectModal(editId = null) {
       <input type="hidden" name="templateFields" id="workflow-template-fields" value="">
       <div class="pf-name-block">
         <input class="pf-name-input" name="name" type="text" value="${esc(p?.name || '')}" placeholder="Project name *" required autofocus>
-        <textarea class="pf-desc-input" name="notes" placeholder="Short description (optional)…" rows="2">${esc(p?.notes || '')}</textarea>
+        <textarea class="pf-desc-input" name="notes" placeholder="Outcome or short description (optional)..." rows="2">${esc(p?.notes || '')}</textarea>
       </div>
+      ${!isE ? `
+      <div class="pf-template-block">
+        <label class="pf-meta-item">
+          <span class="pf-meta-label">Workflow</span>
+          <select name="workflowTemplate" class="pf-meta-select">
+            ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([k,c]) => `<option value="${k}" ${(p?.workflowTemplate||'')===k?'selected':''}>${c.l}</option>`).join('')}
+            ${templates.length ? `<optgroup label="Templates">${templates.map(t => `<option value="tpl:${t.id}">${esc(t.name)} (${(t.steps||[]).length})</option>`).join('')}</optgroup>` : ''}
+          </select>
+        </label>
+      </div>` : ''}
+      <details class="pf-advanced-block" ${isE ? 'open' : ''}>
+        <summary>${isE ? 'Project settings' : 'Advanced settings'}</summary>
       <div class="pf-meta-strip">
         <label class="pf-meta-item">
           <span class="pf-meta-label">Type</span>
@@ -5267,13 +5513,13 @@ async function showProjectModal(editId = null) {
             ${departmentOptionsHtml(defaultDepartment)}
           </select>
         </label>
-        <label class="pf-meta-item">
+        ${isE ? `<label class="pf-meta-item">
           <span class="pf-meta-label">Workflow</span>
           <select name="workflowTemplate" class="pf-meta-select">
             ${Object.entries(WORKFLOW_TEMPLATE_CFG).map(([k,c]) => `<option value="${k}" ${(p?.workflowTemplate||'')===k?'selected':''}>${c.l}</option>`).join('')}
             ${!isE && templates.length ? `<optgroup label="Templates">${templates.map(t => `<option value="tpl:${t.id}">${esc(t.name)} (${(t.steps||[]).length})</option>`).join('')}</optgroup>` : ''}
           </select>
-        </label>
+        </label>` : ''}
         ${isE ? `<label class="pf-meta-item">
           <span class="pf-meta-label">Status</span>
           <select name="status" class="pf-meta-select">${Object.entries(STAT_CFG).map(([v,c]) => `<option value="${v}" ${p.status===v?'selected':''}>${c.l}</option>`).join('')}</select>
@@ -5293,6 +5539,7 @@ async function showProjectModal(editId = null) {
           <option value="quarterly" ${p?.cadence==='quarterly'?'selected':''}>Quarterly</option>
         </select>
       </label>
+      </details>
       ${!isE ? `
       <div class="pf-tasks-block">
         <div class="pf-tasks-header">
@@ -5357,6 +5604,21 @@ async function showProjectModal(editId = null) {
       else inputs[idx + 1].focus();
     });
 
+    list.addEventListener('paste', e => {
+      if (!e.target.classList.contains('bulk-task-input')) return;
+      const text = e.clipboardData?.getData('text') || '';
+      const titles = parseTaskTitleLines(text);
+      if (titles.length < 2) return;
+      e.preventDefault();
+      e.target.value = titles[0];
+      titles.slice(1).forEach(title => {
+        addBulkRow(false);
+        const inputs = list.querySelectorAll('.bulk-task-input');
+        inputs[inputs.length - 1].value = title;
+      });
+      renumber();
+    });
+
     // Selecting a workflow template (built-in or saved) auto-fills editable starting tasks.
     const wfSelect = document.querySelector('form[data-form="project"] select[name="workflowTemplate"]');
     const wfFields = document.getElementById('workflow-template-fields');
@@ -5396,6 +5658,17 @@ async function showProjectModal(editId = null) {
   }
 }
 
+function parseTaskTitleLines(raw) {
+  return String(raw || '')
+    .split(/\r?\n/)
+    .map(line => line
+      .replace(/^\s*(?:[-*•]|\d+[.)]|#{1,6})\s+/u, '')
+      .replace(/^\s*\[[ xX]\]\s*/, '')
+      .trim())
+    .filter(Boolean)
+    .slice(0, 60);
+}
+
 async function showTaskModal(preId = null, defaultStatus = 'todo') {
   const projects = await DB.getProjects();
   const editable = projects.filter(p => canEdit(p));
@@ -5404,8 +5677,8 @@ async function showTaskModal(preId = null, defaultStatus = 'todo') {
   if (preId && !lockedProject) { showToast('You cannot add tasks to this project', 'error'); return; }
   const projectField = lockedProject
     ? `<input type="hidden" name="projectId" value="${lockedProject.id}">
-       <div class="form-group"><label>Project</label><input type="text" value="${esc(lockedProject.name)}" disabled class="input-disabled"></div>`
-    : `<div class="form-group"><label>Project</label><select name="projectId" required>${editable.map(p => `<option value="${p.id}" data-owner-id="${p.ownerId || ''}">${esc(p.name)}</option>`).join('')}</select></div>`;
+       <label class="quick-task-project"><span>Project</span><strong>${esc(lockedProject.name)}</strong></label>`
+    : `<label class="quick-task-project"><span>Project</span><select name="projectId" required>${editable.map(p => `<option value="${p.id}" data-owner-id="${p.ownerId || ''}">${esc(p.name)}</option>`).join('')}</select></label>`;
   const users = await DB.getUsers();
   const meId = actorId();
   const defaultAssigneeId = lockedProject?.ownerId || editable[0]?.ownerId || meId;
@@ -5414,18 +5687,29 @@ async function showTaskModal(preId = null, defaultStatus = 'todo') {
     .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
     .join('');
   showModal('New Task', `
-    <form data-form="task" data-auto-project-owner="1">
+    <form data-form="task" data-auto-project-owner="1" class="quick-task-form">
+      <div class="quick-task-primary">
+        <label>Task</label>
+        <textarea name="titles" class="quick-task-input" rows="4" placeholder="Write one task, or paste a list..." required autofocus></textarea>
+        <div class="quick-task-hints">
+          <span>Paste multiple lines to create multiple tasks.</span>
+          <span>Details are optional.</span>
+        </div>
+      </div>
       ${projectField}
-      <div class="form-group"><label>Task Title</label><input name="title" type="text" placeholder="What needs to be done?" required autofocus></div>
-      <div class="form-row">
-        <div class="form-group"><label>Assignee</label><select name="assigneeId">${assigneeOptions}</select></div>
-        <div class="form-group"><label>Due Date</label><input name="dueDate" type="date"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
-        <div class="form-group"><label>Status</label><select name="status"><option value="todo" ${defaultStatus === 'todo' ? 'selected' : ''}>To Do</option><option value="doing" ${defaultStatus === 'doing' ? 'selected' : ''}>In Progress</option><option value="done" ${defaultStatus === 'done' ? 'selected' : ''}>Done</option></select></div>
-      </div>
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Add Task</button></div>
+      <details class="quick-task-details">
+        <summary>More details</summary>
+        <div class="form-row">
+          <div class="form-group"><label>Assignee</label><select name="assigneeId">${assigneeOptions}</select></div>
+          <div class="form-group"><label>Due Date</label><input name="dueDate" type="date"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
+          <div class="form-group"><label>Status</label><select name="status"><option value="todo" ${defaultStatus === 'todo' ? 'selected' : ''}>To Do</option><option value="doing" ${defaultStatus === 'doing' ? 'selected' : ''}>In Progress</option><option value="done" ${defaultStatus === 'done' ? 'selected' : ''}>Done</option></select></div>
+        </div>
+        <div class="form-group"><label>Notes</label><textarea name="notes" rows="3" placeholder="Optional context, links, acceptance notes..."></textarea></div>
+      </details>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create</button></div>
     </form>`);
   const form = document.querySelector('form[data-form="task"][data-auto-project-owner="1"]');
   const projectSelect = form?.querySelector('select[name="projectId"]');
@@ -5434,6 +5718,64 @@ async function showTaskModal(preId = null, defaultStatus = 'todo') {
     const ownerId = projectSelect.selectedOptions[0]?.dataset.ownerId;
     if (ownerId && assigneeSelect?.querySelector(`option[value="${ownerId}"]`)) assigneeSelect.value = ownerId;
   });
+}
+
+async function showTaskImportModal(text = '', opts = {}) {
+  const projects = await DB.getProjects();
+  const editable = projects.filter(p => canEdit(p));
+  if (editable.length === 0) { showToast('No projects you can add tasks to', 'warning'); return; }
+  const preferredProject = opts.projectId ? editable.find(p => Number(p.id) === Number(opts.projectId)) : null;
+  const project = preferredProject || editable[0];
+  const projectField = preferredProject
+    ? `<input type="hidden" name="projectId" value="${preferredProject.id}">
+       <label class="quick-task-project"><span>Project</span><strong>${esc(preferredProject.name)}</strong></label>`
+    : `<label class="quick-task-project"><span>Project</span><select name="projectId" required>${editable.map(p => `<option value="${p.id}" data-owner-id="${p.ownerId || ''}" ${Number(p.id) === Number(project.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>`;
+  const users = await DB.getUsers();
+  const meId = actorId();
+  const defaultAssigneeId = project?.ownerId || meId;
+  const assigneeOptions = [...users]
+    .sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0))
+    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}</option>`)
+    .join('');
+  const sourceLabel = opts.source === 'note' ? 'from note' : 'from text';
+  showModal(`Import Tasks ${sourceLabel}`, `
+    <form data-form="task-import" class="task-import-form">
+      ${projectField}
+      <div class="form-group">
+        <label>Paste or edit source text</label>
+        <textarea name="importText" id="task-import-text" rows="7" placeholder="Paste meeting notes, bullets, or a checklist...">${esc(text || '')}</textarea>
+      </div>
+      <div class="task-import-tools">
+        <span class="text-muted text-sm">Review the detected tasks before creating them.</span>
+        ${window.WTCopilot?.proposeFromText ? `<button type="button" class="btn btn-sm btn-ghost" data-action="copilot-from-import-text">Open in Copilot</button>` : ''}
+      </div>
+      <div id="task-import-preview" class="task-import-preview"></div>
+      <details class="quick-task-details" open>
+        <summary>Defaults for created tasks</summary>
+        <div class="form-row">
+          <div class="form-group"><label>Assignee</label><select name="assigneeId">${assigneeOptions}</select></div>
+          <div class="form-group"><label>Priority</label><select name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Status</label><select name="status"><option value="todo" selected>To Do</option><option value="doing">In Progress</option><option value="done">Done</option></select></div>
+          <div class="form-group"><label>Due Date</label><input name="dueDate" type="date"></div>
+        </div>
+      </details>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create selected</button></div>
+    </form>`);
+
+  const form = document.querySelector('form[data-form="task-import"]');
+  const textarea = document.getElementById('task-import-text');
+  const preview = document.getElementById('task-import-preview');
+  const renderPreview = () => {
+    const titles = parseTaskTitleLines(textarea?.value || '');
+    if (!preview) return;
+    preview.innerHTML = titles.length
+      ? titles.map((title, i) => `<label class="task-import-row"><input type="checkbox" name="taskTitles" value="${esc(title)}" checked><span>${esc(title)}</span><em>${i + 1}</em></label>`).join('')
+      : '<p class="notes-panel-empty">No task-looking lines found yet.</p>';
+  };
+  textarea?.addEventListener('input', renderPreview);
+  renderPreview();
 }
 
 function taskSearchHaystack(task, project, assignee) {
@@ -6271,6 +6613,11 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.1.8', date: '2026-06-23', items: ['Projects header: the sticky search/filter bar no longer crops the top of the first project cards, and the frosted look now works in dark theme too', 'Brainstorm canvas fullscreen: redesigned as a clean top bar (Boards · Notes · Exit) that no longer overlaps the drawing tools'] },
+  { version: '3.1.7', date: '2026-06-23', items: ['Project tabs (Tasks/Board/Timeline/Map): fixed the bar shifting size when switching tabs — consistent height and no width jump for a cleaner, steadier look', 'Brainstorm canvas: mobile now opens as a stable read-only viewer with lighter controls, safer note-drop handling, and app-matched theme colors', 'Canvas fullscreen controls and Notes access were cleaned up so they no longer cover drawing palettes on desktop'] },
+  { version: '3.1.6', date: '2026-06-21', items: ['Notes: fixed the blank/non-typeable editor — notes now always load with a reliable built-in formatting editor (bold/italic/underline/lists)', 'Brainstorm canvas: fixed the board closing on its own after a while (a background sync was kicking you out); added a Figma-style Fullscreen toggle', 'Brainstorm canvas: drag a note from the Notes panel straight onto the canvas to drop it as a sticky', 'Project Map: easier dependency setup — a tick-box "Blocked by" list on each task (ticked tasks show up as links on the Map)'] },
+  { version: '3.1.5', date: '2026-06-21', items: ['Notes: rebuilt into a searchable notebook with note titles, a focused editor pane, Quill formatting, autosave, and a reliable fallback editor', 'Task creation: added quick task entry, multiline paste for bulk tasks, advanced details on demand, and note/meeting-text task import with preview', 'Tasks: added Momentum, focus filters, cleaner cards, and better list/board/table visibility', 'Projects: added a clearer brief/focus panel and simpler project creation flow while keeping workflow templates and logistics checks compatible', 'Dependencies: bundled SortableJS, jsPDF, D3, Floating UI, and Quill locally so the desktop app works without CDN scripts'] },
+  { version: '3.1.4', date: '2026-06-20', items: ['Notes: rebuilt the notes editor so it always loads and lets you type (bold/italic/lists) — the old editor sometimes showed a blank box', 'Project Map: added a Fullscreen mode, a Fit-to-view button, an Add-task button, and richer cards (assignee initials, due dates with overdue highlight)', 'Brainstorm canvas: fixed being unable to leave a board, and teammates\' avatars now appear live when several people are in the same canvas', 'Project Map: click a dependency link (or select it and press Delete) to unlink it', 'Dashboard: new Brainstorm, weekly-activity, and quick-note widgets'] },
   { version: '3.1.2', date: '2026-06-20', items: ['Faster image previews — images open instantly in low resolution with a "View HD" button for full quality', 'Fixed cloud sync errors when deleting files and "Object not found" when opening files (legacy file sync no longer conflicts with Drive storage)'] },
   { version: '3.1.1', date: '2026-06-20', items: ['Fixed images and documents not loading ("Object not found") in the desktop app — files now load correctly from Google Drive'] },
   { version: '3.1.0', date: '2026-06-19', items: ['File storage moved to Google Drive — uploaded images, PDFs, videos and documents are now stored in the team Google Drive (faster and more scalable); existing files were migrated automatically', 'Added a delete button on project documents', 'More reliable cloud sign-in so files load and upload everywhere'] },
@@ -6980,6 +7327,11 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme', 'Brainstorm canvas fullscreen redesigned as a clean top bar that no longer covers the drawing tools'] },
+    { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map', 'Brainstorm canvas mobile mode is now read-only with lighter controls and safer note handling', 'Canvas theme colors now follow the app theme more closely', 'Fullscreen canvas controls no longer cover the drawing palette'] },
+    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed — always loads and is typeable (bold/italic/underline/lists)', 'Brainstorm canvas: fixed self-closing boards + Figma-style fullscreen toggle', 'Brainstorm canvas: drag notes from the panel onto the canvas as stickies', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
+    { version: '3.1.5', date: 'June 2026', features: ['Notebook-style Notes with titles, search, Quill formatting, autosave, and fallback editor', 'Quick task creation with multiline paste, advanced details on demand, and note/meeting-text task import', 'Momentum task header, focus filters, cleaner task cards, and stronger project brief/focus layout', 'Local vendor bundles for SortableJS, jsPDF, D3, Floating UI, and Quill'] },
+    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt — always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Brainstorm canvas: leave-board fix + live teammate avatars', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: brainstorm, weekly activity, quick notes'] },
     { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
     { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app — files now load from Google Drive'] },
     { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) — existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
@@ -7205,11 +7557,16 @@ async function showTaskDetailModal(taskId) {
       </div>
       ${editable && siblingTasks.length ? `
       <div class="td-section">
-        <span class="td-section-label">Blocked by</span>
-        <select class="td-select" data-td="blockedBy" multiple size="${Math.min(5, siblingTasks.length)}">
-          ${siblingTasks.map(st => `<option value="${st.id}" ${blockers.includes(st.id) ? 'selected' : ''}>${esc(st.title)} (${st.status})</option>`).join('')}
-        </select>
-        <p class="text-muted text-sm" style="margin-top:6px">Hold Ctrl/Cmd to select multiple predecessor tasks.</p>
+        <span class="td-section-label">Blocked by <span class="td-blockers-count">${blockers.length ? blockers.length + ' selected' : ''}</span></span>
+        <div class="td-blockers">
+          ${siblingTasks.map(st => `
+            <label class="td-blocker${blockers.includes(st.id) ? ' is-on' : ''}">
+              <input type="checkbox" data-td-blocker value="${st.id}" ${blockers.includes(st.id) ? 'checked' : ''}>
+              <span class="td-blocker-title">${esc(st.title)}</span>
+              <span class="td-blocker-status td-blocker-status--${esc(st.status)}">${esc(st.status)}</span>
+            </label>`).join('')}
+        </div>
+        <p class="text-muted text-sm" style="margin-top:6px">Tick the tasks that must finish first — they appear as links on the Map.</p>
       </div>` : ''}
       ${editable ? `
       <div class="td-section" id="td-custom-fields-section">
@@ -7426,27 +7783,86 @@ async function handleFormSubmit(e) {
     } else if (type === 'task') {
       const _taskSubmitBtn = form.querySelector('[type=submit]');
       if (_taskSubmitBtn?.disabled) return;
-      if (_taskSubmitBtn) { _taskSubmitBtn.disabled = true; _taskSubmitBtn.textContent = 'Adding…'; }
+      if (_taskSubmitBtn) { _taskSubmitBtn.disabled = true; _taskSubmitBtn.textContent = 'Creating...'; }
       const picked = Number(fd.get('assigneeId'));
       const assigneeId = Number.isFinite(picked) && picked > 0 ? picked : uid;
-      const data = { projectId: Number(fd.get('projectId')), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', priority: fd.get('priority'), status: fd.get('status'), assigneeId, actorUserId: uid };
-      if (!data.title || !data.projectId) { if (_taskSubmitBtn) { _taskSubmitBtn.disabled = false; _taskSubmitBtn.textContent = 'Add Task'; } return; }
-      const newId = await DB.createTask(data);
-      const project = await DB.getProject(data.projectId);
-      await recordProjectActivity({
-        userId: uid, projectId: data.projectId, action: 'created', entityType: 'task', entityId: newId,
-        details: data.title,
-        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`
-      });
-      showToast('Task added', 'success');
-      // Notify the assignee (skip if assigning to self)
-      if (assigneeId && assigneeId !== uid) {
-        const actor = await DB.getUser(uid);
-        const assignee = await DB.getUser(assigneeId);
-        const msg = `${actor?.displayName || 'Someone'} assigned you the task "${data.title}" in ${project?.name || 'a project'}.`;
-        const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
-        await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId: data.projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
+      const projectId = Number(fd.get('projectId'));
+      const titles = parseTaskTitleLines(fd.get('titles') || fd.get('title'));
+      if (!titles.length || !projectId) {
+        if (_taskSubmitBtn) { _taskSubmitBtn.disabled = false; _taskSubmitBtn.textContent = 'Create'; }
+        return;
       }
+      const baseData = {
+        projectId,
+        dueDate: fd.get('dueDate') || '',
+        priority: fd.get('priority') || 'medium',
+        status: fd.get('status') || 'todo',
+        notes: (fd.get('notes') || '').trim(),
+        assigneeId,
+        actorUserId: uid
+      };
+      const project = await DB.getProject(projectId);
+      const actor = assigneeId && assigneeId !== uid ? await DB.getUser(uid) : null;
+      const assignee = assigneeId && assigneeId !== uid ? await DB.getUser(assigneeId) : null;
+      let createdCount = 0;
+      for (const title of titles) {
+        const data = { ...baseData, title };
+        const newId = await DB.createTask(data);
+        createdCount++;
+        await recordProjectActivity({
+          userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
+          details: data.title,
+          discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added task "${data.title}" to "${project?.name || 'a project'}".`
+        });
+        if (assigneeId && assigneeId !== uid) {
+          const msg = `${actor?.displayName || 'Someone'} assigned you the task "${data.title}" in ${project?.name || 'a project'}.`;
+          const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
+          await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
+        }
+      }
+      showToast(`${createdCount} task${createdCount === 1 ? '' : 's'} added`, 'success');
+    } else if (type === 'task-import') {
+      const btn = form.querySelector('[type=submit]');
+      if (btn?.disabled) return;
+      if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
+      const projectId = Number(fd.get('projectId'));
+      const selected = fd.getAll('taskTitles').map(v => String(v || '').trim()).filter(Boolean);
+      const titles = selected.length ? selected : parseTaskTitleLines(fd.get('importText'));
+      if (!projectId || !titles.length) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Create selected'; }
+        showToast('Select at least one task', 'warning');
+        return;
+      }
+      const picked = Number(fd.get('assigneeId'));
+      const assigneeId = Number.isFinite(picked) && picked > 0 ? picked : uid;
+      const project = await DB.getProject(projectId);
+      const actor = assigneeId && assigneeId !== uid ? await DB.getUser(uid) : null;
+      const assignee = assigneeId && assigneeId !== uid ? await DB.getUser(assigneeId) : null;
+      let createdCount = 0;
+      for (const title of titles.slice(0, 60)) {
+        const data = {
+          projectId,
+          title,
+          dueDate: fd.get('dueDate') || '',
+          priority: fd.get('priority') || 'medium',
+          status: fd.get('status') || 'todo',
+          assigneeId,
+          actorUserId: uid
+        };
+        const newId = await DB.createTask(data);
+        createdCount++;
+        await recordProjectActivity({
+          userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
+          details: data.title,
+          discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} imported task "${data.title}" into "${project?.name || 'a project'}".`
+        });
+        if (assigneeId && assigneeId !== uid) {
+          const msg = `${actor?.displayName || 'Someone'} assigned you the task "${data.title}" in ${project?.name || 'a project'}.`;
+          const discordMsg = `**${actor?.displayName || 'Someone'}** assigned **${data.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project?.name || 'a project'}*.`;
+          await notifyUser({ userId: assigneeId, type: 'assignment', message: msg, projectId, entityType: 'task', entityId: newId, actorUserId: uid, discordContent: discordMsg });
+        }
+      }
+      showToast(`${createdCount} task${createdCount === 1 ? '' : 's'} imported`, 'success');
     } else if (type === 'project-access-request') {
       const projectId = Number(form.dataset.projectId);
       const project = await DB.getProject(projectId);
@@ -7786,7 +8202,11 @@ async function handleFormSubmit(e) {
     hideModal(); await router();
   } catch (err) {
     const ds = document.querySelector('[data-form] [type=submit]:disabled');
-    if (ds) { ds.disabled = false; ds.textContent = ds.closest('[data-form]')?.dataset.editId ? 'Save' : 'Create Project'; }
+    if (ds) {
+      const failedForm = ds.closest('[data-form]');
+      ds.disabled = false;
+      ds.textContent = failedForm?.dataset.form === 'task' ? 'Create' : (failedForm?.dataset.editId ? 'Save' : 'Create Project');
+    }
     console.error(err);
     const msg = err?.message || err?.details || 'Something went wrong';
     showToast(msg.includes('duplicate key') ? 'Could not save — try refreshing the page' : msg, 'error');
@@ -7817,7 +8237,11 @@ const actions = {
     const taskId = Number(b.dataset.taskId);
     if (taskId) await showTaskDetailModal(taskId);
   },
-  'open-notes': () => window.WTNotes?.toggle?.(),
+  'open-notes': (b) => {
+    const noteId = Number(b?.dataset?.noteId || 0);
+    if (noteId) window.WTNotes?.open?.(noteId);
+    else window.WTNotes?.toggle?.();
+  },
   'close-notes': () => window.WTNotes?.close?.(),
   'app-refresh': () => { closeUserMenu(); location.reload(); },
   'reload-and-sync': async () => {
@@ -7870,6 +8294,14 @@ const actions = {
     await renderAdminTabbed();
   },
   'add-personal-note': async () => { await window.WTNotes?.addNote?.(); },
+  'dash-new-note': async () => {
+    const uid = getSession()?.userId;
+    if (uid && DB.createPersonalNote) {
+      const id = await DB.createPersonalNote({ userId: uid, title: '', content: '' });
+      await renderAdminDashboard();
+      window.WTNotes?.open?.(id);
+    }
+  },
   'toggle-ranking-panel': async () => {
     state.rankingPanelOpen = !state.rankingPanelOpen;
     await renderRankingPanel();
@@ -7877,6 +8309,13 @@ const actions = {
   'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
   'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
+  'import-tasks': (b) => showTaskImportModal('', { projectId: Number(b.dataset.projectId) || state.currentProjectId || null }),
+  'copilot-from-import-text': () => {
+    const text = document.getElementById('task-import-text')?.value || '';
+    hideModal();
+    if (text.trim()) window.WTCopilot?.proposeFromText?.(text);
+    else window.WTCopilot?.open?.();
+  },
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
   'edit-project': (b) => showProjectModal(resolveProjectIdFromAction(b)),
@@ -7996,10 +8435,15 @@ const actions = {
     const m = hash.match(/^\/projects\/(\d+)/);
     const projectId = Number(b?.dataset?.projectId) || (m ? Number(m[1]) : null);
     if (!projectId) return;
+    document.querySelectorAll(`[data-action="toggle-doc-panel"][data-project-id="${projectId}"]`).forEach(el => {
+      el.classList.toggle('active', state.projectPanelOpen);
+      el.classList.toggle('is-open', state.projectPanelOpen);
+    });
     const project = await DB.getProject(projectId);
     if (!project) return;
     if (state.projectPanelOpen) await renderDocumentPanel(projectId, canEdit(project));
     else closeDocumentPanelAnimated();
+    try { await window.WTChat?.renderDock?.(); } catch (_) {}
   },
   'project-panel-tab': async (b) => {
     state.projectPanelTab = b.dataset.tab || 'overview';
@@ -8305,9 +8749,9 @@ const actions = {
           showInProject: !!row.querySelector('[data-cf="showInProject"]')?.checked
         };
       }).filter(f => f.label || f.value || f.required);
-      const blockerSel = document.querySelector('[data-td="blockedBy"]');
-      if (blockerSel) {
-        const blockerIds = [...blockerSel.selectedOptions].map(o => Number(o.value));
+      const blockerBoxes = document.querySelectorAll('[data-td-blocker]');
+      if (blockerBoxes.length) {
+        const blockerIds = [...blockerBoxes].filter(b => b.checked).map(b => Number(b.value));
         await DB.setTaskBlockedBy(taskId, blockerIds, uid);
       }
       if (status === 'done') {
@@ -8683,6 +9127,15 @@ const actions = {
   }
 };
 
+window.WTTasks = {
+  importFromText: (text, opts = {}) => showTaskImportModal(text, {
+    projectId: opts.projectId || state.currentProjectId || null,
+    source: opts.source || 'text',
+    title: opts.title || ''
+  }),
+  showQuickCreate: showTaskModal
+};
+
 /* ──── Toast ──── */
 
 const TOAST_ICONS = { success: '✓', error: '✕', warning: '!', info: 'i' };
@@ -8851,6 +9304,76 @@ function revokeLibraryPreviewUrls() {
 /* ──── Router ──── */
 
 /* ──── Presence (Phase 4) ──── */
+
+const ROUTE_SCROLL_KEY = 'wt-route-scroll-v1';
+
+function getMainScrollEl() {
+  return document.getElementById('main-content') || document.scrollingElement || document.documentElement;
+}
+
+function normalizeRouteForScroll(route = '') {
+  return String(route || window.location.hash.slice(1) || '/projects').split('?')[0] || '/projects';
+}
+
+function readRouteScrollStore() {
+  try { return JSON.parse(sessionStorage.getItem(ROUTE_SCROLL_KEY) || '{}') || {}; }
+  catch (_) { return {}; }
+}
+
+function writeRouteScrollStore(store) {
+  try { sessionStorage.setItem(ROUTE_SCROLL_KEY, JSON.stringify(store || {})); } catch (_) {}
+}
+
+function saveRouteScroll(route = state._activeRoute) {
+  const key = normalizeRouteForScroll(route);
+  if (!key || key === '/recovery') return;
+  const el = getMainScrollEl();
+  const y = Math.max(0, Math.round(el?.scrollTop || window.scrollY || 0));
+  state._scrollPositions[key] = y;
+  const store = readRouteScrollStore();
+  store[key] = y;
+  writeRouteScrollStore(store);
+}
+
+function updateMainScrollChrome() {
+  const el = getMainScrollEl();
+  if (!el?.classList) return;
+  const y = Math.max(0, el.scrollTop || 0);
+  const max = Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0));
+  el.classList.toggle('is-scrolled', y > 8);
+  el.classList.toggle('is-scroll-bottom', max > 0 && max - y < 8);
+}
+
+function restoreRouteScroll(route, { fallbackTop = true } = {}) {
+  const key = normalizeRouteForScroll(route);
+  const store = readRouteScrollStore();
+  const saved = state._scrollPositions[key] ?? store[key];
+  const target = Number.isFinite(Number(saved)) ? Number(saved) : (fallbackTop ? 0 : null);
+  if (target == null) return;
+  requestAnimationFrame(() => {
+    const el = getMainScrollEl();
+    if (!el) return;
+    el.scrollTo({ top: target, left: 0, behavior: 'auto' });
+    updateMainScrollChrome();
+  });
+}
+
+function installMainScrollManager() {
+  if (state._scrollManagerInstalled) return;
+  state._scrollManagerInstalled = true;
+  state._scrollPositions = readRouteScrollStore();
+  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (_) {}
+  const el = getMainScrollEl();
+  let saveTimer = null;
+  const scheduleSave = () => {
+    updateMainScrollChrome();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveRouteScroll(), 120);
+  };
+  el?.addEventListener?.('scroll', scheduleSave, { passive: true });
+  updateMainScrollChrome();
+  window.addEventListener('beforeunload', () => saveRouteScroll());
+}
 
 const PRESENCE_ONLINE_MS = 3 * 60 * 1000; // a user seen within 3 min is "online"
 let _presenceTimer = null;
@@ -9047,6 +9570,14 @@ async function router() {
   await ensureDepartmentCfg();
   const hash = window.location.hash.slice(1) || '/projects';
   if (hash === '/recovery') return;
+  // A background sync pull or a teammate's realtime change re-invokes router().
+  // If a brainstorm canvas room is currently open, re-rendering would tear it
+  // down and kick the user back to the room list — so preserve it.
+  if (hash === '/canvas' && window.WTCanvas?.isRoomOpen?.()) { updateNav(hash); return; }
+  installMainScrollManager();
+  const previousRoute = state._activeRoute;
+  if (previousRoute) saveRouteScroll(previousRoute);
+  state._activeRoute = normalizeRouteForScroll(hash);
   if (!['/settings', '/notifications', '/admin'].includes(hash)) {
     state.lastMainRoute = hash;
   }
@@ -9058,6 +9589,7 @@ async function router() {
     state.currentProjectId = null;
   }
   if (hash !== '/users') hideRankingPanel();
+  if (hash !== '/dashboard' && window._dashNoteHandle) { try { window._dashNoteHandle.unmount(); } catch (_) {} window._dashNoteHandle = null; }
   updateNav(hash);
   const content = document.getElementById('content');
   if (content) content.classList.add('content-fade');
@@ -9108,6 +9640,7 @@ async function router() {
   } else {
     await applyClassroomTheme('all');
   }
+  restoreRouteScroll(hash, { fallbackTop: true });
   refreshNotificationBadge().catch(() => {});
 }
 

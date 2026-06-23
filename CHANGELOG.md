@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.1.7
+
+### Added
+- **Mobile canvas viewer** - Brainstorm canvas now opens as a read-only viewer on mobile, with lighter controls and safer note-drop handling.
+
+### Changed
+- **Canvas theme alignment** - canvas colors now follow the app theme more closely in light and black themes.
+- **Canvas fullscreen controls** - Boards, Notes, and Exit controls were repositioned so they do not cover the drawing palette.
+
+### Fixed
+- **Project tabs** - Tasks, Board, Timeline, and Map tabs no longer jump in height or width while switching views.
+
+## 3.1.6
+
+### Added
+- **Canvas note drops** - notes can be dragged from the Notes panel onto desktop canvas boards as sticky/text boxes.
+- **Canvas fullscreen controls** - Brainstorm canvas gained a Figma-style fullscreen mode with direct Notes access.
+
+### Fixed
+- **Notes editor reliability** - the editor now falls back to a built-in formatter when the rich editor cannot mount.
+- **Canvas room stability** - fixed boards closing themselves during background sync.
+- **Project dependency editing** - task details now include a tick-box "Blocked by" picker for Map links.
+
+## 3.1.5
+
+### Added
+- **Notebook-style Notes** — searchable note list, note titles, focused Quill editor pane, autosave, and a fallback editor for packaged builds.
+- **Quick task creation** — title-first entry, multiline paste for bulk tasks, advanced details on demand, and note/meeting-text task import with preview.
+- **Momentum task view** — focus filters, completion/risk summary, next-task CTA, and cleaner task metadata across list, board, and table views.
+- **Project brief refresh** — clearer progress, current focus, structure counts, and a simpler project creation flow.
+
+### Changed
+- **Local vendor bundles** — SortableJS, jsPDF, jsPDF AutoTable, D3, Floating UI, and Quill are packaged locally instead of loaded from CDNs.
+
+## 3.1.4
+
+### Added
+- **Project Map upgrades** — fullscreen mode, fit-to-view, add-task action, richer cards, and dependency unlinking by clicking a link or pressing Delete.
+- **Dashboard widgets** — Brainstorm, weekly activity, and quick notes.
+
+### Fixed
+- **Notes editor reliability** — the notes editor always loads and remains typeable with bold, italic, and list controls.
+- **Brainstorm canvas** — fixed leaving a board and added live teammate avatars.
+
 ## 3.1.2
 
 ### Added

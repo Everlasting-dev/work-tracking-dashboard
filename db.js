@@ -812,15 +812,16 @@ const LocalDB = {
     return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.createdAt || '').localeCompare(b.createdAt || ''));
   },
 
-  async createPersonalNote({ userId, content, done = false }) {
+  async createPersonalNote({ userId, title = '', content, done = false }) {
     const now = new Date().toISOString();
     const uid = Number(userId);
     const existing = await db.personalNotes.where('userId').equals(uid).count();
-    return db.personalNotes.add({ userId: uid, content: String(content || '').slice(0, 4000), done: !!done, sortOrder: existing * 10, createdAt: now, updatedAt: now });
+    return db.personalNotes.add({ userId: uid, title: String(title || '').slice(0, 140), content: String(content || '').slice(0, 4000), done: !!done, sortOrder: existing * 10, createdAt: now, updatedAt: now });
   },
 
   async updatePersonalNote(id, patch = {}) {
     const allowed = { updatedAt: new Date().toISOString() };
+    if (patch.title !== undefined) allowed.title = String(patch.title || '').slice(0, 140);
     if (patch.content !== undefined) allowed.content = String(patch.content || '').slice(0, 4000);
     if (patch.done !== undefined) allowed.done = !!patch.done;
     if (patch.sortOrder !== undefined) allowed.sortOrder = Number(patch.sortOrder);

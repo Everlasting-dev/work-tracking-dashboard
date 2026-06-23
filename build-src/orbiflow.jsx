@@ -5,11 +5,11 @@
  *
  * Rebuild after editing:  npm run build:orbiflow
  */
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap,
-  Handle, Position, useNodesState, useEdgesState, addEdge,
+  Handle, Position, useNodesState, useEdgesState, addEdge, useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -51,7 +51,7 @@ function layout(nodes, edges) {
   return pos;
 }
 
-// Custom task card node: status header strip, title, assignee, priority dot.
+// Custom task card node: status header strip, title, assignee, due date, priority.
 function OrbiNode({ data }) {
   return (
     <div className="orbi-node" style={{ width: NODE_W }}>
@@ -61,7 +61,13 @@ function OrbiNode({ data }) {
       </div>
       <div className="orbi-node-body">
         <div className="orbi-node-title">{data.title}</div>
-        <div className="orbi-node-who">{data.who}</div>
+        <div className="orbi-node-meta">
+          <span className="orbi-node-who">
+            {data.avatar ? <span className="orbi-node-avatar" style={{ background: data.avatarColor || '#64748b' }}>{data.avatar}</span> : null}
+            {data.who}
+          </span>
+          {data.due ? <span className={`orbi-node-due${data.overdue ? ' orbi-node-due--late' : ''}`}>{data.due}</span> : null}
+        </div>
       </div>
       <Handle type="target" position={Position.Left} className="orbi-handle" />
       <Handle type="source" position={Position.Right} className="orbi-handle" />
@@ -74,11 +80,16 @@ const nodeTypes = { orbi: OrbiNode };
 function Graph({ data, handlers }) {
   const pos = useMemo(() => layout(data.nodes, data.edges), [data]);
 
+  const rf = useReactFlow();
+  useEffect(() => {
+    if (handlers.onReady) handlers.onReady({ fitView: () => { try { rf.fitView({ padding: 0.2, duration: 300 }); } catch (_) {} } });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const initialNodes = useMemo(() => data.nodes.map((n) => ({
     id: n.id,
     type: 'orbi',
     position: pos[n.id] || { x: 40, y: 40 },
-    data: { title: n.title, statusLabel: n.statusLabel, headerColor: n.headerColor, who: n.who, priority: n.priority },
+    data: { title: n.title, statusLabel: n.statusLabel, headerColor: n.headerColor, who: n.who, priority: n.priority, due: n.due, overdue: n.overdue, avatar: n.avatar, avatarColor: n.avatarColor },
   })), [data, pos]);
 
   const initialEdges = useMemo(() => data.edges.map((e) => ({
@@ -109,6 +120,20 @@ function Graph({ data, handlers }) {
     handlers.onNodeClick && handlers.onNodeClick(node.id);
   }, [handlers]);
 
+  // Click a link to remove the dependency (or select it and press Delete).
+  const onEdgeClick = useCallback((_e, edge) => {
+    if (!data.editable || !handlers.onUnlink) return;
+    if (!window.confirm('Remove this dependency link?')) return;
+    setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+    handlers.onUnlink(edge.source, edge.target);
+  }, [data.editable, setEdges, handlers]);
+
+  // Keyboard / programmatic edge removal (Delete key on a selected link).
+  const onEdgesDelete = useCallback((deleted) => {
+    if (!data.editable || !handlers.onUnlink) return;
+    deleted.forEach((e) => handlers.onUnlink(e.source, e.target));
+  }, [data.editable, handlers]);
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -118,6 +143,8 @@ function Graph({ data, handlers }) {
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       onNodeClick={onNodeClick}
+      onEdgeClick={onEdgeClick}
+      onEdgesDelete={onEdgesDelete}
       nodesConnectable={!!data.editable}
       fitView
       fitViewOptions={{ padding: 0.2 }}
@@ -141,13 +168,16 @@ function mount(container, data, handlers = {}) {
     root = createRoot(container);
     roots.set(container, root);
   }
+  let api = null;
+  const wrapped = { ...handlers, onReady: (a) => { api = a; handlers.onReady && handlers.onReady(a); } };
   root.render(
     <ReactFlowProvider>
-      <Graph data={data} handlers={handlers} />
+      <Graph data={data} handlers={wrapped} />
     </ReactFlowProvider>
   );
   return {
     unmount() { try { root.unmount(); } catch (_) {} roots.delete(container); },
+    fitView() { try { api && api.fitView(); } catch (_) {} },
   };
 }
 

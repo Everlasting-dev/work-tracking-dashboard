@@ -561,7 +561,7 @@ const SupabaseDB = {
   _mapPersonalNote(r) {
     if (!r) return null;
     return {
-      id: r.id, userId: r.user_id, content: r.content || '', done: !!r.done,
+      id: r.id, userId: r.user_id, title: r.title || '', content: r.content || '', done: !!r.done,
       sortOrder: r.sort_order ?? 0, createdAt: r.created_at, updatedAt: r.updated_at
     };
   },
@@ -1289,10 +1289,10 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapPersonalNote(r));
   },
 
-  async createPersonalNote({ userId, content, done = false, sortOrder = 0 }) {
+  async createPersonalNote({ userId, title = '', content, done = false, sortOrder = 0 }) {
     const { data, error } = await this._sb().from('wt_personal_notes')
       .insert({
-        user_id: Number(userId), content: String(content || '').slice(0, 4000),
+        user_id: Number(userId), title: String(title || '').slice(0, 140), content: String(content || '').slice(0, 4000),
         done: !!done, sort_order: Number(sortOrder) || 0
       })
       .select()
@@ -1303,6 +1303,7 @@ const SupabaseDB = {
 
   async updatePersonalNote(id, patch = {}) {
     const payload = { updated_at: new Date().toISOString() };
+    if (patch.title !== undefined) payload.title = String(patch.title || '').slice(0, 140);
     if (patch.content !== undefined) payload.content = String(patch.content || '').slice(0, 4000);
     if (patch.done !== undefined) payload.done = !!patch.done;
     if (patch.sortOrder !== undefined) payload.sort_order = Number(patch.sortOrder);
