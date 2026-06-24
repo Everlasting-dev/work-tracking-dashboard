@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.0'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.1'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -7185,6 +7185,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.1', date: '2026-06-24', items: ['Documents: fixed every file failing with a 404 — the published build was using the old Supabase storage path instead of Google Drive. Files load again.'] },
   { version: '3.2.0', date: '2026-06-24', items: [
     'Accounts: admins create users with a one-time password; new users set their own password on first sign-in. Members can request a reset and admins issue a fresh one-time password.',
     'Classrooms & personal space: pick a new user’s classrooms at creation, and everyone gets a private personal space that stays hidden until they invite a collaborator.',
@@ -8026,6 +8027,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
     { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'Canvas owner controls and public/private collaboration', 'PDF previews fixed in the desktop app; themed Copilot, calmer toasts, and Escape/outside-click dismissal'] },
     { version: '3.1.12', date: 'June 2026', features: ['Project detail pages now respect the selected light/dark theme', 'Professional typography scale applied to project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Oversized task text and spacing reduced for a cleaner project workspace'] },
     { version: '3.1.11', date: 'June 2026', features: ['Document storage authorization health check with user notification when invalid', 'Diagnostics tab for storage auth, sync queue, visible errors, copy report, and send-to-admin', 'Mobile version cache refresh and small-screen diagnostics/canvas polish', 'Brainstorm canvas uses a stable read-only mobile fallback instead of loading the heavy live editor'] },

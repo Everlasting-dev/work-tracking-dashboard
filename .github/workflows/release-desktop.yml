@@ -33,7 +33,8 @@ jobs:
             storage: 'supabase',
             supabaseSchemaVersion: 'v2',
             supabaseUrl: '${{ secrets.SUPABASE_URL }}',
-            supabaseAnonKey: '${{ secrets.SUPABASE_ANON_KEY }}'
+            supabaseAnonKey: '${{ secrets.SUPABASE_ANON_KEY }}',
+            storageProvider: 'google_drive'
           };
           "@ | Set-Content -Encoding utf8 config.js
 

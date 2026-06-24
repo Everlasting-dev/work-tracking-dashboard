@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.1
+
+### Fixed
+- **Documents 404 / wrong storage** - the released desktop build and the hosted web app were generating a runtime config without the Google Drive flag, so the app fell back to the old Supabase Storage path and every document (PDFs, Excel, images) failed with 404. Both build pipelines now enable Drive storage, so files load from Drive again.
+
 ## 3.2.0
 
 ### Added
