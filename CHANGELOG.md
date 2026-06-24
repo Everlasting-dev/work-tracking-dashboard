@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.4
+
+### Changed
+- **Clear Delete button** - every user card now shows a labelled **Delete** button (instead of a small, easily-missed trash icon, which was also missing from the main Admin board). It's hidden on your own card — you can't delete yourself.
+- **Deletions transfer to the main admin** - when a user is deleted, their projects, updates, and files are reassigned to the main admin account (the original/primary admin) rather than orphaned.
+
 ## 3.2.3
 
 ### Fixed

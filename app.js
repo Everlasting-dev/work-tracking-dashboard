@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.3'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.4'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -4561,7 +4561,7 @@ async function renderAdmin() {
             <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
             <button class="btn btn-sm btn-ghost" data-action="approve-password-reset" data-user-id="${u.id}" title="Issue a one-time password the user must change">Send OTP</button>
-            ${u.id !== s.userId ? `<button class="btn-icon btn-danger-text" data-action="delete-user" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
+            ${Number(u.id) !== actorId() ? `<button class="btn btn-sm btn-ghost btn-danger-text" data-action="delete-user" data-id="${u.id}">${ICONS.trash} Delete</button>` : ''}
           </div>
         </div>`;
       }).join('')}
@@ -4719,6 +4719,7 @@ async function renderAdminTabbed() {
             <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
             <button class="btn btn-sm btn-ghost" data-action="approve-password-reset" data-user-id="${u.id}" title="Issue a one-time password the user must change">Send OTP</button>
+            ${Number(u.id) !== actorId() ? `<button class="btn btn-sm btn-ghost btn-danger-text" data-action="delete-user" data-id="${u.id}">${ICONS.trash} Delete</button>` : ''}
           </div>
         </div>`;
       }).join('')}
@@ -7185,6 +7186,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.4', date: '2026-06-24', items: ['Admin: every user card now has a clear Delete button (hidden on your own). Deleting a user transfers their projects, updates, and files to the main admin.'] },
   { version: '3.2.3', date: '2026-06-24', items: ['Admin: deleting a user now works permanently — their projects, updates, and files transfer to you and the account no longer reappears after sync.'] },
   { version: '3.2.2', date: '2026-06-24', items: ['Admin: fixed new users failing to sync to the cloud (auth-link constraint error). New accounts now save correctly and link their own login on first sign-in.'] },
   { version: '3.2.1', date: '2026-06-24', items: ['Documents: fixed every file failing with a 404 — the published build was using the old Supabase storage path instead of Google Drive. Files load again.'] },
@@ -9749,14 +9751,21 @@ const actions = {
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
     if (uid === s.userId) { showToast('Cannot delete yourself', 'error'); return; }
+    // Transfer the deleted user's projects/updates/files to the MAIN admin
+    // (the original, lowest-id admin account) so nothing is orphaned.
+    const users = await DB.getUsers().catch(() => []);
+    const admins = users.filter(u => u.role === 'admin' && Number(u.id) !== uid).sort((a, b) => Number(a.id) - Number(b.id));
+    const mainAdmin = admins[0] || { id: s.userId, displayName: 'you' };
+    const adminName = mainAdmin.displayName || mainAdmin.username || 'the main admin';
     if (!await showConfirmDialog({
       title: 'Delete user?',
-      message: 'Delete this user? Their projects will be transferred to you.',
+      message: `Delete this user? Their projects, updates, and files will be transferred to ${adminName}.`,
       confirmLabel: 'Delete user',
       tone: 'danger'
     })) return;
-    await DB.deleteUser(uid, s.userId); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
+    await DB.deleteUser(uid, Number(mainAdmin.id)); showToast('User deleted', 'success'); bustWorkspaceCache(); await router();
   },
   'save-tasks-as-template': async (b) => {
     await showSaveTemplateModal(Number(b.dataset.projectId));
