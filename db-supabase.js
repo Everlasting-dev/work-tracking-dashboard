@@ -1102,7 +1102,8 @@ const SupabaseDB = {
       role: localUser.role || 'user',
       department: localUser.department || '',
       color: localUser.color || '',
-      bio: localUser.bio || ''
+      bio: localUser.bio || '',
+      auth_user_id: null // don't inherit the inserter's auth.uid() default
     });
     if (error && error.code !== '23505') {
       // 23505 = unique username conflict — someone else just inserted the same user, treat as success
@@ -1132,7 +1133,8 @@ const SupabaseDB = {
           role: user.role || 'user',
           department: user.department || '',
           color: user.color || '',
-          bio: user.bio || ''
+          bio: user.bio || '',
+          auth_user_id: null // don't inherit the inserter's auth.uid() default
         }).catch(e => {
           if (e?.code !== '23505') console.warn('[BootstrapSync] insert user', user.id, e?.message);
         });
@@ -1381,7 +1383,12 @@ const SupabaseDB = {
       phone: data.phone || '',
       address: data.address || '',
       hours_logged_total: Number(data.hoursLoggedTotal || 0),
-      must_change_password: !!data.mustChangePassword
+      must_change_password: !!data.mustChangePassword,
+      // Explicit null: the DB column defaults auth_user_id to auth.uid(), which
+      // would stamp the CREATING admin's id onto the new row and trip the
+      // wt_users_auth_user_id_uniq constraint. The new user links their own
+      // auth id at first login (see _linkAuthToUserRow / ensureAuthSession).
+      auth_user_id: null
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {

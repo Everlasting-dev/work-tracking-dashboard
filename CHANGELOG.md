@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.2
+
+### Fixed
+- **Creating users failed to sync** - new accounts hit a `wt_users_auth_user_id_uniq` constraint error because the database defaulted each new row's auth link to whoever created it (surfaced once Drive storage gave the admin a live auth session in 3.2.1). New users now insert without claiming the admin's auth identity and link their own on first sign-in. A backend migration to drop the bad column default is included.
+
 ## 3.2.1
 
 ### Fixed

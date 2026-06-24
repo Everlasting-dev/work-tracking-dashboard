@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.1'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.2'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -7185,6 +7185,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.2', date: '2026-06-24', items: ['Admin: fixed new users failing to sync to the cloud (auth-link constraint error). New accounts now save correctly and link their own login on first sign-in.'] },
   { version: '3.2.1', date: '2026-06-24', items: ['Documents: fixed every file failing with a 404 — the published build was using the old Supabase storage path instead of Google Drive. Files load again.'] },
   { version: '3.2.0', date: '2026-06-24', items: [
     'Accounts: admins create users with a one-time password; new users set their own password on first sign-in. Members can request a reset and admins issue a fresh one-time password.',
