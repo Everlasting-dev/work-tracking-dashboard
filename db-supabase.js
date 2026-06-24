@@ -528,7 +528,9 @@ const SupabaseDB = {
       bio: r.bio || '', avatarBase64: r.avatar_base64 || '',
       birthDate: r.birth_date || '', gender: r.gender || '', phone: r.phone || '',
       address: r.address || '', hoursLoggedTotal: Number(r.hours_logged_total || 0),
-      lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null
+      lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null,
+      mustChangePassword: !!r.must_change_password,
+      tagline: r.tagline || '', accentColor: r.accent_color || '', coverColor: r.cover_color || ''
     };
   },
 
@@ -553,6 +555,8 @@ const SupabaseDB = {
       description: r.description || '',
       color: r.color || themePalette?.primary || '#4f46e5',
       themePalette,
+      isPersonal: !!r.is_personal,
+      ownerId: r.owner_id != null ? Number(r.owner_id) : null,
       createdAt: r.created_at,
       updatedAt: r.updated_at
     };
@@ -1257,7 +1261,7 @@ const SupabaseDB = {
     return (data || []).map(r => this._mapClassroom(r));
   },
 
-  async createClassroom({ name, description = '', color, themePalette } = {}) {
+  async createClassroom({ name, description = '', color, themePalette, isPersonal = false, ownerId = null } = {}) {
     const row = { name: name || 'Classroom', description: description || '' };
     if (themePalette) {
       row.theme_palette = themePalette;
@@ -1265,10 +1269,12 @@ const SupabaseDB = {
     } else if (color) {
       row.color = color;
     }
-    const { data, error } = await this._sb().from('wt_classrooms')
-      .insert(row)
-      .select()
-      .single();
+    if (isPersonal) { row.is_personal = true; row.owner_id = Number(ownerId) || null; }
+    let { data, error } = await this._sb().from('wt_classrooms').insert(row).select().single();
+    if (error && this._isMissingColumn?.(error)) {
+      delete row.is_personal; delete row.owner_id; delete row.theme_palette;
+      ({ data, error } = await this._sb().from('wt_classrooms').insert(row).select().single());
+    }
     if (error) throw error;
     return data.id;
   },
@@ -1374,7 +1380,8 @@ const SupabaseDB = {
       gender: data.gender || '',
       phone: data.phone || '',
       address: data.address || '',
-      hours_logged_total: Number(data.hoursLoggedTotal || 0)
+      hours_logged_total: Number(data.hoursLoggedTotal || 0),
+      must_change_password: !!data.mustChangePassword
     };
     let { data: row, error } = await this._sb().from('wt_users').insert(payload).select().single();
     if (error && this._isMissingColumn(error)) {
@@ -1382,6 +1389,7 @@ const SupabaseDB = {
       delete payload.color;
       delete payload.bio;
       delete payload.avatar_base64;
+      delete payload.must_change_password;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
     if (error) throw error;
@@ -1435,6 +1443,9 @@ const SupabaseDB = {
     if (changes.gender != null) patch.gender = changes.gender || '';
     if (changes.phone != null) patch.phone = changes.phone || '';
     if (changes.address != null) patch.address = changes.address || '';
+    if (changes.tagline != null) patch.tagline = changes.tagline || '';
+    if (changes.accentColor != null) patch.accent_color = changes.accentColor || '';
+    if (changes.coverColor != null) patch.cover_color = changes.coverColor || '';
     if (changes.hoursLoggedTotal != null) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
     if (changes.username != null) {
       const next = String(changes.username).trim().toLowerCase();
@@ -1444,11 +1455,14 @@ const SupabaseDB = {
       patch.username = next;
     }
     let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
-    if (error && this._isMissingColumn(error) && (patch.color != null || patch.department != null || patch.bio != null || patch.avatar_base64 != null)) {
+    if (error && this._isMissingColumn(error)) {
       delete patch.department;
       delete patch.color;
       delete patch.bio;
       delete patch.avatar_base64;
+      delete patch.tagline;
+      delete patch.accent_color;
+      delete patch.cover_color;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;
@@ -1461,10 +1475,13 @@ const SupabaseDB = {
     }
   },
 
-  async changePassword(userId, newPassword, actorUserId = null) {
+  async changePassword(userId, newPassword, actorUserId = null, { forceChange = false } = {}) {
     const salt = window.WT_CRYPTO.generateSalt();
     const pwHash = await window.WT_CRYPTO.hashPassword(newPassword, salt);
-    const { error } = await this._sb().from('wt_users').update({ password_hash: pwHash, salt }).eq('id', userId);
+    let { error } = await this._sb().from('wt_users').update({ password_hash: pwHash, salt, must_change_password: !!forceChange }).eq('id', userId);
+    if (error && this._isMissingColumn(error)) {
+      ({ error } = await this._sb().from('wt_users').update({ password_hash: pwHash, salt }).eq('id', userId));
+    }
     if (error) throw error;
     if (actorUserId) await this.logActivity({ userId: actorUserId, action: 'password_changed', entityType: 'user', entityId: userId });
   },

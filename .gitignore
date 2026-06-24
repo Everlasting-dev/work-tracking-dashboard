@@ -15,6 +15,8 @@ worktracker-*.json
 node_modules
 release-build/
 release-build2/
+release-test*/
+release-themefix/
 modular-dist/
 storybook-static/
 .tmp-screenshots/

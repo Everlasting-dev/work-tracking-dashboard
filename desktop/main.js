@@ -67,7 +67,10 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      spellcheck: true
+      spellcheck: true,
+      // Enable Chromium's built-in PDF viewer so in-app <iframe> PDF previews
+      // (blob: URLs streamed from Drive) render instead of showing blank.
+      plugins: true
     }
   });
 

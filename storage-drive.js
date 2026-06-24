@@ -28,7 +28,19 @@
     // Supabase Auth needs >= 6 char passwords; derive a valid one for short ones.
     const pw = (password && password.length >= 6) ? password : `wtk_${password || ""}_orbitrack`;
     let { data } = await client.auth.getSession();
-    if (data?.session?.access_token) return data.session;
+    if (data?.session?.access_token) {
+      const appUid = window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId;
+      if (appUid && data.session.user?.id) {
+        const { data: linked } = await client.from("wt_users")
+          .select("id")
+          .eq("auth_user_id", data.session.user.id)
+          .maybeSingle();
+        if (Number(linked?.id) === Number(appUid)) return data.session;
+        await client.auth.signOut().catch(() => {});
+      } else {
+        return data.session;
+      }
+    }
     // Try sign-in; if the account doesn't exist yet, sign up then sign in.
     let res = await client.auth.signInWithPassword({ email: mail, password: pw });
     if (res.error) {
@@ -52,6 +64,59 @@
     const t = data?.session?.access_token;
     if (!t) throw new Error("Not signed in to storage. Please sign out and back in.");
     return t;
+  }
+
+  async function checkAuthStatus() {
+    if (!enabled()) {
+      return { ok: true, code: "disabled", message: "Document storage is not using the Drive bridge in this build." };
+    }
+    const client = sb();
+    if (!client?.auth) {
+      return { ok: false, code: "missing_client", message: "Document storage client is not ready." };
+    }
+
+    const { data, error } = await client.auth.getSession();
+    if (error) {
+      return { ok: false, code: "session_error", message: error.message || "Could not read document storage authorization." };
+    }
+    const session = data?.session;
+    if (!session?.access_token) {
+      return { ok: false, code: "missing_session", message: "Document storage authorization is missing. Sign out and back in before opening files." };
+    }
+
+    const appUid = window.WT_getActiveSession?.()?.userId || window.getSession?.()?.userId || null;
+    if (appUid && session.user?.id && client.from) {
+      const { data: linked, error: linkError } = await client.from("wt_users")
+        .select("id")
+        .eq("auth_user_id", session.user.id)
+        .maybeSingle();
+      if (linkError) {
+        return { ok: false, code: "link_check_failed", message: linkError.message || "Could not verify document storage account link." };
+      }
+      if (Number(linked?.id) !== Number(appUid)) {
+        return { ok: false, code: "wrong_user", message: "Document storage is signed in as a different user. Sign out and back in to refresh authorization." };
+      }
+    }
+
+    return {
+      ok: true,
+      code: "ok",
+      message: "Document storage authorization is valid.",
+      userId: session.user?.id || null
+    };
+  }
+
+  async function responseError(res, fallback) {
+    let body = {};
+    let text = "";
+    try { body = await res.clone().json(); } catch (_) {
+      try { text = (await res.text()).trim(); } catch (_) {}
+    }
+    const detail = body.error || body.message || text || fallback || `Request failed (${res.status})`;
+    if (res.status === 401) return new Error("Storage sign-in expired. Please sign out and back in.");
+    if (res.status === 403) return new Error("You do not have access to this file.");
+    if (res.status === 404) return new Error("File not found in storage. It may need to be re-uploaded or migrated.");
+    return new Error(detail);
   }
 
   // Upload with progress via XHR. Returns the project_files metadata row.
@@ -88,7 +153,7 @@
     const res = await fetch(`${fnBase()}/files-content?${params.toString()}`, {
       headers: { Authorization: `Bearer ${jwt}`, apikey: anonKey() },
     });
-    if (!res.ok) throw new Error(`Could not load file (${res.status})`);
+    if (!res.ok) throw await responseError(res, `Could not load file (${res.status})`);
     return URL.createObjectURL(await res.blob());
   }
 
@@ -98,7 +163,7 @@
       method: "POST", headers: { Authorization: `Bearer ${jwt}`, apikey: anonKey() },
     });
     let body = {}; try { body = await res.json(); } catch (_) {}
-    if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
+    if (!res.ok) throw await responseError(res, body.error || `Delete failed (${res.status})`);
     return body;
   }
 
@@ -119,5 +184,5 @@
     return data || null;
   }
 
-  window.DriveStorage = { enabled, ensureAuthSession, upload, objectUrl, remove, list, getOne };
+  window.DriveStorage = { enabled, ensureAuthSession, checkAuthStatus, upload, objectUrl, remove, list, getOne };
 })();

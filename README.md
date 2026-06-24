@@ -4,7 +4,7 @@ WorkTracker is a desktop project and task workspace for teams — projects, boar
 
 ## Current release
 
-**v3.1.8** — download the Windows installer from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+**v3.2.0** - one-time-password accounts, private personal spaces, profile customization, canvas collaboration, an in-app user guide, and a fix for in-app PDF previews. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 
 1. Download and run the installer (Windows 10/11, x64).
 2. Sign in with your team account.
@@ -23,3 +23,4 @@ Clone the repo, run `npm install`, then `npm start` for local development. See `
 ## License
 
 Private project. All rights reserved unless a separate license is added.
+

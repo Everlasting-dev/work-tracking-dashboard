@@ -1,0 +1,309 @@
+/* copilot.css — Orbitrack Copilot drawer.
+ * LOCAL / AI-integrated build only. Not shipped in production releases.
+ * Self-contained: includes its own .hidden rules so it never depends on a
+ * global .hidden class (see the hidden-class bug pattern). */
+
+:root {
+  --copilot-bg: #0d0d10;
+  --copilot-surface: #15151a;
+  --copilot-surface-2: #1c1c23;
+  --copilot-border: rgba(255, 255, 255, 0.08);
+  --copilot-text: #e8e8ee;
+  --copilot-muted: #9a9aa6;
+  --copilot-accent: #818cf8;
+  --copilot-accent-strong: #6366f1;
+  --copilot-radius: 14px;
+  --copilot-width: 400px;
+}
+
+/* ── Backdrop ─────────────────────────────────────────────────── */
+.copilot-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 9000;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+.copilot-backdrop.hidden { display: none; }
+
+/* ── Drawer shell ─────────────────────────────────────────────── */
+.copilot-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: var(--copilot-width);
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--copilot-bg);
+  border-left: 1px solid var(--copilot-border);
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5);
+  z-index: 9001;
+  color: var(--copilot-text);
+  font-size: 14px;
+  transform: translateX(0);
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.copilot-drawer.hidden {
+  transform: translateX(100%);
+  pointer-events: none;
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.copilot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--copilot-border);
+  flex-shrink: 0;
+}
+.copilot-title { display: flex; align-items: center; gap: 10px; }
+.copilot-title-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--copilot-accent);
+  background: rgba(129, 140, 248, 0.12);
+}
+.copilot-title strong { font-size: 15px; font-weight: 600; display: block; line-height: 1.1; }
+.copilot-statuswrap { display: block; margin-top: 2px; }
+.copilot-status { font-size: 11px; color: var(--copilot-muted); }
+.copilot-status--ok { color: #34d399; }
+.copilot-status--off { color: #f87171; }
+.copilot-close {
+  background: none;
+  border: none;
+  color: var(--copilot-muted);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+.copilot-close:hover { color: var(--copilot-text); }
+
+/* ── Quick prompt chips ───────────────────────────────────────── */
+.copilot-quickrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--copilot-border);
+  flex-shrink: 0;
+}
+.copilot-chip {
+  border: 1px solid var(--copilot-border);
+  background: var(--copilot-surface);
+  color: var(--copilot-text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.copilot-chip:hover {
+  background: var(--copilot-surface-2);
+  border-color: rgba(129, 140, 248, 0.4);
+}
+
+/* ── Message body ─────────────────────────────────────────────── */
+.copilot-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.copilot-welcome { text-align: center; color: var(--copilot-muted); margin: auto 0; }
+.copilot-welcome-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 12px;
+  border-radius: 14px;
+  color: var(--copilot-accent);
+  background: rgba(129, 140, 248, 0.12);
+}
+.copilot-welcome strong { display: block; color: var(--copilot-text); font-size: 16px; margin-bottom: 6px; }
+
+.copilot-msg { display: flex; }
+.copilot-msg--user { justify-content: flex-end; }
+.copilot-msg--ai { justify-content: flex-start; }
+.copilot-msg--note { justify-content: center; }
+.copilot-bubble {
+  max-width: 85%;
+  padding: 10px 13px;
+  border-radius: var(--copilot-radius);
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.copilot-msg--user .copilot-bubble {
+  background: var(--copilot-accent-strong);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.copilot-msg--ai .copilot-bubble {
+  background: var(--copilot-surface);
+  border: 1px solid var(--copilot-border);
+  border-bottom-left-radius: 4px;
+}
+.copilot-msg--note { color: var(--copilot-muted); font-size: 12px; }
+.copilot-bubble p { margin: 0 0 8px; }
+.copilot-bubble p:last-child { margin-bottom: 0; }
+.copilot-bubble ul, .copilot-bubble ol { margin: 6px 0; padding-left: 20px; }
+.copilot-bubble code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 12.5px;
+}
+.copilot-error { color: #f87171; margin: 0; }
+.copilot-error-hint { color: var(--copilot-muted); font-size: 12px; margin: 6px 0 0; }
+
+/* Typing / streaming indicator */
+.copilot-typing { display: inline-flex; gap: 4px; align-items: center; }
+.copilot-typing span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--copilot-muted);
+  animation: copilot-blink 1.2s infinite ease-in-out;
+}
+.copilot-typing span:nth-child(2) { animation-delay: 0.2s; }
+.copilot-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes copilot-blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+.copilot-caret {
+  display: inline-block; width: 7px; height: 14px;
+  background: var(--copilot-accent);
+  vertical-align: text-bottom;
+  animation: copilot-blink 1s steps(2) infinite;
+}
+
+/* ── Project proposal card ────────────────────────────────────── */
+.copilot-proposal {
+  background: var(--copilot-surface);
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  width: 100%;
+  max-width: 100%;
+}
+.copilot-proposal-head {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--copilot-accent); font-size: 12px; font-weight: 600;
+  margin-bottom: 6px;
+}
+.copilot-proposal-name { display: block; font-size: 15px; }
+.copilot-proposal-desc { color: var(--copilot-muted); font-size: 13px; margin: 4px 0 8px; }
+.copilot-proposal-count { color: var(--copilot-muted); font-size: 12px; margin-bottom: 6px; }
+.copilot-proposal-tasks { margin: 0 0 10px; padding: 0; list-style: none; }
+.copilot-proposal-tasks li {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: 5px 0; padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.copilot-tname { flex: 1; min-width: 0; }
+.copilot-prio { color: var(--copilot-muted); font-size: 11px; text-transform: capitalize; }
+.copilot-ttags { color: var(--copilot-accent); font-size: 10.5px; opacity: 0.85; }
+.copilot-tstatus {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.08); color: var(--copilot-muted);
+}
+.copilot-tstatus--done { background: rgba(52, 211, 153, 0.16); color: #6ee7b7; }
+.copilot-tstatus--in-progress, .copilot-tstatus--burning { background: rgba(96, 165, 250, 0.16); color: #93c5fd; }
+.copilot-tstatus--blocked { background: rgba(248, 113, 113, 0.16); color: #fca5a5; }
+.copilot-tstatus--not-started, .copilot-tstatus--docked { background: rgba(255, 255, 255, 0.08); color: #b6b6c2; }
+.copilot-room-field {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 10px; font-size: 12.5px; color: var(--copilot-muted);
+}
+.copilot-room-field span { flex-shrink: 0; }
+.copilot-room-select {
+  flex: 1; min-width: 0;
+  background: var(--copilot-surface-2);
+  border: 1px solid var(--copilot-border);
+  color: var(--copilot-text);
+  border-radius: 8px; padding: 6px 9px; font-size: 12.5px;
+  cursor: pointer;
+}
+.copilot-proposal-actions { display: flex; gap: 8px; }
+.copilot-proposal-applied { color: #34d399; font-weight: 600; }
+.copilot-btn {
+  border: 1px solid var(--copilot-border);
+  background: var(--copilot-surface-2);
+  color: var(--copilot-text);
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.copilot-btn--primary {
+  background: var(--copilot-accent-strong);
+  border-color: var(--copilot-accent-strong);
+  color: #fff;
+}
+
+/* ── Input bar ────────────────────────────────────────────────── */
+.copilot-inputbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--copilot-border);
+  flex-shrink: 0;
+}
+.copilot-input {
+  flex: 1;
+  background: var(--copilot-surface);
+  border: 1px solid var(--copilot-border);
+  border-radius: 10px;
+  color: var(--copilot-text);
+  padding: 10px 13px;
+  font-size: 14px;
+  outline: none;
+}
+.copilot-input:focus { border-color: rgba(129, 140, 248, 0.5); }
+.copilot-send {
+  display: grid; place-items: center;
+  width: 40px; height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: var(--copilot-accent-strong);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+.copilot-send:hover { background: var(--copilot-accent); }
+
+/* Nudge the app content over when the drawer is open on wide screens */
+@media (min-width: 1280px) {
+  body.copilot-open .app-shell,
+  body.copilot-open #app { transition: margin-right 0.24s ease; }
+}
+
+/* ── Light theme ──────────────────────────────────────────────────
+   The drawer reads its palette from --copilot-* custom properties, so
+   redefining them on the drawer in light mode re-themes the whole panel.
+   A few subtle white-on-dark fills are overridden explicitly. */
+body.theme-normal .copilot-drawer {
+  --copilot-bg: #ffffff;
+  --copilot-surface: #f5f6f8;
+  --copilot-surface-2: #eceef2;
+  --copilot-border: rgba(0, 0, 0, 0.10);
+  --copilot-text: #1a202c;
+  --copilot-muted: #667085;
+}
+body.theme-normal .copilot-drawer .copilot-bubble code,
+body.theme-normal .copilot-drawer .copilot-tstatus,
+body.theme-normal .copilot-drawer .copilot-tstatus--not-started,
+body.theme-normal .copilot-drawer .copilot-tstatus--docked {
+  background: rgba(0, 0, 0, 0.06);
+}
+body.theme-normal .copilot-drawer .copilot-proposal-tasks li { border-bottom-color: rgba(0, 0, 0, 0.08); }

@@ -799,11 +799,55 @@ const LocalDB = {
     return rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   },
 
-  async createClassroom({ name, description = '' }) {
+  async createClassroom({ name, description = '', isPersonal = false, ownerId = null }) {
     const now = new Date().toISOString();
     const tempId = Date.now() % 1000000;
     const themePalette = this._genClassroomPalette(tempId + (name || '').length);
-    return db.classrooms.add({ name: name || 'Classroom', description, color: themePalette.primary, themePalette, createdAt: now, updatedAt: now });
+    const row = { name: name || 'Classroom', description, color: themePalette.primary, themePalette, createdAt: now, updatedAt: now };
+    if (isPersonal) { row.isPersonal = true; row.ownerId = Number(ownerId) || null; }
+    return db.classrooms.add(row);
+  },
+
+  /* Each user owns one private "<Name>'s Space" classroom. Idempotent by ownerId.
+     Projects placed here are invisible to others (nobody else is a member);
+     collaboration is opt-in via project editorIds.
+     Routes through createClassroom/setUserClassrooms so the SyncEngine replays
+     it to the cloud (direct db.add writes are not intercepted). */
+  async ensurePersonalClassroom(userId, displayName) {
+    const uid = Number(userId);
+    if (!uid) return null;
+    const name = `${String(displayName || 'My').trim() || 'My'}'s Space`;
+    // Match by flag OR by name so we never recreate even if the isPersonal/ownerId
+    // flags were wiped by a cloud pull (cloud columns may not be applied yet).
+    const existing = await db.classrooms.filter(c => (c.isPersonal && Number(c.ownerId) === uid) || c.name === name).first();
+    if (existing) return existing.id;
+    const id = await this.createClassroom({ name, description: 'Your private personal space', isPersonal: true, ownerId: uid });
+    // Add membership WITHOUT dropping existing classroom assignments.
+    const currentIds = await this.getUserClassroomIds(uid).catch(() => []);
+    await this.setUserClassrooms(uid, [...new Set([...(currentIds || []).map(Number), id])]);
+    return id;
+  },
+
+  /* Merge-only cleanup: if a user ended up with several personal classrooms
+     (a now-fixed bug created one per login), reassign their projects to the
+     oldest and delete the extras. NEVER creates — safe to call on every login. */
+  async dedupePersonalClassrooms(userId, displayName) {
+    const uid = Number(userId);
+    if (!uid) return null;
+    const wantName = `${String(displayName || 'My').trim() || 'My'}'s Space`;
+    const all = await db.classrooms.toArray();
+    const mine = all.filter(c => (c.isPersonal && Number(c.ownerId) === uid) || c.name === wantName);
+    if (mine.length <= 1) return mine[0]?.id || null;
+    mine.sort((a, b) => a.id - b.id);
+    const keeper = mine[0];
+    // Restore the keeper's flags locally (cheap; aids local filtering).
+    await db.classrooms.update(keeper.id, { isPersonal: true, ownerId: uid }).catch(() => {});
+    for (const dup of mine.slice(1)) {
+      const projs = await db.projects.where('classroomId').equals(dup.id).toArray();
+      for (const p of projs) await this.updateProject(p.id, { classroomId: keeper.id }, uid).catch(() => {});
+      await this.deleteClassroom(dup.id).catch(() => {});
+    }
+    return keeper.id;
   },
 
   async getPersonalNotes(userId) {
@@ -910,6 +954,7 @@ const LocalDB = {
       hoursLoggedTotal: Number(data.hoursLoggedTotal || 0),
       avatarBase64: data.avatarBase64 || '',
       color: data.color || '',
+      mustChangePassword: !!data.mustChangePassword,
       createdAt: now
     });
     await this.setUserClassrooms(id, data.classroomIds || [await this.ensureDefaultClassroom()]);
@@ -941,10 +986,10 @@ const LocalDB = {
     }
   },
 
-  async changePassword(userId, newPassword, actorUserId = null) {
+  async changePassword(userId, newPassword, actorUserId = null, { forceChange = false } = {}) {
     const salt = generateSalt();
     const pwHash = await hashPassword(newPassword, salt);
-    await db.users.update(userId, { passwordHash: pwHash, salt });
+    await db.users.update(userId, { passwordHash: pwHash, salt, mustChangePassword: !!forceChange });
     if (actorUserId) await LocalDB.logActivity({ userId: actorUserId, projectId: null, action: 'password_changed', entityType: 'user', entityId: userId, details: '' });
   },
 
@@ -1103,30 +1148,41 @@ const LocalDB = {
   },
 
   async getAttachments(projectId, opts = {}) {
+    const localRows = async () => {
+      const rows = await db.attachments.where('projectId').equals(projectId).toArray();
+      const visible = opts.includeHidden ? rows : rows.filter(row => !row.isHidden && !row.deletedAt);
+      return visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    };
     if (window.DriveStorage?.enabled?.()) {
-      try { return (await window.DriveStorage.list(projectId)).map(_mapDriveAttachment); }
-      catch (err) { console.warn('[attachments] drive list failed:', err); return []; }
+      try {
+        const driveRows = (await window.DriveStorage.list(projectId)).map(_mapDriveAttachment);
+        if (driveRows.length) return driveRows;
+      } catch (err) {
+        console.warn('[attachments] drive list failed, falling back to legacy attachments:', err);
+      }
+      return localRows();
     }
-    const rows = await db.attachments.where('projectId').equals(projectId).toArray();
-    const visible = opts.includeHidden ? rows : rows.filter(row => !row.isHidden && !row.deletedAt);
-    return visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return localRows();
   },
 
   async getAttachment(id) {
     if (window.DriveStorage?.enabled?.()) {
-      try { const row = await window.DriveStorage.getOne(id); return row ? _mapDriveAttachment(row) : null; }
-      catch (err) { console.warn('[attachments] drive get failed:', err); return null; }
+      try {
+        const row = await window.DriveStorage.getOne(id);
+        if (row) return _mapDriveAttachment(row);
+      } catch (err) {
+        console.warn('[attachments] drive get failed, trying legacy attachment cache:', err);
+      }
+      const numericId = Number(id);
+      if (Number.isFinite(numericId)) return db.attachments.get(numericId);
+      return null;
     }
     return db.attachments.get(id);
   },
 
-  // Build a direct (public bucket) URL for a cloud-stored file so it can be
-  // viewed/downloaded on demand without persisting the blob locally.
+  // Build a direct URL for legacy Supabase Storage files. Drive-backed files
+  // are streamed through DriveStorage.objectUrl instead.
   getAttachmentUrl(storagePath) {
-    // Drive mode never serves files from Supabase Storage — returning '' makes
-    // any stray legacy item fall back to an icon instead of 404ing on a deleted
-    // Storage object.
-    if (window.DriveStorage?.enabled?.()) return '';
     if (!storagePath) return '';
     try {
       if (window.SupabaseDB?._client?.storage) return window.SupabaseDB.getAttachmentUrl(storagePath);
@@ -1141,8 +1197,13 @@ const LocalDB = {
 
   async deleteAttachment(id, actorUserId = null) {
     if (window.DriveStorage?.enabled?.()) {
-      await window.DriveStorage.remove(id);
-      return;
+      const numericId = Number(id);
+      const legacyRow = Number.isFinite(numericId) ? await db.attachments.get(numericId) : null;
+      if (legacyRow) id = numericId;
+      else {
+        await window.DriveStorage.remove(id);
+        return;
+      }
     }
     const row = await db.attachments.get(id);
     let cloudDeleted = false;

@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.2.0
+
+### Added
+- **One-time password accounts** - admins create users with an auto-generated one-time password (shown to copy and share); the user is forced to set their own password on first sign-in. Members can request a password change, and admins issue a fresh one-time password to approve it.
+- **Classrooms at user creation** - admins choose which classrooms a new user can access when creating the account.
+- **Private personal spaces** - every user gets a private "{name}'s Space" classroom. Projects placed there are hidden from everyone else until the owner adds a collaborator.
+- **User guide** - a dedicated, searchable in-app guide covering every major feature, plus a refreshed first-run tour. Admin-only help is hidden from members.
+- **Profile customization** - set an avatar, a tagline, and accent + cover colors with a live preview; the profile header was redesigned.
+- **Canvas owner controls** - canvas owners can edit the name and purpose. Canvases are public by default; switching one to private lets the owner pick exactly who can collaborate.
+
+### Changed
+- **Brainstorm canvas access** - replaced the duplicate private/lock toggles with a single model: public (anyone) or private (owner + chosen participants).
+- **Copilot panel** - the AI Copilot drawer now follows the app's light/dark theme.
+- **Notifications** - repeated toasts (e.g. notification-sound and sync messages) now collapse into a single updating toast instead of stacking across the screen.
+
+### Fixed
+- **PDF previews** - PDFs uploaded to Drive now render inline again in the desktop app (the built-in PDF viewer was disabled). Spreadsheets/Office files show a clear download action since they have no inline preview.
+- **Dismiss behavior** - the chat dock closes on Escape or an outside click; Escape closes an open image first, then the document panel.
+- **Floating dock icons** - no longer slide during theme switches, and are clearly visible in light theme.
+- **Personal space duplication** - a personal classroom is created once at account creation (not on every login); existing duplicates are merged.
+- **Profile join date** - fixed "Joined Invalid Date" and aligned the profile header.
+- **Diagnostics & admin layout** - fixed diagnostics card/KPI alignment, admin user-card button overflow ("Send OTP"), and leaderboard stat alignment (now compact icons with tooltips).
+
+## 3.1.12
+
+### Changed
+- **Project detail theme** - project pages now follow the selected light/dark theme instead of forcing a black surface.
+- **Typography scale** - project headings, tabs, metric cards, task groups, task rows, notes, and chips now use a tighter standard size scale.
+- **Task readability** - oversized task text and row spacing were reduced for a denser, more professional workspace.
+
+## 3.1.11
+
+### Added
+- **Authorization health check** - the app now validates document-storage authorization and notifies the user when the storage session is invalid or linked to the wrong account.
+- **Diagnostics tab** - new Diagnostics page shows storage auth, cloud sync status, sync queue failures, and user-visible warnings/errors with Copy report and Send to admin actions.
+
+### Fixed
+- **Mobile version display** - bumped app and asset versions so mobile/webview clients stop showing stale version numbers after update.
+- **Mobile canvas stability** - Brainstorm canvas now uses a lightweight read-only mobile fallback instead of mounting the live editor that could crash on phones.
+
+## 3.1.10
+
+### Fixed
+- **Document storage sign-in** - Google Drive backed documents now establish the Supabase storage session during login, preventing raw 404/authorization pages when users open files.
+- **Legacy document fallback** - older Supabase Storage attachments remain visible and open while Drive migration catches up.
+- **Login theme toggle** - users can now switch Light/Dark from the login and recovery screens before signing in.
+- **Dark auth contrast** - login, cloud sync, and startup database-check messages are easier to read in dark mode.
+- **Project header polish** - the frosted Projects header no longer crops the first project row and now keeps the same effect in dark theme.
+
+## 3.1.8
+
+### Fixed
+- **Projects header** - sticky search/filter controls no longer crop the top of project cards, and the frosted effect works in dark theme.
+- **Canvas fullscreen controls** - Boards, Notes, and Exit controls no longer cover the drawing palette.
+
 ## 3.1.7
 
 ### Added

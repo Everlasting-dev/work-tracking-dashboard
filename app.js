@@ -67,7 +67,12 @@ function setupSpellcheckObserver() {
 
 function formatDateShort(iso) {
   if (!iso) return '';
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // Accept both date-only ("2026-06-24") and full ISO timestamps
+  // ("2026-06-24T12:00:00Z"); guard against unparseable input.
+  const datePart = String(iso).split('T')[0];
+  const d = new Date(datePart + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function timeAgo(iso) {
@@ -83,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.1.8'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.0'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -595,9 +600,11 @@ async function copilotGetClassrooms() {
   try {
     const all = DB.getClassrooms ? await DB.getClassrooms() : [];
     const allowed = await userClassroomIds(); // null = admin → all classrooms
-    const list = (allowed === null)
+    const myId = Number(actorId());
+    const list = ((allowed === null)
       ? all
-      : all.filter(c => allowed.map(Number).includes(Number(c.id)));
+      : all.filter(c => allowed.map(Number).includes(Number(c.id))))
+      .filter(c => !c.isPersonal || Number(c.ownerId) === myId);
     return list.map(c => ({ id: c.id, name: c.name }));
   } catch (_) { return []; }
 }
@@ -712,6 +719,16 @@ function renderAuthCloudSync() {
       <span>Cloud workspace</span>
       <button type="button" data-action="auth-sync-cloud">${ICONS.refresh} Sync from cloud</button>
     </div>`;
+}
+
+function renderAuthThemeToggle() {
+  return `
+    <button type="button" class="auth-theme-toggle" data-action="toggle-theme-mode" aria-label="Toggle theme">
+      <span class="auth-theme-icon auth-theme-icon-light">${ICONS.sun}</span>
+      <span class="auth-theme-icon auth-theme-icon-dark">${ICONS.moon}</span>
+      <span class="auth-theme-label auth-theme-label-light">Light</span>
+      <span class="auth-theme-label auth-theme-label-dark">Dark</span>
+    </button>`;
 }
 
 function persistWorkspaceCache(data) {
@@ -1131,14 +1148,18 @@ function filterProjectsByClassroom(projects, allowedIds = null) {
   const selected = state.classroomFilter || 'all';
   const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
   let rows = projects;
-  if (allowedSet) rows = rows.filter(p => p.classroomId == null || allowedSet.has(Number(p.classroomId)));
+  // Owners/editors always see their own projects, even in a classroom they're not
+  // a member of (e.g. a collaborator invited into someone's private personal space).
+  if (allowedSet) rows = rows.filter(p => p.classroomId == null || allowedSet.has(Number(p.classroomId)) || canEdit(p));
   if (selected !== 'all') rows = rows.filter(p => Number(p.classroomId) === Number(selected));
   return rows;
 }
 
 function classroomFilterHtml(classrooms = [], allowedIds = null) {
   const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
-  const visible = allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms;
+  const myId = Number(actorId());
+  const visible = (allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms)
+    .filter(c => !c.isPersonal || Number(c.ownerId) === myId);
   if (!visible.length) return '';
   return `<div class="classroom-switcher classroom-switcher--lg">
     <span class="classroom-switcher-label">Classroom:</span>
@@ -1357,6 +1378,11 @@ function applyTheme(mode = getThemeMode()) {
   document.body.classList.toggle('theme-normal', next !== 'black');
   document.documentElement.dataset.theme = next;
   localStorage.setItem(THEME_KEY, next);
+  // Freeze position-based transitions briefly so the floating dock doesn't slide
+  // when the theme switch reflows the layout (e.g. scrollbar-gutter differences).
+  document.body.classList.add('theme-switching');
+  clearTimeout(window._themeSwitchTimer);
+  window._themeSwitchTimer = setTimeout(() => document.body.classList.remove('theme-switching'), 80);
   try { window.dispatchEvent(new CustomEvent('wt-theme-changed', { detail: { theme: next } })); } catch (_) {}
   return next;
 }
@@ -1383,6 +1409,7 @@ function clearRecoveryUnlock() {
 function renderLogin() {
   const v3 = isV3Mode();
   document.getElementById('auth-content').innerHTML = `
+    ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Welcome back</h2>
     <p class="auth-subtitle">${v3 ? 'Sign in with your Supabase Auth account' : 'Sign in to your account'}</p>
@@ -1399,6 +1426,7 @@ function renderLogin() {
 
 function renderAdminSetup() {
   document.getElementById('auth-content').innerHTML = `
+    ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Create administrator</h2>
     <p class="auth-subtitle">No accounts exist yet. Create the admin account and a master recovery key. Other users are added from Admin after you sign in.</p>
@@ -1422,6 +1450,7 @@ async function renderRecovery() {
   const hasMk = await DB.hasMasterKey();
   if (!hasMk) {
     document.getElementById('auth-content').innerHTML = `
+      ${renderAuthThemeToggle()}
       <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
       <h2>Recovery unavailable</h2>
       <p class="auth-subtitle">No master recovery key was set for this workspace. Sign in as an admin and set one from the Admin panel.</p>
@@ -1429,6 +1458,7 @@ async function renderRecovery() {
     return;
   }
   document.getElementById('auth-content').innerHTML = `
+    ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Account recovery</h2>
     <p class="auth-subtitle">Enter your master recovery key to reset a user password.</p>
@@ -1444,6 +1474,7 @@ async function renderRecoveryChooseUser() {
   const users = await DB.getUsers();
   const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} — ${esc(u.displayName || u.username)}</option>`).join('');
   document.getElementById('auth-content').innerHTML = `
+    ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
     <h2>Reset password</h2>
     <p class="auth-subtitle">Choose a user and set a new password.</p>
@@ -1457,10 +1488,50 @@ async function renderRecoveryChooseUser() {
     <div class="auth-toggle"><button type="button" data-action="recovery-back-login">Cancel</button></div>`;
 }
 
+function renderForcePasswordChange(user) {
+  document.getElementById('auth-screen').style.display = '';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-content').innerHTML = `
+    ${renderAuthThemeToggle()}
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <h2>Set your password</h2>
+    <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password — choose your own to continue.</p>
+    <div class="auth-error" id="auth-error"></div>
+    <form data-form="force-pw" data-user-id="${user?.id}">
+      <div class="form-group"><label for="fp-pw">New password</label><input id="fp-pw" name="password" type="password" required minlength="4" autocomplete="new-password"></div>
+      <div class="form-group"><label for="fp-pw2">Confirm password</label><input id="fp-pw2" name="confirmPassword" type="password" required autocomplete="new-password"></div>
+      <div class="form-actions" style="justify-content:stretch"><button type="submit" class="btn btn-primary" style="flex:1;justify-content:center">Save &amp; continue</button></div>
+    </form>`;
+}
 
-function showAuthError(msg) {
+
+function showAuthError(msg, tone = 'error') {
   const el = document.getElementById('auth-error');
-  if (el) { el.textContent = msg; el.classList.add('visible'); }
+  if (el) {
+    el.textContent = msg;
+    el.classList.remove('is-error', 'is-success', 'is-info');
+    el.classList.add('visible', `is-${tone}`);
+  }
+  if (tone === 'error' && /failed|invalid|error|not|missing|expired|no accounts|no account|unreachable|denied/i.test(String(msg || ''))) {
+    recordUserIssue({ level: 'warning', source: 'auth', message: msg });
+  }
+}
+
+async function ensureDriveStorageSession(user, password) {
+  if (!window.DriveStorage?.enabled?.() || !user || !password) return null;
+  const email = user.email || `${user.username}@worktracker.app`;
+  try {
+    return await window.DriveStorage.ensureAuthSession({
+      username: user.username,
+      email,
+      password
+    });
+  } catch (err) {
+    console.warn('[storage] Drive auth session failed:', err?.message || err);
+    recordUserIssue({ level: 'warning', source: 'storage_auth', message: 'Document storage sign-in needs a refresh. Sign out and back in if files do not open.', details: err?.stack || err });
+    showToast('Document storage sign-in needs a refresh. Sign out and back in if files do not open.', 'warning');
+    return null;
+  }
 }
 
 async function handleAuth(e) {
@@ -1482,7 +1553,9 @@ async function handleAuth(e) {
         if (prevUserId && prevUserId !== newUserId) resetClientState();
         localStorage.setItem(LAST_USER_KEY, newUserId);
         setSession(user, { remember: fd.get('rememberDevice') === 'on' });
+        await ensureDriveStorageSession(user, password);
         DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: user.username }).catch(() => {});
+        if (user.mustChangePassword) { renderForcePasswordChange(user); return; }
         await showApp();
       } catch (err) {
         showAuthError(err?.message || 'Invalid username/email or password');
@@ -1539,6 +1612,8 @@ async function handleAuth(e) {
     if (prevUserId && prevUserId !== newUserId) resetClientState();
     localStorage.setItem(LAST_USER_KEY, newUserId);
     setSession(user, { remember: fd.get('rememberDevice') === 'on' });
+    await ensureDriveStorageSession(user, password);
+    if (user.mustChangePassword) { renderForcePasswordChange(user); return; }
     window.OrbiObs?.identify(user.id);
     window.OrbiObs?.track('login');
     // Fire-and-forget: capture IP + last-seen (network is async, won't block login)
@@ -1566,8 +1641,10 @@ async function handleAuth(e) {
     const existing = await DB.getUserByUsername(username);
     if (existing) { showAuthError('Username already taken'); return; }
     const id = await DB.createUser({ username, displayName, email, password, role: 'admin' });
+    try { await DB.ensurePersonalClassroom?.(id, displayName); } catch (_) {}
     await DB.setMasterKey(masterKey);
     setSession({ id, username, displayName, role: 'admin' }, { remember: true });
+    await ensureDriveStorageSession({ id, username, displayName, email, role: 'admin' }, password);
     showToast('Admin created. Use Import Data in the user menu to restore projects from a JSON backup.', 'success');
     await showApp();
   } else if (type === 'recovery-verify') {
@@ -1593,6 +1670,21 @@ async function handleAuth(e) {
     window.location.hash = '';
     renderLogin();
     showToast('Password updated. Sign in with the new password.', 'success');
+  } else if (type === 'force-pw') {
+    const uid = Number(form.dataset.userId);
+    const pw = fd.get('password');
+    const cf = fd.get('confirmPassword');
+    if (!uid || !pw || pw.length < 4) { showAuthError('Enter a password (min 4 characters)'); return; }
+    if (pw !== cf) { showAuthError('Passwords do not match'); return; }
+    try {
+      await DB.changePassword(uid, pw, uid);
+      const fresh = await DB.getUser(uid).catch(() => null);
+      if (fresh) setSession(fresh, { remember: true });
+      showToast('Password set. Welcome aboard!', 'success');
+      await showApp();
+    } catch (err) {
+      showAuthError(err?.message || 'Could not set password. Try again.');
+    }
   }
 }
 
@@ -1604,6 +1696,12 @@ async function showApp() {
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
   if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
+  // Personal spaces are created at user-creation, NOT on login. Here we only
+  // merge any duplicate personal classrooms (e.g. left over from an earlier bug).
+  if (DB.dedupePersonalClassrooms) {
+    const me = await DB.getUser(s.userId).catch(() => null);
+    await DB.dedupePersonalClassrooms(s.userId, me?.displayName || me?.username || s.username).catch(() => {});
+  }
   if (await DB.isEmpty() && !isCloudMode()) await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
   startSidebarClock();
@@ -1629,6 +1727,7 @@ async function showApp() {
   requestSplashDismiss();
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+  setTimeout(() => runStorageAuthHealthCheck({ notify: true }).catch(() => {}), 1200);
 }
 
 function updateOfflineSyncBanner() {
@@ -1687,6 +1786,7 @@ async function handleNetworkOnline() {
     updateSidebarUser();
     updateOfflineSyncBanner();
     await router();
+    await runStorageAuthHealthCheck({ notify: true }).catch(() => {});
   } catch (err) {
     updateOfflineSyncBanner();
     showToast('Cloud sync retry failed: ' + (err?.message || 'Unknown error'), 'error');
@@ -1831,9 +1931,7 @@ async function fileSyncErrorReport(description) {
 
 async function showSyncDiagnosticsModal() {
   const status = _getSyncStatus();
-  const jobs = (window.SyncEngine && SyncEngine.getQueueDetails)
-    ? SyncEngine.getQueueDetails()
-    : (DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : []);
+  const jobs = getSyncQueueDetails();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
 
   console.group('[WorkTracker] Cloud sync diagnostics');
@@ -1882,8 +1980,131 @@ async function showSyncDiagnosticsModal() {
 }
 
 function _getSyncStatus() {
+  if (isV3Mode?.() && window.SyncEngineV3) return SyncEngineV3.getStatus();
   if (window.SyncEngine) return SyncEngine.getStatus();
+  if (window.SyncEngineV3) return SyncEngineV3.getStatus();
   return DB.getSyncStatus ? DB.getSyncStatus() : { enabled: false };
+}
+
+function getSyncQueueDetails() {
+  if (window.SyncEngine?.getQueueDetails) return SyncEngine.getQueueDetails();
+  return DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : [];
+}
+
+const USER_ISSUE_LOG_KEY = 'wt-user-visible-issues-v1';
+const USER_ISSUE_LOG_LIMIT = 80;
+const STORAGE_AUTH_NOTIFY_KEY = 'wt-storage-auth-last-notify-v1';
+const STORAGE_AUTH_NOTIFY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const STORAGE_AUTH_CHECK_COOLDOWN_MS = 2 * 60 * 1000;
+
+function sanitizeIssueDetails(details) {
+  if (details == null) return '';
+  if (typeof details === 'string') return details.slice(0, 1800);
+  try { return JSON.stringify(details, null, 2).slice(0, 1800); }
+  catch (_) { return String(details).slice(0, 1800); }
+}
+
+function getUserIssueLog() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(USER_ISSUE_LOG_KEY) || '[]');
+    return Array.isArray(rows) ? rows.slice(0, USER_ISSUE_LOG_LIMIT) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function clearUserIssueLog() {
+  try { localStorage.removeItem(USER_ISSUE_LOG_KEY); } catch (_) {}
+}
+
+function recordUserIssue({ level = 'info', source = 'app', message = '', details = null } = {}) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  try {
+    const rows = getUserIssueLog();
+    const now = Date.now();
+    const recent = rows[0];
+    if (recent && recent.message === text && recent.source === source && now - new Date(recent.at).getTime() < 2500) return;
+    rows.unshift({
+      id: `issue-${now}-${Math.floor(Math.random() * 100000)}`,
+      at: new Date(now).toISOString(),
+      level,
+      source,
+      message: text.slice(0, 1000),
+      details: sanitizeIssueDetails(details),
+      route: window.location.hash || '',
+      version: getAppVersion(),
+      userId: actorId()
+    });
+    localStorage.setItem(USER_ISSUE_LOG_KEY, JSON.stringify(rows.slice(0, USER_ISSUE_LOG_LIMIT)));
+  } catch (_) {}
+}
+
+window.WTDiagnostics = {
+  recordIssue: recordUserIssue,
+  getIssueLog: getUserIssueLog,
+  clearIssueLog: clearUserIssueLog,
+  buildReport: buildDiagnosticsText
+};
+
+async function getStorageAuthStatusSafe({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && state._storageAuthStatus && now - (state._storageAuthCheckedAt || 0) < STORAGE_AUTH_CHECK_COOLDOWN_MS) {
+    return state._storageAuthStatus;
+  }
+
+  let status;
+  try {
+    if (!window.DriveStorage?.enabled?.()) {
+      status = { ok: true, code: 'disabled', message: 'Document storage is not using the Drive bridge in this build.' };
+    } else if (!window.DriveStorage?.checkAuthStatus) {
+      status = { ok: false, code: 'missing_checker', message: 'Document storage authorization checker is missing in this build.' };
+    } else {
+      status = await window.DriveStorage.checkAuthStatus();
+    }
+  } catch (err) {
+    status = { ok: false, code: 'check_failed', message: err?.message || 'Document storage authorization check failed.', error: sanitizeIssueDetails(err?.stack || err) };
+  }
+
+  state._storageAuthStatus = {
+    ok: !!status?.ok,
+    code: status?.code || (status?.ok ? 'ok' : 'unknown'),
+    message: status?.message || (status?.ok ? 'Document storage authorization is valid.' : 'Document storage authorization has an issue.'),
+    checkedAt: new Date().toISOString(),
+    userId: status?.userId || null,
+    error: status?.error || ''
+  };
+  state._storageAuthCheckedAt = now;
+  return state._storageAuthStatus;
+}
+
+async function maybeNotifyStorageAuthIssue(status) {
+  const uid = actorId();
+  if (!uid || !status || status.ok) return;
+  const signature = `${status.code}|${status.message}`;
+  let last = {};
+  try { last = JSON.parse(localStorage.getItem(STORAGE_AUTH_NOTIFY_KEY) || '{}'); } catch (_) { last = {}; }
+  const now = Date.now();
+  if (last.signature === signature && now - Number(last.at || 0) < STORAGE_AUTH_NOTIFY_COOLDOWN_MS) return;
+  localStorage.setItem(STORAGE_AUTH_NOTIFY_KEY, JSON.stringify({ signature, at: now }));
+  await notifyUser({
+    userId: uid,
+    type: 'storage_auth',
+    message: `Document storage authorization issue: ${status.message}`,
+    entityType: 'storage_auth',
+    actorUserId: uid
+  }).catch(() => {});
+}
+
+async function runStorageAuthHealthCheck({ notify = false, force = false } = {}) {
+  if (!getActiveSession?.()) return { ok: true, code: 'no_session', message: 'No active user session.' };
+  const status = await getStorageAuthStatusSafe({ force });
+  if (!status.ok) {
+    recordUserIssue({ level: 'warning', source: 'storage_auth', message: status.message, details: status });
+    if (notify) showToast(status.message, 'warning');
+    if (notify) await maybeNotifyStorageAuthIssue(status);
+  }
+  return status;
 }
 
 function renderSyncStatusIndicator() {
@@ -2021,6 +2242,7 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="toggle-theme-mode">${themeMode === 'black' ? (ICONS.sun || '') : (ICONS.moon || '')} Switch to ${themeMode === 'black' ? 'Normal' : 'Black'} mode</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
     <button type="button" class="user-menu-item" data-action="goto-support">${ICONS.sparkles} Support</button>
+    <button type="button" class="user-menu-item" data-action="goto-diagnostics">${ICONS.alertTriangle} Diagnostics</button>
     <button type="button" class="user-menu-item" data-action="app-refresh">${ICONS.refresh} Refresh app</button>
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
@@ -3090,7 +3312,7 @@ async function renderProjectDetail(projectId) {
   if (!isAdmin()) {
     const allowedClassroomIds = await userClassroomIds();
     const allowedSet = Array.isArray(allowedClassroomIds) ? new Set(allowedClassroomIds.map(Number)) : null;
-    const inAllowedClassroom = !allowedSet || project.classroomId == null || allowedSet.has(Number(project.classroomId));
+    const inAllowedClassroom = !allowedSet || project.classroomId == null || allowedSet.has(Number(project.classroomId)) || canEdit(project);
     if (!inAllowedClassroom || isHiddenFromUser(project, s?.userId)) {
       hideDocumentPanel();
       if (main) main.classList.remove('with-doc-panel');
@@ -3433,6 +3655,22 @@ function closeFilePreview() {
   }
 }
 
+async function fetchCloudAttachmentObjectUrl(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.text()).trim(); } catch (_) {}
+    if (res.status === 404) {
+      throw new Error('File not found in cloud storage. It may need to be re-uploaded or migrated.');
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('You do not have access to this file, or your storage session expired.');
+    }
+    throw new Error(detail || `Could not load file (${res.status})`);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
 async function openFilePreview(attachmentId, list = null) {
   // Track the surrounding set of attachments so the viewer can page through
   // them with the arrows, keyboard, or scroll wheel. `list` is supplied only
@@ -3461,7 +3699,11 @@ async function openFilePreview(attachmentId, list = null) {
     try { url = await window.DriveStorage.objectUrl(item.id, driveImg ? { thumb: true, size: 1280 } : {}); isBlobUrl = true; }
     catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
   } else if (item.storagePath && DB.getAttachmentUrl) {
-    url = DB.getAttachmentUrl(item.storagePath);
+    const directUrl = DB.getAttachmentUrl(item.storagePath);
+    if (directUrl) {
+      try { url = await fetchCloudAttachmentObjectUrl(directUrl); isBlobUrl = true; }
+      catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
+    }
   }
   if (!url) { showToast('File is not available — it may still be syncing.', 'error'); return; }
   if (state._previewUrl) try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
@@ -3507,10 +3749,15 @@ async function openFilePreview(attachmentId, list = null) {
     try { text = item.blob ? await item.blob.text() : await (await fetch(url)).text(); } catch (_) { text = '(Could not load file contents.)'; }
     body.innerHTML = `<pre class="file-preview-text">${esc(text)}</pre>`;
   } else {
+    const ext = (item.fileName || '').split('.').pop().toUpperCase();
+    const isOffice = /sheet|excel|spreadsheet|word|document|powerpoint|presentation/i.test(mime) || /^(XLSX?|DOCX?|PPTX?|CSV)$/.test(ext);
     body.innerHTML = `<div class="file-preview-fallback">
-      <p>Preview not available for this file type.</p>
-      <p class="text-muted">Use the Download button above to save this file.</p>
+      <div class="file-preview-fallback-icon">${ICONS.file || ''}</div>
+      <p><strong>${esc(ext || 'This file')} files can't be previewed here.</strong></p>
+      <p class="text-muted">${isOffice ? 'Spreadsheets and Office documents open in their own app.' : 'This file type has no in-app preview.'} Download it to open.</p>
+      <button type="button" class="btn btn-primary" id="file-preview-fallback-dl">${ICONS.download || ''} Download file</button>
     </div>`;
+    body.querySelector('#file-preview-fallback-dl')?.addEventListener('click', () => document.getElementById('file-preview-download')?.click());
   }
   // "View HD": for Drive images the preview is a low-res thumbnail; load the
   // full resolution on demand and swap it in.
@@ -4313,6 +4560,7 @@ async function renderAdmin() {
             <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
             <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
+            <button class="btn btn-sm btn-ghost" data-action="approve-password-reset" data-user-id="${u.id}" title="Issue a one-time password the user must change">Send OTP</button>
             ${u.id !== s.userId ? `<button class="btn-icon btn-danger-text" data-action="delete-user" data-id="${u.id}" title="Delete">${ICONS.trash}</button>` : ''}
           </div>
         </div>`;
@@ -4470,6 +4718,7 @@ async function renderAdminTabbed() {
             <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}">${ICONS.edit} Edit</button>
             <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
+            <button class="btn btn-sm btn-ghost" data-action="approve-password-reset" data-user-id="${u.id}" title="Issue a one-time password the user must change">Send OTP</button>
           </div>
         </div>`;
       }).join('')}
@@ -4653,7 +4902,7 @@ async function renderSettings() {
       </div>
       <div class="section-body classroom-admin">
         <div class="classroom-list">
-          ${classrooms.map(c => { const pal = classroomPaletteOf(c); return `<div class="classroom-admin-row">
+          ${classrooms.filter(c => !c.isPersonal).map(c => { const pal = classroomPaletteOf(c); return `<div class="classroom-admin-row">
             <span class="classroom-color-dot" style="background:${esc(pal.primary)}"></span>
             <div class="classroom-admin-row-info">
               <strong>${esc(c.name)}</strong>
@@ -5364,6 +5613,193 @@ async function renderNotificationsPage() {
 
 /* ──── Modal System ──── */
 
+function formatDiagnosticsStatus(status) {
+  if (!status) return 'Unknown';
+  return status.ok ? 'Valid' : 'Needs attention';
+}
+
+function issueLevelBadge(level) {
+  if (level === 'error') return badge('Error', 'red');
+  if (level === 'warning') return badge('Warning', 'amber');
+  return badge(level || 'Info', 'blue');
+}
+
+async function buildDiagnosticsText({ forceAuth = false } = {}) {
+  const s = getActiveSession?.() || getSession?.() || {};
+  const auth = await getStorageAuthStatusSafe({ force: forceAuth });
+  const syncStatus = _getSyncStatus();
+  const jobs = getSyncQueueDetails();
+  const issues = getUserIssueLog();
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+
+  const lines = [
+    'Orbitask diagnostics',
+    `Version: ${getAppVersion()}`,
+    `User: ${s.username || s.displayName || 'not signed in'} (${s.userId || 'no-id'})`,
+    `Route: ${window.location.hash || '#/projects'}`,
+    `Online: ${online ? 'yes' : 'no'}`,
+    `User agent: ${typeof navigator === 'undefined' ? '' : (navigator.userAgent || '')}`,
+    '',
+    'Authorization',
+    `Storage provider: ${window.DriveStorage?.enabled?.() ? 'google_drive' : 'default/off'}`,
+    `Storage auth: ${formatDiagnosticsStatus(auth)} [${auth.code || 'unknown'}]`,
+    `Storage message: ${auth.message || ''}`,
+    `Checked at: ${auth.checkedAt || ''}`,
+    '',
+    'Cloud sync',
+    `Enabled: ${!!syncStatus.enabled}`,
+    `Pending: ${Number(syncStatus.pending || 0)}`,
+    `Failed: ${Number(syncStatus.failed || 0)}`,
+    `Syncing: ${!!syncStatus.syncing}`,
+    `Last error: ${syncStatus.lastError || ''}`,
+    '',
+    `Sync queue (${jobs.length})`
+  ];
+
+  if (jobs.length) {
+    jobs.forEach((j, index) => {
+      lines.push(
+        `${index + 1}. [${j.status || 'queued'}] ${j.type || 'sync_job'} - ${j.summary || ''}`,
+        `Attempts: ${j.attempts || 0}`,
+        `Error: ${j.lastError || 'none'}`,
+        ''
+      );
+    });
+  } else {
+    lines.push('No queued sync jobs.', '');
+  }
+
+  lines.push(`Visible issue log (${issues.length})`);
+  if (issues.length) {
+    issues.forEach((issue, index) => {
+      lines.push(
+        `${index + 1}. [${issue.level || 'info'}] ${issue.source || 'app'} - ${issue.message || ''}`,
+        `At: ${issue.at || ''}`,
+        `Route: ${issue.route || ''}`,
+        issue.details ? `Details: ${issue.details}` : 'Details: none',
+        ''
+      );
+    });
+  } else {
+    lines.push('No visible issues captured.');
+  }
+
+  return lines.join('\n');
+}
+
+async function fileDiagnosticsReport(description) {
+  const uid = actorId();
+  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const title = `Diagnostics report - ${stamp}`;
+  try { await navigator.clipboard.writeText(description); } catch (_) {}
+  const reportId = await DB.createBugReport({
+    userId: uid,
+    title,
+    description,
+    severity: 'medium',
+    appVersion: getAppVersion(),
+    screenshots: []
+  });
+  const users = DB.getUsers ? await DB.getUsers().catch(() => []) : [];
+  const reporter = uid && DB.getUser ? await DB.getUser(uid).catch(() => null) : null;
+  for (const admin of users.filter(u => u.role === 'admin')) {
+    await notifyUser({
+      userId: admin.id,
+      type: 'bug_report',
+      message: `${reporter?.displayName || reporter?.username || 'A user'} sent diagnostics: ${title}`,
+      entityType: 'bug_report',
+      entityId: reportId,
+      actorUserId: uid
+    }).catch(() => {});
+  }
+  return title;
+}
+
+async function renderDiagnosticsPage() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  const auth = await getStorageAuthStatusSafe();
+  const syncStatus = _getSyncStatus();
+  const jobs = getSyncQueueDetails();
+  const issues = getUserIssueLog();
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+  const failedJobs = jobs.filter(j => j.lastError || j.status === 'failed');
+
+  const jobsHtml = jobs.length ? jobs.map((j, i) => `
+    <article class="sync-diag-row sync-diag-row--${esc(j.status || 'pending')}">
+      <div class="sync-diag-row-head">
+        <strong>${i + 1}. ${esc(formatSyncJobType(j.type || 'sync_job'))}</strong>
+        <span class="badge badge-${j.status === 'failed' ? 'red' : j.status === 'syncing' ? 'blue' : 'amber'}">${esc(j.status || 'pending')}</span>
+      </div>
+      <p class="text-sm text-secondary">${esc(j.summary || 'No summary available')}</p>
+      ${j.attempts ? `<p class="text-sm text-muted">Attempts: ${j.attempts}</p>` : ''}
+      ${j.lastError ? `<pre class="sync-diag-error" tabindex="0">${esc(j.lastError)}</pre>` : '<p class="text-sm text-muted">No error message on this job.</p>'}
+    </article>`).join('')
+    : '<p class="text-secondary text-sm">No queued sync work right now.</p>';
+
+  const issuesHtml = issues.length ? issues.map(issue => `
+    <article class="diagnostics-issue diagnostics-issue--${esc(issue.level || 'info')}">
+      <div class="diagnostics-issue-head">
+        <strong>${esc(issue.message || 'Issue')}</strong>
+        ${issueLevelBadge(issue.level)}
+      </div>
+      <p class="text-muted text-sm">${esc(issue.source || 'app')} · ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} · ${esc(issue.route || 'no route')}</p>
+      ${issue.details ? `<pre class="sync-diag-payload">${esc(issue.details)}</pre>` : ''}
+    </article>`).join('')
+    : '<p class="text-secondary text-sm">No warnings or errors have been shown to this user yet.</p>';
+
+  content.innerHTML = `
+    <div class="view-page diagnostics-page">
+      <div class="projects-page-header diagnostics-page-header">
+        <div class="projects-page-title">
+          <h1>Diagnostics</h1>
+          <span class="projects-page-count">v${esc(getAppVersion())} · ${online ? 'Online' : 'Offline'}</span>
+        </div>
+        <div class="diagnostics-actions">
+          <button type="button" class="btn btn-ghost" data-action="check-storage-auth">${ICONS.refresh} Check authorization</button>
+          <button type="button" class="btn btn-ghost" data-action="diagnostics-copy">${ICONS.file} Copy report</button>
+          <button type="button" class="btn btn-primary" data-action="diagnostics-report">${ICONS.send || ''} Send to admin</button>
+        </div>
+      </div>
+      <div class="diagnostics-grid">
+        <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
+          <div class="dash-panel-head"><h3>Authorization</h3>${badge(auth.ok ? 'Valid' : 'Issue', auth.ok ? 'green' : 'amber')}</div>
+          <p class="diagnostics-big">${esc(auth.message || '')}</p>
+          <dl class="diagnostics-meta">
+            <div><dt>Provider</dt><dd>${window.DriveStorage?.enabled?.() ? 'Google Drive bridge' : 'Default/local'}</dd></div>
+            <div><dt>Code</dt><dd>${esc(auth.code || 'unknown')}</dd></div>
+            <div><dt>Checked</dt><dd>${auth.checkedAt ? esc(timeAgo(auth.checkedAt)) : 'Not checked'}</dd></div>
+          </dl>
+        </section>
+        <section class="dash-panel diagnostics-card diagnostics-card--${syncStatus.failed ? 'warn' : 'ok'}">
+          <div class="dash-panel-head"><h3>Cloud sync</h3>${badge(syncStatus.failed ? 'Issue' : 'Ready', syncStatus.failed ? 'red' : 'green')}</div>
+          <div class="diagnostics-kpis">
+            <span><strong>${Number(syncStatus.pending || 0)}</strong><small>Pending</small></span>
+            <span><strong>${Number(syncStatus.failed || 0)}</strong><small>Failed</small></span>
+            <span><strong>${syncStatus.syncing ? 'Yes' : 'No'}</strong><small>Syncing</small></span>
+          </div>
+          ${syncStatus.lastError ? `<pre class="sync-diag-error">${esc(syncStatus.lastError)}</pre>` : '<p class="text-muted text-sm">No current sync error.</p>'}
+        </section>
+        <section class="dash-panel diagnostics-card diagnostics-card--${failedJobs.length || issues.length ? 'warn' : 'ok'}">
+          <div class="dash-panel-head"><h3>User-visible issues</h3>${badge(String(issues.length), issues.length ? 'amber' : 'green')}</div>
+          <p class="text-muted text-sm">Warnings, errors, auth failures, and sync problems shown to this user are stored here locally for support.</p>
+          <div class="diagnostics-actions diagnostics-actions-inline">
+            <button type="button" class="btn btn-ghost btn-sm" data-action="diagnostics-clear"${issues.length ? '' : ' disabled'}>${ICONS.trash} Clear log</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="open-sync-diagnostics">${ICONS.refresh} Sync modal</button>
+          </div>
+        </section>
+      </div>
+      <section class="dash-panel diagnostics-card diagnostics-wide">
+        <div class="dash-panel-head"><h3>Sync queue</h3><span class="projects-page-count">${jobs.length} item${jobs.length === 1 ? '' : 's'}</span></div>
+        <div class="sync-diag-list diagnostics-list">${jobsHtml}</div>
+      </section>
+      <section class="dash-panel diagnostics-card diagnostics-wide">
+        <div class="dash-panel-head"><h3>Issue log</h3><span class="projects-page-count">${issues.length} captured</span></div>
+        <div class="diagnostics-issue-list">${issuesHtml}</div>
+      </section>
+    </div>`;
+}
+
 function showModal(title, body) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal"><div class="modal-header"><h2>${title}</h2><button class="btn-icon" data-action="close-modal">${ICONS.x}</button></div><div class="modal-body">${body}</div></div>`;
@@ -5459,7 +5895,9 @@ async function showProjectModal(editId = null) {
   const classrooms = DB.getClassrooms ? await DB.getClassrooms().catch(() => []) : [];
   const allowedRooms = await userClassroomIds();
   const allowedRoomSet = Array.isArray(allowedRooms) ? new Set(allowedRooms.map(Number)) : null;
-  const roomOptions = allowedRoomSet ? classrooms.filter(c => allowedRoomSet.has(Number(c.id))) : classrooms;
+  const myActorId = Number(actorId());
+  const roomOptions = (allowedRoomSet ? classrooms.filter(c => allowedRoomSet.has(Number(c.id))) : classrooms)
+    .filter(c => !c.isPersonal || Number(c.ownerId) === myActorId);
   const defaultClassroomId = p?.classroomId || roomOptions[0]?.id || '';
   const defaultDepartment = p?.department || currentUser?.department || '';
   const isE = !!p;
@@ -6168,9 +6606,12 @@ async function showUserProfileModal(userId) {
   if (!user) { showToast('User not found', 'error'); return; }
   const { projects, tasks } = await getWorkspaceData();
   const stats = userProfileStats(user.id, projects, tasks);
-  const joined = user.createdAt ? formatDateShort(user.createdAt) : 'Unknown';
+  const joined = formatDateShort(user.createdAt) || 'recently';
   const isSelf = Number(user.id) === Number(actorId());
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  const accent = user.accentColor || user.color || userColor(user);
+  const cover = user.coverColor || accent;
+  const tagline = (user.tagline || '').trim();
   const avatar = user.avatarBase64
     ? `<img src="${esc(user.avatarBase64)}" class="profile-view-avatar-img" alt="${esc(initials)}">`
     : `<div class="profile-view-avatar" ${userColorStyle(user)}>${initials}</div>`;
@@ -6181,16 +6622,20 @@ async function showUserProfileModal(userId) {
   const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
   showModal(esc(user.displayName || user.username), `
     <div class="profile-view-card profile-view-card-rich">
-      <div class="profile-view-hero" style="--profile-color:${esc(user.color || userColor(user))}">
-        <div class="profile-view-avatar-ring">${avatar}</div>
-        <div class="profile-view-meta">
-          <h3>${esc(user.displayName || user.username)}</h3>
-          <span>@${esc(user.username)} · Joined ${esc(joined)}</span>
-          <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
-        </div>
-        <div class="profile-rank profile-rank--${esc(stats.rank.tone)}">
-          <span class="rank-label">${rankIcon(stats.rank.label, 16)}${esc(stats.rank.label)}</span>
-          <strong>${stats.score}</strong>
+      <div class="profile-view-hero profile-view-hero-v2" style="--profile-color:${esc(accent)};--profile-cover:${esc(cover)}">
+        <div class="profile-view-cover"></div>
+        <div class="profile-view-hero-body">
+          <div class="profile-view-avatar-ring">${avatar}</div>
+          <div class="profile-view-meta">
+            <h3>${esc(user.displayName || user.username)}</h3>
+            ${tagline ? `<span class="profile-view-tagline">${esc(tagline)}</span>` : ''}
+            <span class="profile-view-handle">@${esc(user.username)} · Joined ${esc(joined)}</span>
+            <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
+          </div>
+          <div class="profile-rank profile-rank--${esc(stats.rank.tone)}">
+            <span class="rank-label">${rankIcon(stats.rank.label, 16)}${esc(stats.rank.label)}</span>
+            <strong>${stats.score}</strong>
+          </div>
         </div>
       </div>
       <div class="profile-stat-grid">
@@ -6246,7 +6691,78 @@ function showUpdateModal(pid) {
     </form>`);
 }
 
-function showAddUserModal() {
+/* Readable one-time password (no ambiguous chars), dash-grouped for relaying. */
+function genTempPassword(len = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const arr = new Uint32Array(len);
+  (window.crypto || window.msCrypto).getRandomValues(arr);
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[arr[i] % chars.length];
+  const half = Math.floor(len / 2);
+  return `${out.slice(0, half)}-${out.slice(half)}`;
+}
+
+/* Show the admin a temp password to relay out-of-band (no email infra). */
+function showCredentialModal(username, tempPassword, { title = 'One-time password' } = {}) {
+  showModal(title, `
+    <div class="cred-relay">
+      <p class="text-secondary text-sm">Share these with the user. They'll be asked to set their own password the first time they sign in.</p>
+      <div class="cred-relay-row"><span class="cred-relay-label">Username</span><code class="cred-relay-value">${esc(username)}</code></div>
+      <div class="cred-relay-row"><span class="cred-relay-label">Temp password</span><code class="cred-relay-value" id="cred-temp-pw">${esc(tempPassword)}</code></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" data-action="copy-credentials" data-username="${esc(username)}" data-password="${esc(tempPassword)}">${ICONS.file || ''} Copy both</button>
+        <button type="button" class="btn btn-primary" data-action="close-modal">Done</button>
+      </div>
+    </div>`);
+}
+
+/* A user asks an admin to reset their password — notifies all admins. */
+async function requestPasswordChange(userId) {
+  const uid = Number(userId);
+  const me = await DB.getUser(uid).catch(() => null);
+  const users = DB.getUsers ? await DB.getUsers().catch(() => []) : [];
+  const admins = users.filter(u => u.role === 'admin');
+  if (!admins.length) { showToast('No admin is available to action this request.', 'warning'); return; }
+  for (const admin of admins) {
+    await notifyUser({
+      userId: admin.id,
+      type: 'password_reset_request',
+      message: `${me?.displayName || me?.username || 'A user'} requested a password reset. Open their account in Admin and send a one-time password.`,
+      entityType: 'user',
+      entityId: uid,
+      actorUserId: uid
+    }).catch(() => {});
+  }
+  showToast('Request sent. An admin will issue you a one-time password.', 'success');
+}
+
+/* Admin confirms a reset: issue a one-time password and force a change at next login. */
+async function approvePasswordReset(userId) {
+  if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+  const uid = Number(userId);
+  const target = await DB.getUser(uid).catch(() => null);
+  if (!target) { showToast('User not found', 'error'); return; }
+  const tempPw = genTempPassword();
+  await DB.changePassword(uid, tempPw, actorId(), { forceChange: true });
+  await notifyUser({
+    userId: uid,
+    type: 'password_reset_done',
+    message: 'Your password was reset. Use the one-time password your admin shares, then set your own at sign-in.',
+    entityType: 'user',
+    entityId: uid,
+    actorUserId: actorId()
+  }).catch(() => {});
+  bustWorkspaceCache();
+  showCredentialModal(target.username, tempPw, { title: 'One-time password issued' });
+}
+
+async function showAddUserModal() {
+  let classrooms = [];
+  try { classrooms = (await DB.getClassrooms()).filter(c => !c.isPersonal); } catch (_) {}
+  const tempPw = genTempPassword();
+  const classroomBoxes = classrooms.length
+    ? classrooms.map(c => `<label class="classroom-pick"><input type="checkbox" name="classroomIds" value="${c.id}"> ${esc(c.name)}</label>`).join('')
+    : '<p class="text-muted text-sm">No classrooms yet. The user will get the default workspace.</p>';
   showModal('Add User', `
     <form data-form="add-user">
       <div class="form-group"><label>Username</label><input name="username" type="text" placeholder="e.g. john" required></div>
@@ -6268,7 +6784,19 @@ function showAddUserModal() {
       </div>
       <div class="form-group"><label>Phone</label><input name="phone" type="tel" placeholder="+971..."></div>
       <input name="color" type="hidden" value="#000000">
-      <div class="form-group"><label>Password</label><input name="password" type="password" placeholder="Min 4 characters" required minlength="4"></div>
+      <div class="form-group">
+        <label>Classroom access</label>
+        <div class="classroom-pick-list">${classroomBoxes}</div>
+        <p class="text-muted text-sm" style="margin-top:6px">The user also gets a private personal space automatically.</p>
+      </div>
+      <div class="form-group">
+        <label>One-time password</label>
+        <div class="temp-pw-row">
+          <input name="password" type="text" value="${esc(tempPw)}" readonly required class="temp-pw-input">
+          <button type="button" class="btn btn-ghost btn-sm" data-action="regen-temp-pw">${ICONS.refresh || '↻'} New</button>
+        </div>
+        <p class="text-muted text-sm" style="margin-top:6px">Auto-generated. The user must change it on first sign-in. You'll get a copyable copy after creating the account.</p>
+      </div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
     </form>`);
@@ -6463,11 +6991,13 @@ async function showUserClassroomsModal(uid) {
   ]);
   if (!user) { showToast('User not found', 'error'); return; }
   const selectedSet = new Set((selected || []).map(Number));
+  // Personal spaces are private to their owner — never managed/assigned here.
+  const shared = (classrooms || []).filter(c => !c.isPersonal);
   showModal('User Classrooms', `
     <form data-form="user-classrooms" data-user-id="${uid}">
-      <p class="text-muted text-sm" style="margin-bottom:12px">Choose which project canvases ${esc(user.displayName || user.username)} can access.</p>
+      <p class="text-muted text-sm" style="margin-bottom:12px">Choose which project canvases ${esc(user.displayName || user.username)} can access. Their private personal space is always kept.</p>
       <div class="project-editor-list">
-        ${classrooms.map(c => `<label class="project-editor-option">
+        ${shared.map(c => `<label class="project-editor-option">
           <input type="checkbox" name="classroomIds" value="${c.id}" ${selectedSet.has(Number(c.id)) ? 'checked' : ''}>
           <span>${esc(c.name)}</span>
         </label>`).join('') || '<p class="text-muted text-sm">Create a classroom first.</p>'}
@@ -6492,6 +7022,9 @@ async function showProfileModal() {
   const isAdm = s.role === 'admin';
   const avatarUrl = user.avatarBase64 || '';
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  const isHex = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
+  const accentHex = isHex(user.accentColor) ? user.accentColor : (isHex(user.color) ? user.color : '#4f46e5');
+  const coverHex = isHex(user.coverColor) ? user.coverColor : accentHex;
   showModal('My Profile', `
     <form data-form="edit-profile" class="profile-form-v2">
       <div class="profile-avatar-section">
@@ -6511,6 +7044,20 @@ async function showProfileModal() {
         </div>
       </div>
       <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
+      <div class="profile-customize">
+        <div class="profile-cust-preview" id="profile-cust-preview" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+          <span class="profile-cust-preview-avatar">${initials}</span>
+          <div class="profile-cust-preview-text">
+            <strong id="profile-cust-name">${esc(user.displayName || user.username)}</strong>
+            <span id="profile-cust-tag">${esc((user.tagline || '').trim()) || 'Your tagline appears here'}</span>
+          </div>
+        </div>
+        <div class="form-group"><label>Tagline / status</label><input name="tagline" type="text" maxlength="80" value="${esc(user.tagline || '')}" placeholder="e.g. Logistics lead · loves spreadsheets" id="profile-tagline-input"></div>
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Accent color</label><input name="accentColor" type="color" value="${esc(accentHex)}" id="profile-accent-input"></div>
+          <div class="form-group"><label>Cover color</label><input name="coverColor" type="color" value="${esc(coverHex)}" id="profile-cover-input"></div>
+        </div>
+      </div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
       <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Project lead at Everlasting">${esc(user.bio || '')}</textarea></div>
@@ -6534,6 +7081,10 @@ async function showProfileModal() {
         <p class="text-muted text-sm" style="margin-top:6px">Assigned by an admin. Project tags (e.g. R&amp;D) come from the project, not your profile.</p>
       </div>`}
       <input name="color" type="hidden" value="#000000">
+      <div class="profile-security-row">
+        <div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from the Admin panel.' : 'Ask an admin to issue you a one-time password.'}</p></div>
+        ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}
+      </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
     </form>`);
   // Avatar preview
@@ -6556,6 +7107,17 @@ async function showProfileModal() {
       reader.readAsDataURL(file);
     });
   }
+  // Live preview for tagline / accent / cover customization
+  const preview = document.getElementById('profile-cust-preview');
+  const accentInput = document.getElementById('profile-accent-input');
+  const coverInput = document.getElementById('profile-cover-input');
+  const tagInput = document.getElementById('profile-tagline-input');
+  if (accentInput) accentInput.addEventListener('input', () => preview?.style.setProperty('--pc-accent', accentInput.value));
+  if (coverInput) coverInput.addEventListener('input', () => preview?.style.setProperty('--pc-cover', coverInput.value));
+  if (tagInput) tagInput.addEventListener('input', () => {
+    const el = document.getElementById('profile-cust-tag');
+    if (el) el.textContent = tagInput.value.trim() || 'Your tagline appears here';
+  });
 }
 
 function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
@@ -6591,6 +7153,13 @@ function showOnboardingModal(force = false) {
           <li>
             <span class="howto-step-icon">${ICONS.user}</span>
             <div>
+              <strong>Classrooms & your personal space</strong>
+              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> — anything there is hidden from others until you invite a collaborator.</p>
+            </div>
+          </li>
+          <li>
+            <span class="howto-step-icon">${ICONS.user}</span>
+            <div>
               <strong>See your teammates' work</strong>
               <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' — except for admins, who can see everything' : ''}.</p>
             </div>
@@ -6603,8 +7172,11 @@ function showOnboardingModal(force = false) {
             </div>
           </li>
         </ol>
-        <p class="text-muted text-sm" style="margin-top:14px">You can reopen this any time from your profile menu (bottom-left → <em>Show How-to</em>).</p>
-        <div class="form-actions"><button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it — let's go</button></div>
+        <p class="text-muted text-sm" style="margin-top:14px">Want the full picture? Open the <strong>User guide</strong> from Support any time.</p>
+        <div class="form-actions">
+          <a href="#/guide" class="btn btn-ghost" data-action="close-howto">${ICONS.file} Full guide</a>
+          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it — let's go</button>
+        </div>
       </div>
     </div>`;
   ov.classList.remove('hidden');
@@ -6613,6 +7185,18 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.0', date: '2026-06-24', items: [
+    'Accounts: admins create users with a one-time password; new users set their own password on first sign-in. Members can request a reset and admins issue a fresh one-time password.',
+    'Classrooms & personal space: pick a new user’s classrooms at creation, and everyone gets a private personal space that stays hidden until they invite a collaborator.',
+    'User guide: a new searchable in-app guide plus a refreshed first-run tour (admin help hidden from members).',
+    'Profile: customize your avatar, tagline, and accent/cover colors with a live preview; redesigned profile header.',
+    'Brainstorm canvas: owners can edit the name/purpose; canvases are public by default, or private with chosen collaborators.',
+    'Documents: PDFs preview inline again in the desktop app; Office files offer a clear download.',
+    'Polish: Copilot follows light/dark theme, toasts no longer stack across the screen, chat/image/doc viewers close on Escape or outside click, and several alignment/visibility fixes.'
+  ] },
+  { version: '3.1.12', date: '2026-06-24', items: ['Projects: project detail pages now follow the selected light/dark theme instead of staying black', 'Typography: added a tighter professional font scale for project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Tasks: reduced oversized task text and row spacing for a denser, more consistent project workspace'] },
+  { version: '3.1.11', date: '2026-06-24', items: ['Authorization: added a document-storage health check with toast and bell notification when the user session is invalid', 'Diagnostics: added a full Diagnostics tab with storage auth, sync queue, and user-visible error logs that can be copied or sent to admins', 'Mobile: cache-busted the app to show the correct version number and refreshed small-screen layouts', 'Brainstorm canvas: mobile now opens a stable read-only fallback instead of mounting the crash-prone live editor'] },
+  { version: '3.1.10', date: '2026-06-24', items: ['Documents: fixed Google Drive/Supabase storage sign-in so uploaded files open for users instead of showing raw 404 pages', 'Documents: legacy Supabase files remain visible and open while Drive migration catches up', 'Login: added a theme toggle before sign-in', 'Dark mode: improved login, cloud sync, and startup database-check message contrast', 'Projects: sticky frosted header now keeps the first project row clear and matches dark theme'] },
   { version: '3.1.8', date: '2026-06-23', items: ['Projects header: the sticky search/filter bar no longer crops the top of the first project cards, and the frosted look now works in dark theme too', 'Brainstorm canvas fullscreen: redesigned as a clean top bar (Boards · Notes · Exit) that no longer overlaps the drawing tools'] },
   { version: '3.1.7', date: '2026-06-23', items: ['Project tabs (Tasks/Board/Timeline/Map): fixed the bar shifting size when switching tabs — consistent height and no width jump for a cleaner, steadier look', 'Brainstorm canvas: mobile now opens as a stable read-only viewer with lighter controls, safer note-drop handling, and app-matched theme colors', 'Canvas fullscreen controls and Notes access were cleaned up so they no longer cover drawing palettes on desktop'] },
   { version: '3.1.6', date: '2026-06-21', items: ['Notes: fixed the blank/non-typeable editor — notes now always load with a reliable built-in formatting editor (bold/italic/underline/lists)', 'Brainstorm canvas: fixed the board closing on its own after a while (a background sync was kicking you out); added a Figma-style Fullscreen toggle', 'Brainstorm canvas: drag a note from the Notes panel straight onto the canvas to drop it as a sticky', 'Project Map: easier dependency setup — a tick-box "Blocked by" list on each task (ticked tasks show up as links on the Map)'] },
@@ -6646,7 +7230,8 @@ async function renderSupportPage() {
           <div class="dash-panel-head"><h3>Help</h3></div>
           <p class="text-muted text-sm">Guides and onboarding for Orbitask.</p>
           <div class="support-actions">
-            <button type="button" class="btn btn-primary" data-action="user-show-howto">${ICONS.sparkles} How-to guide</button>
+            <a href="#/guide" class="btn btn-primary">${ICONS.book || ICONS.file} User guide</a>
+            <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
             <button type="button" class="btn btn-ghost" data-action="show-about">${ICONS.target} About Orbitask</button>
           </div>
         </section>
@@ -6655,6 +7240,7 @@ async function renderSupportPage() {
           <p class="text-muted text-sm">Report issues or request improvements.</p>
           <div class="support-actions">
             <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
+            <a href="#/diagnostics" class="btn btn-ghost">${ICONS.file} Diagnostics</a>
           </div>
         </section>
         <section class="dash-panel support-card">
@@ -6671,6 +7257,119 @@ async function renderSupportPage() {
         </section>
       </div>
     </div>`;
+}
+
+const GUIDE_SECTIONS = [
+  {
+    id: 'start', icon: 'sparkles', title: 'Getting started',
+    entries: [
+      { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password — pick something only you know.' },
+      { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar, Brainstorm canvas, Notifications and Support from the left rail. Your sync status shows live at the bottom.' },
+      { t: 'Light & dark', d: 'Use the theme toggle to switch between light and the Black Edition dark theme. Your choice is remembered on this device.' }
+    ]
+  },
+  {
+    id: 'projects', icon: 'target', title: 'Projects & tasks',
+    entries: [
+      { t: 'Create a project', d: 'Projects page → New Project. Give it a name, description, type and priority, then choose the classroom (or your personal space) it belongs to.' },
+      { t: 'Add tasks', d: 'Open a project → Add Task. Tasks can have assignees, due dates, priorities and a workflow step. New Task from the Tasks page lets you pick the project.' },
+      { t: 'Track progress', d: 'Each project shows completion, milestones and an activity log. Mark tasks done to move the progress bar.' },
+      { t: 'Invite collaborators', d: 'As the owner, open a project\'s access controls to add editors. Editors can see and edit the project even if it lives in your private personal space.' }
+    ]
+  },
+  {
+    id: 'classrooms', icon: 'users', title: 'Classrooms & your personal space',
+    entries: [
+      { t: 'What is a classroom?', d: 'A classroom is a shared workspace grouping related projects. An admin decides which classrooms you can access.' },
+      { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else — until you add them as a collaborator.' },
+      { t: 'Sharing personal work', d: 'Add someone as an editor on a personal-space project to let just that person in. Remove them to make it private again.' }
+    ]
+  },
+  {
+    id: 'canvas', icon: 'edit', title: 'Brainstorm canvas',
+    entries: [
+      { t: 'Create a canvas', d: 'Brainstorm → New canvas. Give it a name and an optional purpose. Mark it Private if only you should see it.' },
+      { t: 'Owner controls', d: 'As the canvas owner, open Settings to rename it, edit its purpose, switch private/shared, or Lock it to block anyone else from entering.' },
+      { t: 'Turn it into a project', d: 'Use "Make this a project" to hand your sketched ideas to the AI Copilot and spin up a real project with tasks.' }
+    ]
+  },
+  {
+    id: 'files', icon: 'file', title: 'Files & documents',
+    entries: [
+      { t: 'Upload files', d: 'Open a project\'s Documents panel and drag in PDFs or images. They\'re stored against the project for everyone with access.' },
+      { t: 'Previews', d: 'Images and PDFs preview inline. If a file won\'t open, check Diagnostics for storage authorization status.' }
+    ]
+  },
+  {
+    id: 'profile', icon: 'user', title: 'Profile & account',
+    entries: [
+      { t: 'Customize your profile', d: 'My Profile → set an avatar, a tagline, and accent + cover colors. A live preview shows how your profile header will look.' },
+      { t: 'Change your password', d: 'Use "Request password change" in My Profile. An admin confirms it and issues a fresh one-time password for you to reset.' }
+    ]
+  },
+  {
+    id: 'diagnostics', icon: 'alertTriangle', title: 'Troubleshooting',
+    entries: [
+      { t: 'Diagnostics tab', d: 'Support → Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
+      { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed — reconnect and it will retry automatically.' }
+    ]
+  },
+  {
+    id: 'admin', icon: 'crown', title: 'Admin tools', adminOnly: true,
+    entries: [
+      { t: 'Create users', d: 'Admin → Add User. Pick the classrooms they can access; the app generates a one-time password to share. They set their own password on first sign-in.' },
+      { t: 'Issue a one-time password', d: 'Use "Send OTP" on a user to reset their password to a temp value they must change at next login. Handy when someone requests a reset.' },
+      { t: 'Manage classrooms', d: 'Settings → Classrooms to create, rename or remove shared classrooms. Personal spaces are private and never shown here.' }
+    ]
+  }
+];
+
+async function renderGuidePage() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  const admin = isAdmin();
+  const sections = GUIDE_SECTIONS.filter(s => !s.adminOnly || admin);
+  const sectionsHtml = sections.map(s => `
+    <section class="guide-section" data-guide-section>
+      <h2 class="guide-section-title">${ICONS[s.icon] || ''} ${esc(s.title)}</h2>
+      <div class="guide-entries">
+        ${s.entries.map(e => `
+          <div class="guide-entry" data-search="${esc((e.t + ' ' + e.d).toLowerCase())}">
+            <strong>${esc(e.t)}</strong>
+            <p>${esc(e.d)}</p>
+          </div>`).join('')}
+      </div>
+    </section>`).join('');
+  content.innerHTML = `
+    <div class="view-page guide-page">
+      <div class="projects-page-header">
+        <div class="projects-page-title"><h1>User guide</h1><span class="projects-page-count">How to use Orbitask</span></div>
+        <div class="guide-header-actions">
+          <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
+        </div>
+      </div>
+      <div class="guide-search-wrap">
+        <input type="search" id="guide-search" class="guide-search" placeholder="Search the guide… (e.g. password, canvas, classroom)" autocomplete="off">
+      </div>
+      <div class="guide-body" id="guide-body">${sectionsHtml}</div>
+      <p class="guide-empty text-muted hidden" id="guide-empty">No matches. Try another word.</p>
+    </div>`;
+  const search = document.getElementById('guide-search');
+  search?.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    let anyVisible = false;
+    content.querySelectorAll('[data-guide-section]').forEach(sec => {
+      let sectionHas = false;
+      sec.querySelectorAll('.guide-entry').forEach(entry => {
+        const match = !q || (entry.dataset.search || '').includes(q);
+        entry.classList.toggle('hidden', !match);
+        if (match) sectionHas = true;
+      });
+      sec.classList.toggle('hidden', !sectionHas);
+      if (sectionHas) anyVisible = true;
+    });
+    document.getElementById('guide-empty')?.classList.toggle('hidden', anyVisible);
+  });
 }
 
 function _calendarMonthKey(d) {
@@ -7327,6 +8026,10 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'Canvas owner controls and public/private collaboration', 'PDF previews fixed in the desktop app; themed Copilot, calmer toasts, and Escape/outside-click dismissal'] },
+    { version: '3.1.12', date: 'June 2026', features: ['Project detail pages now respect the selected light/dark theme', 'Professional typography scale applied to project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Oversized task text and spacing reduced for a cleaner project workspace'] },
+    { version: '3.1.11', date: 'June 2026', features: ['Document storage authorization health check with user notification when invalid', 'Diagnostics tab for storage auth, sync queue, visible errors, copy report, and send-to-admin', 'Mobile version cache refresh and small-screen diagnostics/canvas polish', 'Brainstorm canvas uses a stable read-only mobile fallback instead of loading the heavy live editor'] },
+    { version: '3.1.10', date: 'June 2026', features: ['Document storage sign-in fixed so users can open Drive-backed files reliably', 'Legacy Supabase documents remain available during Drive migration', 'Theme toggle added to login/recovery screens', 'Dark-mode contrast improved for login, cloud sync, and startup database-check messages', 'Projects sticky header clearance and dark frosted styling polished'] },
     { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme', 'Brainstorm canvas fullscreen redesigned as a clean top bar that no longer covers the drawing tools'] },
     { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map', 'Brainstorm canvas mobile mode is now read-only with lighter controls and safer note handling', 'Canvas theme colors now follow the app theme more closely', 'Fullscreen canvas controls no longer cover the drawing palette'] },
     { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed — always loads and is typeable (bold/italic/underline/lists)', 'Brainstorm canvas: fixed self-closing boards + Figma-style fullscreen toggle', 'Brainstorm canvas: drag notes from the panel onto the canvas as stickies', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
@@ -8027,12 +8730,25 @@ async function handleFormSubmit(e) {
       const birthDate = fd.get('birthDate') || '';
       const gender = fd.get('gender') || '';
       const phone = (fd.get('phone') || '').toString().trim();
+      const classroomIds = fd.getAll('classroomIds').map(Number).filter(Boolean);
       if (!username || !password || password.length < 4) { showToast('Fill all fields (pw min 4 chars)', 'warning'); return; }
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
-      await DB.createUser({ username, displayName, email, password, role, department, color, birthDate, gender, phone });
+      const newUid = await DB.createUser({ username, displayName, email, password, role, department, color, birthDate, gender, phone, classroomIds, mustChangePassword: true });
+      try { await DB.ensurePersonalClassroom?.(newUid, displayName); } catch (_) {}
       bustWorkspaceCache();
-      showToast('User created', 'success');
+      await router(); // refresh the admin user list behind the modal
+      showCredentialModal(username, password, { title: 'User created — share these' });
+      return;
+    } else if (type === 'canvas-room-settings') {
+      const roomId = form.dataset.roomId;
+      await window.WTCanvas?.saveRoomSettings?.(roomId, {
+        name: fd.get('name')?.toString().trim(),
+        purpose: fd.get('purpose')?.toString().trim() || '',
+        isPrivate: !!fd.get('isPrivate'),
+        participantIds: fd.getAll('participantIds').map(Number).filter(Boolean)
+      });
+      return;
     } else if (type === 'add-calendar-event') {
       const dayKey = form.dataset.day;
       const title = fd.get('title')?.trim();
@@ -8099,8 +8815,11 @@ async function handleFormSubmit(e) {
       const gender = fd.get('gender') || '';
       const phone = (fd.get('phone') || '').toString().trim();
       const address = (fd.get('address') || '').toString().trim();
+      const tagline = (fd.get('tagline') || '').toString().trim().slice(0, 80);
+      const accentColor = (fd.get('accentColor') || '').toString().trim();
+      const coverColor = (fd.get('coverColor') || '').toString().trim();
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, ...(color && { color }) };
+      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, tagline, accentColor, coverColor, ...(color && { color }) };
       if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
@@ -8182,7 +8901,11 @@ async function handleFormSubmit(e) {
     } else if (type === 'user-classrooms') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       const targetId = Number(form.dataset.userId);
-      await DB.setUserClassrooms(targetId, fd.getAll('classroomIds').map(Number).filter(Boolean));
+      const selectedIds = fd.getAll('classroomIds').map(Number).filter(Boolean);
+      // setUserClassrooms replaces all memberships — keep the private personal space.
+      let personalId = null;
+      try { const tu = await DB.getUser(targetId); personalId = await DB.ensurePersonalClassroom?.(targetId, tu?.displayName || tu?.username); } catch (_) {}
+      await DB.setUserClassrooms(targetId, [...new Set([...selectedIds, personalId].filter(Boolean))]);
       hideModal();
       bustWorkspaceCache();
       showToast('Classrooms updated', 'success');
@@ -8484,6 +9207,7 @@ const actions = {
   },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
   'goto-support': () => { closeUserMenu(); window.location.hash = '#/support'; },
+  'goto-diagnostics': () => { closeUserMenu(); window.location.hash = '#/diagnostics'; },
   'calendar-prev-month': async () => {
     const d = _parseCalendarMonth(state.calendarMonth);
     d.setMonth(d.getMonth() - 1);
@@ -8540,6 +9264,38 @@ const actions = {
     closeUserMenu();
     await showSyncDiagnosticsModal();
   },
+  'check-storage-auth': async () => {
+    const status = await runStorageAuthHealthCheck({ notify: true, force: true });
+    if (status.ok) showToast('Document storage authorization is valid.', 'success');
+    if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
+  },
+  'diagnostics-copy': async () => {
+    const text = await buildDiagnosticsText({ forceAuth: true });
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Diagnostics copied to clipboard', 'success');
+    } catch (_) {
+      console.log(text);
+      showToast('Could not copy automatically. Diagnostics were printed to the console.', 'warning');
+    }
+  },
+  'diagnostics-report': async () => {
+    if (!DB.createBugReport) { showToast('Bug reporting needs the latest database update', 'warning'); return; }
+    const text = await buildDiagnosticsText({ forceAuth: true });
+    try {
+      const title = await fileDiagnosticsReport(text);
+      showToast(`Report "${title}" sent to admins and copied`, 'success');
+    } catch (err) {
+      console.warn('[diagnostics-report] failed', err);
+      recordUserIssue({ level: 'error', source: 'diagnostics', message: `Could not send diagnostics: ${err?.message || 'Unknown error'}`, details: err?.stack || err });
+      showToast('Could not send diagnostics. Copy the report and send it manually.', 'warning');
+    }
+  },
+  'diagnostics-clear': async () => {
+    clearUserIssueLog();
+    showToast('Diagnostics issue log cleared', 'info');
+    await renderDiagnosticsPage();
+  },
   'show-user-profile': async (b) => {
     await showUserProfileModal(Number(b.dataset.userId));
   },
@@ -8550,15 +9306,15 @@ const actions = {
     const oldHtml = b.innerHTML;
     b.disabled = true;
     b.innerHTML = `${ICONS.refresh} Syncing...`;
-    showAuthError('Checking the cloud for existing accounts...');
+    showAuthError('Checking the cloud for existing accounts...', 'info');
     try {
       const hasUsers = await forceCloudAuthSync();
       if (hasUsers) {
         renderLogin();
-        showAuthError('Cloud workspace found. Sign in with your existing account.');
+        showAuthError('Cloud workspace found. Sign in with your existing account.', 'success');
       } else {
         renderAdminSetup();
-        showAuthError('The cloud is reachable, but no accounts were found. Create the first admin only if this is a new workspace.');
+        showAuthError('The cloud is reachable, but no accounts were found. Create the first admin only if this is a new workspace.', 'info');
       }
     } catch (err) {
       console.warn('[auth-sync-cloud] failed', err);
@@ -8910,6 +9666,23 @@ const actions = {
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
   'global-task-view': async (b) => { state.globalTaskViewMode = b.dataset.view; await renderTasks(); },
   'close-modal': () => hideModal(),
+  'regen-temp-pw': () => {
+    const inp = document.querySelector('.temp-pw-input');
+    if (inp) inp.value = genTempPassword();
+  },
+  'copy-credentials': async (b) => {
+    const text = `Username: ${b.dataset.username}\nTemp password: ${b.dataset.password}`;
+    try { await navigator.clipboard.writeText(text); showToast('Credentials copied', 'success'); }
+    catch (_) { showToast('Copy failed — select the text manually', 'warning'); }
+  },
+  'request-password-change': async () => {
+    const s = getSession(); if (!s) return;
+    hideModal();
+    await requestPasswordChange(s.userId);
+  },
+  'approve-password-reset': async (b) => {
+    await approvePasswordReset(Number(b.dataset.userId));
+  },
   'set-workspace-scope': async (b) => {
     state.workspaceScope = b.dataset.scope === 'everyone' ? 'everyone' : 'mine';
     await router();
@@ -9140,23 +9913,44 @@ window.WTTasks = {
 
 const TOAST_ICONS = { success: '✓', error: '✕', warning: '!', info: 'i' };
 
+const TOAST_MAX_VISIBLE = 3;
+
 function showToast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
+  if (type === 'error' || type === 'warning') {
+    recordUserIssue({ level: type, source: 'toast', message: msg });
+  }
+  if (!c) return;
+  // Dedupe: if the same message is already showing, just refresh its timer
+  // instead of stacking duplicates (fixes notification-sound / sync spam).
+  const existing = Array.from(c.querySelectorAll('.toast')).find(el => el._toastMsg === msg);
+  if (existing) {
+    existing.className = `toast toast-${type} toast-visible`;
+    clearTimeout(existing._toastTimer);
+    existing._toastTimer = setTimeout(() => existing._toastDismiss?.(), 4400);
+    return;
+  }
   const t = document.createElement('div');
   t.className = `toast toast-${type}`;
+  t._toastMsg = msg;
   t.setAttribute('role', 'status');
   t.innerHTML = `
     <span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
     <span class="toast-message">${esc(msg)}</span>
     <button type="button" class="toast-close" aria-label="Dismiss">&times;</button>`;
   const dismiss = () => {
+    clearTimeout(t._toastTimer);
     t.classList.remove('toast-visible');
     setTimeout(() => t.remove(), 240);
   };
+  t._toastDismiss = dismiss;
   t.querySelector('.toast-close')?.addEventListener('click', dismiss);
   c.appendChild(t);
+  // Cap the number of visible toasts — drop the oldest beyond the limit.
+  const all = c.querySelectorAll('.toast');
+  for (let i = 0; i < all.length - TOAST_MAX_VISIBLE; i++) all[i]._toastDismiss?.();
   requestAnimationFrame(() => t.classList.add('toast-visible'));
-  setTimeout(dismiss, 4400);
+  t._toastTimer = setTimeout(dismiss, 4400);
 }
 
 function showProjectCreatedPopup(project) {
@@ -9280,6 +10074,7 @@ function installGlobalErrorReporting() {
   if (window._wtErrorReportingInstalled) return;
   window._wtErrorReportingInstalled = true;
   window.addEventListener('error', (event) => {
+    recordUserIssue({ level: 'error', source: 'window_error', message: event.message || 'Runtime error', details: { source: event.filename, line: event.lineno, column: event.colno, stack: event.error?.stack || '' } });
     reportClientError('window_error', event.error || event.message, {
       source: event.filename,
       line: event.lineno,
@@ -9287,9 +10082,11 @@ function installGlobalErrorReporting() {
     });
   });
   window.addEventListener('unhandledrejection', (event) => {
+    recordUserIssue({ level: 'error', source: 'unhandled_rejection', message: event.reason?.message || event.reason || 'Unhandled promise rejection', details: event.reason?.stack || event.reason });
     reportClientError('unhandled_rejection', event.reason, {});
   });
   window.addEventListener('wt-sync-error', (event) => {
+    recordUserIssue({ level: 'error', source: 'sync', message: event.detail?.error || 'Cloud sync failed', details: event.detail || {} });
     reportClientError('sync_error', event.detail?.error || 'Cloud sync failed', event.detail || {});
   });
 }
@@ -9544,11 +10341,11 @@ async function renderUsers() {
         </div>
       </div>
       ${u.bio ? `<p class="user-card-bio">${esc(u.bio)}</p>` : ''}
-      <div class="user-card-stats">
-        <div><strong>${stats.founded}</strong><span>Founded</span></div>
-        <div><strong>${stats.completedFounded}</strong><span>Completed</span></div>
-        <div><strong>${stats.coediting}</strong><span>Co-edit</span></div>
-        <div><strong>${stats.completedTasks}</strong><span>Done</span></div>
+      <div class="user-card-stats user-card-stats--icons">
+        <div title="Projects founded">${ICONS.folder}<strong>${stats.founded}</strong></div>
+        <div title="Projects completed">${ICONS.target}<strong>${stats.completedFounded}</strong></div>
+        <div title="Co-editing">${ICONS.user}<strong>${stats.coediting}</strong></div>
+        <div title="Tasks completed">${ICONS.checkCircle}<strong>${stats.completedTasks}</strong></div>
       </div>
       <div class="user-card-foot">${isUserOnline(u) ? '<span class="user-card-online">Online now</span>' : `Last active ${u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'a while ago'}`}</div>
     </div>`;
@@ -9616,8 +10413,10 @@ async function router() {
   else if (hash === '/chat') await window.WTChat?.renderRoute?.();
   else if (hash === '/canvas') await window.WTCanvas?.renderRoute?.();
   else if (hash === '/notifications') await renderNotificationsPage();
+  else if (hash === '/diagnostics') await renderDiagnosticsPage();
   else if (hash === '/activity') await renderActivityPage();
   else if (hash === '/support') await renderSupportPage();
+  else if (hash === '/guide') await renderGuidePage();
   else if (hash === '/calendar') await renderCalendarPage();
   else if (hash === '/about') await renderAboutPage();
   else if (hash === '/admin') await renderAdminTabbed();
@@ -10050,11 +10849,15 @@ async function init() {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        // Close the topmost layer first. The image viewer takes priority over the
+        // document panel, so a first Escape closes the image and a second closes
+        // the panel behind it.
         if (window._activeConfirmCancel) window._activeConfirmCancel();
-        else if (state.projectPanelOpen) hideDocumentPanel();
-        else if (state.rankingPanelOpen) hideRankingPanel();
-        else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
         else if (!document.getElementById('file-preview-overlay')?.classList.contains('hidden')) closeFilePreview();
+        else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
+        else if (state.rankingPanelOpen) hideRankingPanel();
+        else if (state.projectPanelOpen) hideDocumentPanel();
+        else if (state.chatDockOpen) window.WTChat?.closeDock?.();
         else hideModal();
       } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
         && !document.getElementById('file-preview-overlay')?.classList.contains('hidden')) {
@@ -10079,6 +10882,12 @@ async function init() {
     document.getElementById('file-preview-overlay')?.addEventListener('click', (e) => {
       if (e.target.id === 'file-preview-overlay') closeFilePreview();
     });
+    // Click anywhere outside the open chat dock closes it.
+    document.addEventListener('pointerdown', (e) => {
+      if (!state.chatDockOpen) return;
+      const root = document.getElementById('chat-dock-root');
+      if (root && !root.contains(e.target)) window.WTChat?.closeDock?.();
+    }, true);
     document.getElementById('library-file-input').addEventListener('change', async (e) => {
       const inp = e.target;
       const pid = Number(inp.dataset.projectId);
@@ -10162,3 +10971,4 @@ async function init() {
     document.getElementById('content').innerHTML = `<div class="empty-state" style="margin-top:60px;text-align:center"><h2>Something went wrong</h2><p>${esc(String(err.message || err))}</p></div>`;
   }
 }
+
