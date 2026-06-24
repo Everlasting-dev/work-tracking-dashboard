@@ -999,8 +999,17 @@ const LocalDB = {
   },
 
   async deleteUser(id, transferToId) {
-    await db.projects.where('ownerId').equals(id).modify({ ownerId: transferToId });
-    return db.users.delete(id);
+    const uid = Number(id);
+    const to = Number(transferToId) || null;
+    // Transfer owned content so it isn't orphaned, and clear references that the
+    // cloud's foreign keys won't auto-handle (wt_updates / wt_attachments have no
+    // ON DELETE rule; wt_activity_log.user_id is NOT NULL with no cascade and would
+    // otherwise block the delete for any user who's ever done anything).
+    await db.projects.where('ownerId').equals(uid).modify({ ownerId: to });
+    try { await db.attachments.where('uploadedBy').equals(uid).modify({ uploadedBy: to }); } catch (_) {}
+    try { await db.updates.filter(u => Number(u.userId) === uid).modify({ userId: to }); } catch (_) {}
+    try { await db.activityLog.where('userId').equals(uid).delete(); } catch (_) {}
+    return db.users.delete(uid);
   },
 
   async hasUsers() { return (await db.users.count()) > 0; },

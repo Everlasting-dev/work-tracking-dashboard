@@ -1499,8 +1499,15 @@ const SupabaseDB = {
   },
 
   async deleteUser(id, transferToId) {
-    await this._sb().from('wt_projects').update({ owner_id: transferToId }).eq('owner_id', id);
-    const { error } = await this._sb().from('wt_users').delete().eq('id', id);
+    const sb = this._sb();
+    // Transfer owned content, then clear references whose FKs have no ON DELETE
+    // rule — otherwise Postgres blocks the delete (wt_activity_log.user_id is the
+    // guaranteed blocker since every user has activity rows).
+    await sb.from('wt_projects').update({ owner_id: transferToId }).eq('owner_id', id);
+    try { await sb.from('wt_attachments').update({ uploaded_by: transferToId }).eq('uploaded_by', id); } catch (_) {}
+    try { await sb.from('wt_updates').update({ user_id: transferToId }).eq('user_id', id); } catch (_) {}
+    try { await sb.from('wt_activity_log').delete().eq('user_id', id); } catch (_) {}
+    const { error } = await sb.from('wt_users').delete().eq('id', id);
     if (error) throw error;
   },
 

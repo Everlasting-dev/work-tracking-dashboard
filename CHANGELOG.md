@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.3
+
+### Fixed
+- **Deleting a user didn't stick** - deletion appeared to work but the account came back after sync, because database references (activity log, project updates, uploaded files) had no delete rule and blocked the cloud delete. Deleting a user now reassigns their projects/updates/files to you and removes their activity log, so the account is actually removed. An optional migration adds the matching delete rules at the database level.
+
 ## 3.2.2
 
 ### Fixed

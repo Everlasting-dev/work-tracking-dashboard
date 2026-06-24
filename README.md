@@ -4,7 +4,7 @@ WorkTracker is a desktop project and task workspace for teams — projects, boar
 
 ## Current release
 
-**v3.2.2** - one-time-password accounts, private personal spaces, profile customization, canvas collaboration, an in-app user guide, plus fixes for document loading (Google Drive), in-app PDF previews, and new-user sync. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+**v3.2.3** - one-time-password accounts, private personal spaces, profile customization, canvas collaboration, an in-app user guide, plus fixes for document loading (Google Drive), in-app PDF previews, new-user sync, and user deletion. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 
 1. Download and run the installer (Windows 10/11, x64).
 2. Sign in with your team account.
