@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.5'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.6'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -7190,6 +7190,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.6', date: '2026-06-25', items: ['Fixed a task stuck on "Complete blocking tasks first" with no visible blocker — stale/ghost dependency links are now ignored and cleaned up automatically. Blocking messages also name the actual task now.'] },
   { version: '3.2.5', date: '2026-06-25', items: ['Fixed a new user not seeing their private personal space — it is now created (correctly owned) on their first sign-in. Also stopped a repeating duplicate-username sync error after creating a user.'] },
   { version: '3.2.4', date: '2026-06-24', items: ['Admin: every user card now has a clear Delete button (hidden on your own). Deleting a user transfers their projects, updates, and files to the main admin.'] },
   { version: '3.2.3', date: '2026-06-24', items: ['Admin: deleting a user now works permanently — their projects, updates, and files transfer to you and the account no longer reappears after sync.'] },
@@ -9093,7 +9094,15 @@ const actions = {
       }
       const blockersDone = await DB.areTaskBlockersDone(t.id);
       if (!blockersDone) {
-        showToast('Complete blocking tasks first', 'warning');
+        // Name the blocker(s) so it's clear which task to finish (the check above
+        // has already pruned any ghost/cross-project links).
+        let names = [];
+        try {
+          const ids = await DB.getTaskBlockers(t.id);
+          const rows = await Promise.all(ids.map(id => DB.getTask(id)));
+          names = rows.filter(r => r && r.status !== 'done').map(r => r.title);
+        } catch (_) {}
+        showToast(names.length ? `Blocked by: ${names.slice(0, 3).join(', ')}` : 'Complete blocking tasks first', 'warning');
         return;
       }
     }

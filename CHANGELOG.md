@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.6
+
+### Fixed
+- **"Complete blocking tasks first" with no visible blocker** - a task could be held by a ghost dependency: a "blocked by" link pointing at a task that no longer exists in the project (left over because dependencies are stored locally and weren't updated when task ids changed during sync). These stale/cross-project links are now ignored and pruned automatically, so they can't block a task forever.
+- **Clearer blocker message** - when a real dependency does block completion, the message now names the blocking task(s) ("Blocked by: …") instead of a generic notice.
+
 ## 3.2.5
 
 ### Fixed

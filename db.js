@@ -651,13 +651,24 @@ const LocalDB = {
   },
 
   async areTaskBlockersDone(taskId) {
-    const blockers = await LocalDB.getTaskBlockers(taskId);
-    if (!blockers.length) return true;
-    for (const bid of blockers) {
-      const t = await db.tasks.get(bid);
-      if (t && t.status !== 'done') return false;
+    const tid = Number(taskId);
+    const self = await db.tasks.get(tid);
+    const projectId = self ? Number(self.projectId) : null;
+    const deps = (await db.taskDependencies.where('toTaskId').equals(tid).toArray())
+      .filter(d => d.type === 'blocks');
+    if (!deps.length) return true;
+    const stale = [];
+    let blocked = false;
+    for (const dep of deps) {
+      const b = await db.tasks.get(Number(dep.fromTaskId));
+      // Prune "ghost" dependencies: the blocker no longer exists, or it belongs
+      // to a different project (orphaned by id-remap or a since-deleted task).
+      // These can never be completed from this project and would block forever.
+      if (!b || (projectId != null && Number(b.projectId) !== projectId)) { stale.push(dep.id); continue; }
+      if (b.status !== 'done') blocked = true;
     }
-    return true;
+    if (stale.length) { try { await db.taskDependencies.bulkDelete(stale); } catch (_) {} }
+    return !blocked;
   },
 
   async recordLoginSession(userId, { deviceId = '', deviceLabel = '', userAgent = '', ip = '' } = {}) {
