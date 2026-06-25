@@ -530,7 +530,8 @@ const SupabaseDB = {
       address: r.address || '', hoursLoggedTotal: Number(r.hours_logged_total || 0),
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null,
       mustChangePassword: !!r.must_change_password,
-      tagline: r.tagline || '', accentColor: r.accent_color || '', coverColor: r.cover_color || ''
+      tagline: r.tagline || '', accentColor: r.accent_color || '', coverColor: r.cover_color || '',
+      hideFromTeamMap: !!r.hide_from_team_map
     };
   },
 
@@ -722,6 +723,13 @@ const SupabaseDB = {
     } catch (_) {
       return [];
     }
+  },
+
+  async clearGeneralChat() {
+    // Wipe the General channel for everyone: in-app chat messages + Discord relay.
+    await this._sb().from('wt_activity_log').delete()
+      .eq('action', 'sent_message').eq('entity_type', 'chat').is('project_id', null);
+    try { await this._sb().from('wt_discord_messages').delete().eq('channel_id', 'general'); } catch (_) {}
   },
 
   async getChatActivityLog(channelId, { limit = 100 } = {}) {
@@ -1463,6 +1471,7 @@ const SupabaseDB = {
     if (changes.tagline != null) patch.tagline = changes.tagline || '';
     if (changes.accentColor != null) patch.accent_color = changes.accentColor || '';
     if (changes.coverColor != null) patch.cover_color = changes.coverColor || '';
+    if (changes.hideFromTeamMap != null) patch.hide_from_team_map = !!changes.hideFromTeamMap;
     if (changes.hoursLoggedTotal != null) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
     if (changes.username != null) {
       const next = String(changes.username).trim().toLowerCase();
@@ -1480,6 +1489,7 @@ const SupabaseDB = {
       delete patch.tagline;
       delete patch.accent_color;
       delete patch.cover_color;
+      delete patch.hide_from_team_map;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;

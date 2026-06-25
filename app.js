@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.6'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.3.0'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -920,13 +920,13 @@ function trimWebhookUrl(url) {
 }
 
 function discordWebhookUsername(session) {
-  const raw = session?.displayName || session?.username || 'WorkTracker';
+  const raw = session?.displayName || session?.username || 'Orbitrack';
   const safe = raw.replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 64);
-  return safe ? `${safe} (WorkTracker)` : 'WorkTracker';
+  return safe ? `${safe} (Orbitrack)` : 'Orbitrack';
 }
 
 function buildDiscordWebhookBody({ content, username, threadName }) {
-  const text = String(content || 'Notification from WorkTracker').trim().slice(0, 2000) || ' ';
+  const text = String(content || 'Notification from Orbitrack').trim().slice(0, 2000) || ' ';
   const body = { content: text };
   if (username) {
     const u = String(username).replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -944,7 +944,7 @@ async function postToDiscordWebhook(url, payload) {
   if (!cleanUrl) return { ok: false, reason: 'no-url' };
   const bodies = [
     buildDiscordWebhookBody(payload),
-    buildDiscordWebhookBody({ ...payload, threadName: 'WorkTracker' })
+    buildDiscordWebhookBody({ ...payload, threadName: 'Orbitrack' })
   ];
   const seen = new Set();
   const uniqueBodies = bodies.filter(b => {
@@ -1410,7 +1410,7 @@ function renderLogin() {
   const v3 = isV3Mode();
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
-    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Welcome back</h2>
     <p class="auth-subtitle">${v3 ? 'Sign in with your Supabase Auth account' : 'Sign in to your account'}</p>
     ${renderAuthCloudSync()}
@@ -1427,7 +1427,7 @@ function renderLogin() {
 function renderAdminSetup() {
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
-    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Create administrator</h2>
     <p class="auth-subtitle">No accounts exist yet. Create the admin account and a master recovery key. Other users are added from Admin after you sign in.</p>
     ${renderAuthCloudSync()}
@@ -1451,7 +1451,7 @@ async function renderRecovery() {
   if (!hasMk) {
     document.getElementById('auth-content').innerHTML = `
       ${renderAuthThemeToggle()}
-      <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+      <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
       <h2>Recovery unavailable</h2>
       <p class="auth-subtitle">No master recovery key was set for this workspace. Sign in as an admin and set one from the Admin panel.</p>
       <div class="form-actions" style="justify-content:stretch;margin-top:20px"><button type="button" class="btn btn-primary" style="flex:1;justify-content:center" data-action="recovery-back-login">Back to sign in</button></div>`;
@@ -1459,7 +1459,7 @@ async function renderRecovery() {
   }
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
-    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Account recovery</h2>
     <p class="auth-subtitle">Enter your master recovery key to reset a user password.</p>
     <div class="auth-error" id="auth-error"></div>
@@ -1475,7 +1475,7 @@ async function renderRecoveryChooseUser() {
   const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} — ${esc(u.displayName || u.username)}</option>`).join('');
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
-    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Reset password</h2>
     <p class="auth-subtitle">Choose a user and set a new password.</p>
     <div class="auth-error" id="auth-error"></div>
@@ -1493,7 +1493,7 @@ function renderForcePasswordChange(user) {
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
-    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitask</span></div>
+    <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Set your password</h2>
     <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password — choose your own to continue.</p>
     <div class="auth-error" id="auth-error"></div>
@@ -1706,6 +1706,20 @@ async function showApp() {
     await DB.dedupePersonalClassrooms?.(s.userId, nm).catch(() => {});
     await DB.ensurePersonalClassroom(s.userId, nm).catch(() => {});
   }
+  // Seed a one-time welcome note for brand-new users (only when they have none).
+  try {
+    if (DB.getPersonalNotes && DB.createPersonalNote) {
+      const existingNotes = await DB.getPersonalNotes(s.userId).catch(() => []);
+      if (!existingNotes || existingNotes.length === 0) {
+        const first = (s.displayName || s.username || '').split(/\s+/)[0] || 'there';
+        await DB.createPersonalNote({
+          userId: s.userId,
+          title: 'Welcome to Orbitrack 👋',
+          content: `Hi ${first}! A few things to get you going:\n\n• Create a project from the Projects page, then add tasks.\n• Open the Brainstorm canvas (Alt+B) to sketch ideas — drag a note onto it.\n• Jot quick notes here any time (Alt+N).\n• Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
+        }).catch(() => {});
+      }
+    }
+  } catch (_) {}
   if (await DB.isEmpty() && !isCloudMode()) await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
   startSidebarClock();
@@ -1938,7 +1952,7 @@ async function showSyncDiagnosticsModal() {
   const jobs = getSyncQueueDetails();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
 
-  console.group('[WorkTracker] Cloud sync diagnostics');
+  console.group('[Orbitrack] Cloud sync diagnostics');
   console.log('Network:', online ? 'online' : 'offline');
   console.log('Status:', status);
   if (jobs.length) console.table(jobs.map(j => ({ type: j.type, status: j.status, attempts: j.attempts, error: j.lastError, summary: j.summary })));
@@ -2243,11 +2257,7 @@ function renderUserMenu() {
   menu.innerHTML = `
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '🔇' : '🔔'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
-    <button type="button" class="user-menu-item" data-action="toggle-theme-mode">${themeMode === 'black' ? (ICONS.sun || '') : (ICONS.moon || '')} Switch to ${themeMode === 'black' ? 'Normal' : 'Black'} mode</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
-    <button type="button" class="user-menu-item" data-action="goto-support">${ICONS.sparkles} Support</button>
-    <button type="button" class="user-menu-item" data-action="goto-diagnostics">${ICONS.alertTriangle} Diagnostics</button>
-    <button type="button" class="user-menu-item" data-action="app-refresh">${ICONS.refresh} Refresh app</button>
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
     <hr class="user-menu-divider">
@@ -5386,7 +5396,7 @@ async function exportMonthlyReportPdf() {
   doc.text('PROGRESS BRIEF', 40, 24);
   doc.setTextColor(24, 27, 34);
   doc.setFontSize(18);
-  doc.text('Orbitask — Monthly Report', 40, 35);
+  doc.text('Orbitrack — Monthly Report', 40, 35);
   doc.setFontSize(12);
   doc.text(label, 40, 52);
 
@@ -5638,7 +5648,7 @@ async function buildDiagnosticsText({ forceAuth = false } = {}) {
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
 
   const lines = [
-    'Orbitask diagnostics',
+    'Orbitrack diagnostics',
     `Version: ${getAppVersion()}`,
     `User: ${s.username || s.displayName || 'not signed in'} (${s.userId || 'no-id'})`,
     `Route: ${window.location.hash || '#/projects'}`,
@@ -5805,16 +5815,39 @@ async function renderDiagnosticsPage() {
     </div>`;
 }
 
-function showModal(title, body) {
+function showModal(title, body, opts = {}) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal"><div class="modal-header"><h2>${title}</h2><button class="btn-icon" data-action="close-modal">${ICONS.x}</button></div><div class="modal-body">${body}</div></div>`;
   ov.classList.remove('hidden');
+  // Per-modal close behaviour: lockBackdrop = ignore outside clicks;
+  // confirmCancel = ask before closing (used by the new-user form).
+  ov.dataset.lockBackdrop = opts.lockBackdrop ? 'true' : '';
+  ov.dataset.confirmCancel = opts.confirmCancel ? 'true' : '';
+  ov.dataset.cancelMsg = opts.cancelMsg || '';
+  delete ov.dataset.confirmDialog;
   window.OrbiFun?.enterModal(ov.querySelector('.modal'));
   enableSpellcheckOn(ov);
   const inp = ov.querySelector('input:not([type=hidden]),textarea,select');
   if (inp) setTimeout(() => inp.focus(), 50);
 }
-function hideModal() { const ov = document.getElementById('modal-overlay'); ov.classList.add('hidden'); ov.innerHTML = ''; }
+function hideModal() {
+  const ov = document.getElementById('modal-overlay');
+  ov.classList.add('hidden');
+  ov.innerHTML = '';
+  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+}
+// Close the current modal, honouring a confirm-before-cancel guard (native confirm
+// so it doesn't replace the modal's own content). Returns true if it closed.
+function requestModalClose() {
+  const ov = document.getElementById('modal-overlay');
+  if (!ov || ov.classList.contains('hidden')) return true;
+  if (ov.dataset.confirmCancel === 'true') {
+    const msg = ov.dataset.cancelMsg || 'Discard this? Anything you entered will be lost.';
+    if (!window.confirm(msg)) return false;
+  }
+  hideModal();
+  return true;
+}
 
 function showConfirmDialog({
   title = 'Confirm action',
@@ -6804,7 +6837,7 @@ async function showAddUserModal() {
       </div>
       <div class="form-group"><label>Role</label><select name="role"><option value="user" selected>Member</option><option value="admin">Admin</option></select></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
-    </form>`);
+    </form>`, { lockBackdrop: true, confirmCancel: true, cancelMsg: 'Discard this new user? Anything you entered will be lost.' });
 }
 
 async function showEditUserModal(uid) {
@@ -7086,6 +7119,7 @@ async function showProfileModal() {
         <p class="text-muted text-sm" style="margin-top:6px">Assigned by an admin. Project tags (e.g. R&amp;D) come from the project, not your profile.</p>
       </div>`}
       <input name="color" type="hidden" value="#000000">
+      <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide me from the team activity map</strong><br><span class="text-muted text-sm">You won't appear as a node on the team map.</span></span></label>
       <div class="profile-security-row">
         <div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from the Admin panel.' : 'Ask an admin to issue you a one-time password.'}</p></div>
         ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}
@@ -7135,7 +7169,7 @@ function showOnboardingModal(force = false) {
   ov.innerHTML = `
     <div class="modal modal-howto">
       <div class="modal-header">
-        <h2>${ICONS.sparkles} Welcome to Orbitask${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
+        <h2>${ICONS.sparkles} Welcome to Orbitrack${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
         <button class="btn-icon" data-action="close-howto">${ICONS.x}</button>
       </div>
       <div class="modal-body">
@@ -7190,60 +7224,81 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
-  { version: '3.2.6', date: '2026-06-25', items: ['Fixed a task stuck on "Complete blocking tasks first" with no visible blocker — stale/ghost dependency links are now ignored and cleaned up automatically. Blocking messages also name the actual task now.'] },
-  { version: '3.2.5', date: '2026-06-25', items: ['Fixed a new user not seeing their private personal space — it is now created (correctly owned) on their first sign-in. Also stopped a repeating duplicate-username sync error after creating a user.'] },
-  { version: '3.2.4', date: '2026-06-24', items: ['Admin: every user card now has a clear Delete button (hidden on your own). Deleting a user transfers their projects, updates, and files to the main admin.'] },
-  { version: '3.2.3', date: '2026-06-24', items: ['Admin: deleting a user now works permanently — their projects, updates, and files transfer to you and the account no longer reappears after sync.'] },
-  { version: '3.2.2', date: '2026-06-24', items: ['Admin: fixed new users failing to sync to the cloud (auth-link constraint error). New accounts now save correctly and link their own login on first sign-in.'] },
-  { version: '3.2.1', date: '2026-06-24', items: ['Documents: fixed every file failing with a 404 — the published build was using the old Supabase storage path instead of Google Drive. Files load again.'] },
-  { version: '3.2.0', date: '2026-06-24', items: [
-    'Accounts: admins create users with a one-time password; new users set their own password on first sign-in. Members can request a reset and admins issue a fresh one-time password.',
-    'Classrooms & personal space: pick a new user’s classrooms at creation, and everyone gets a private personal space that stays hidden until they invite a collaborator.',
-    'User guide: a new searchable in-app guide plus a refreshed first-run tour (admin help hidden from members).',
-    'Profile: customize your avatar, tagline, and accent/cover colors with a live preview; redesigned profile header.',
-    'Brainstorm canvas: owners can edit the name/purpose; canvases are public by default, or private with chosen collaborators.',
-    'Documents: PDFs preview inline again in the desktop app; Office files offer a clear download.',
-    'Polish: Copilot follows light/dark theme, toasts no longer stack across the screen, chat/image/doc viewers close on Escape or outside click, and several alignment/visibility fixes.'
+  { version: '3.3.0', date: '2026-06-25', highlights: [
+    'Renamed to Orbitrack.',
+    'Keyboard shortcuts: Alt+N opens Notes, Alt+B opens the Brainstorm canvas.',
+    'Canvas: export your board to PNG or PDF, and start from a template.',
+    'Team activity map: cleaner organic layout, colour-coded by department, plus a "hide me from the map" option in your profile.',
+    'Tidier account menu and a cleaner, scrollable release-notes page.',
+  ], adminNotes: [
+    'The new-user popup no longer closes when you click away, and asks to confirm before cancelling.',
+    'The General chat was cleared.',
   ] },
-  { version: '3.1.12', date: '2026-06-24', items: ['Projects: project detail pages now follow the selected light/dark theme instead of staying black', 'Typography: added a tighter professional font scale for project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Tasks: reduced oversized task text and row spacing for a denser, more consistent project workspace'] },
-  { version: '3.1.11', date: '2026-06-24', items: ['Authorization: added a document-storage health check with toast and bell notification when the user session is invalid', 'Diagnostics: added a full Diagnostics tab with storage auth, sync queue, and user-visible error logs that can be copied or sent to admins', 'Mobile: cache-busted the app to show the correct version number and refreshed small-screen layouts', 'Brainstorm canvas: mobile now opens a stable read-only fallback instead of mounting the crash-prone live editor'] },
-  { version: '3.1.10', date: '2026-06-24', items: ['Documents: fixed Google Drive/Supabase storage sign-in so uploaded files open for users instead of showing raw 404 pages', 'Documents: legacy Supabase files remain visible and open while Drive migration catches up', 'Login: added a theme toggle before sign-in', 'Dark mode: improved login, cloud sync, and startup database-check message contrast', 'Projects: sticky frosted header now keeps the first project row clear and matches dark theme'] },
-  { version: '3.1.8', date: '2026-06-23', items: ['Projects header: the sticky search/filter bar no longer crops the top of the first project cards, and the frosted look now works in dark theme too', 'Brainstorm canvas fullscreen: redesigned as a clean top bar (Boards · Notes · Exit) that no longer overlaps the drawing tools'] },
-  { version: '3.1.7', date: '2026-06-23', items: ['Project tabs (Tasks/Board/Timeline/Map): fixed the bar shifting size when switching tabs — consistent height and no width jump for a cleaner, steadier look', 'Brainstorm canvas: mobile now opens as a stable read-only viewer with lighter controls, safer note-drop handling, and app-matched theme colors', 'Canvas fullscreen controls and Notes access were cleaned up so they no longer cover drawing palettes on desktop'] },
-  { version: '3.1.6', date: '2026-06-21', items: ['Notes: fixed the blank/non-typeable editor — notes now always load with a reliable built-in formatting editor (bold/italic/underline/lists)', 'Brainstorm canvas: fixed the board closing on its own after a while (a background sync was kicking you out); added a Figma-style Fullscreen toggle', 'Brainstorm canvas: drag a note from the Notes panel straight onto the canvas to drop it as a sticky', 'Project Map: easier dependency setup — a tick-box "Blocked by" list on each task (ticked tasks show up as links on the Map)'] },
-  { version: '3.1.5', date: '2026-06-21', items: ['Notes: rebuilt into a searchable notebook with note titles, a focused editor pane, Quill formatting, autosave, and a reliable fallback editor', 'Task creation: added quick task entry, multiline paste for bulk tasks, advanced details on demand, and note/meeting-text task import with preview', 'Tasks: added Momentum, focus filters, cleaner cards, and better list/board/table visibility', 'Projects: added a clearer brief/focus panel and simpler project creation flow while keeping workflow templates and logistics checks compatible', 'Dependencies: bundled SortableJS, jsPDF, D3, Floating UI, and Quill locally so the desktop app works without CDN scripts'] },
-  { version: '3.1.4', date: '2026-06-20', items: ['Notes: rebuilt the notes editor so it always loads and lets you type (bold/italic/lists) — the old editor sometimes showed a blank box', 'Project Map: added a Fullscreen mode, a Fit-to-view button, an Add-task button, and richer cards (assignee initials, due dates with overdue highlight)', 'Brainstorm canvas: fixed being unable to leave a board, and teammates\' avatars now appear live when several people are in the same canvas', 'Project Map: click a dependency link (or select it and press Delete) to unlink it', 'Dashboard: new Brainstorm, weekly-activity, and quick-note widgets'] },
-  { version: '3.1.2', date: '2026-06-20', items: ['Faster image previews — images open instantly in low resolution with a "View HD" button for full quality', 'Fixed cloud sync errors when deleting files and "Object not found" when opening files (legacy file sync no longer conflicts with Drive storage)'] },
-  { version: '3.1.1', date: '2026-06-20', items: ['Fixed images and documents not loading ("Object not found") in the desktop app — files now load correctly from Google Drive'] },
-  { version: '3.1.0', date: '2026-06-19', items: ['File storage moved to Google Drive — uploaded images, PDFs, videos and documents are now stored in the team Google Drive (faster and more scalable); existing files were migrated automatically', 'Added a delete button on project documents', 'More reliable cloud sign-in so files load and upload everywhere'] },
-  { version: '3.0.11', date: '2026-06-18', items: ['Fixed the in-app updater showing "Updates are managed in the installed desktop app" on installed builds', 'Downloaded updates now install automatically on quit so the app self-heals if the update prompt fails'] },
-  { version: '3.0.10', date: '2026-06-18', items: ['Orbitask-themed confirm dialogs in light and dark mode', 'Project properties, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, tooltips, heat, clusters, and collaboration links', 'Brief-style reports across HTML previews, PDF export, and AI report prompts', 'Local AI Copilot removed from production builds'] },
-  { version: '3.0.8', date: '2026-06-17', items: ['Dark theme polish: readable popups, sync banner, headings, and completed tasks', 'Download button for project & task attachments (any file type)', 'Neater task List view using grouped tables', 'Documents panel no longer opens automatically on a project', 'Assignee sync, ID-map, and classroom access fixes'] },
-  { version: '3.0.7', date: '2026-06-12', items: ['Fixed queued task updates and sync error loops', 'Removed ghost users from team views', 'More reliable realtime sync'] },
-  { version: '3.0.0', date: '2026-06-07', items: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Interactive D3 team activity map', 'Rich-text notes and PDF report generation', 'Direct messaging with Discord bridge'] },
+  { version: '3.2.6', date: '2026-06-25', minor: true },
+  { version: '3.2.5', date: '2026-06-25', minor: true },
+  { version: '3.2.4', date: '2026-06-24', minor: true },
+  { version: '3.2.3', date: '2026-06-24', minor: true },
+  { version: '3.2.2', date: '2026-06-24', minor: true },
+  { version: '3.2.1', date: '2026-06-24', minor: true },
+  { version: '3.2.0', date: '2026-06-24', highlights: [
+    'One-time-password accounts with a forced first-login password change.',
+    'Private personal spaces, hidden from others until you invite a collaborator.',
+    'Profile customization — avatar, tagline, and accent/cover colours.',
+    'Brainstorm canvas collaboration: public, or private with the people you choose.',
+    'A searchable in-app user guide.',
+  ], adminNotes: [
+    'Create users with a one-time password and assign their classrooms at creation.',
+  ] },
+  { version: '3.1.12', date: '2026-06-24', minor: true },
+  { version: '3.1.11', date: '2026-06-24', minor: true },
+  { version: '3.1.10', date: '2026-06-24', minor: true },
+  { version: '3.1.6', date: '2026-06-21', highlights: [
+    'Notes rebuilt into a reliable searchable notebook with formatting and autosave.',
+    'Brainstorm canvas: drag notes onto the board, Figma-style fullscreen, and tick-box "Blocked by" task dependencies on the Map.',
+  ] },
+  { version: '3.1.5', date: '2026-06-21', minor: true },
+  { version: '3.1.4', date: '2026-06-20', minor: true },
+  { version: '3.1.2', date: '2026-06-20', minor: true },
+  { version: '3.1.1', date: '2026-06-20', minor: true },
+  { version: '3.1.0', date: '2026-06-19', highlights: [
+    'File storage moved to Google Drive — faster and more scalable; existing files were migrated automatically.',
+  ] },
+  { version: '3.0.11', date: '2026-06-18', minor: true },
+  { version: '3.0.10', date: '2026-06-18', minor: true },
+  { version: '3.0.8', date: '2026-06-17', minor: true },
+  { version: '3.0.7', date: '2026-06-12', minor: true },
+  { version: '3.0.0', date: '2026-06-07', highlights: [
+    'Interactive team activity map, rich-text notes, PDF reports, and direct messaging.',
+  ] },
 ];
 
 async function renderSupportPage() {
   const content = document.getElementById('content');
   const isDesktop = !!window.workTrackerDesktop?.isDesktop;
-  const changelogHtml = SUPPORT_CHANGELOG.map(rel => `
-    <div class="support-changelog-item">
-      <div class="support-changelog-head"><strong>v${esc(rel.version)}</strong><span class="text-muted text-sm">${esc(rel.date)}</span></div>
-      <ul>${rel.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-    </div>`).join('');
+  const isAdm = isAdmin();
+  const changelogHtml = SUPPORT_CHANGELOG.map(rel => {
+    const head = `<div class="support-changelog-head"><strong>v${esc(rel.version)}</strong><span class="text-muted text-sm">${esc(rel.date)}</span></div>`;
+    if (rel.minor) {
+      return `<div class="support-changelog-item support-changelog-minor">${head}<p class="text-muted text-sm">Minor fixes &amp; improvements.</p></div>`;
+    }
+    const hi = (rel.highlights || []).map(i => `<li>${esc(i)}</li>`).join('');
+    const adm = (isAdm && Array.isArray(rel.adminNotes) && rel.adminNotes.length)
+      ? `<p class="support-changelog-admin-label">${ICONS.crown || ''} Admin</p><ul class="support-changelog-admin">${rel.adminNotes.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
+      : '';
+    return `<div class="support-changelog-item">${head}<ul>${hi}</ul>${adm}</div>`;
+  }).join('');
   content.innerHTML = `
     <div class="view-page support-page">
       <div class="projects-page-header">
-        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help · Updates · Feedback</span></div>
+        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help · Updates · About</span></div>
       </div>
       <div class="support-grid">
         <section class="dash-panel support-card">
           <div class="dash-panel-head"><h3>Help</h3></div>
-          <p class="text-muted text-sm">Guides and onboarding for Orbitask.</p>
+          <p class="text-muted text-sm">Guides and onboarding for Orbitrack.</p>
           <div class="support-actions">
             <a href="#/guide" class="btn btn-primary">${ICONS.book || ICONS.file} User guide</a>
             <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
-            <button type="button" class="btn btn-ghost" data-action="show-about">${ICONS.target} About Orbitask</button>
           </div>
         </section>
         <section class="dash-panel support-card">
@@ -7259,12 +7314,18 @@ async function renderSupportPage() {
           <p class="text-muted text-sm">${isDesktop ? 'Check for desktop app updates.' : 'Install the desktop app for automatic updates.'}</p>
           <div class="support-actions">
             <button type="button" class="btn btn-primary" data-action="check-updates">${ICONS.refresh} Check for updates</button>
-            ${isAdmin() ? '<a href="#/activity" class="btn btn-ghost">Project activity log</a>' : ''}
+            ${isAdm ? '<a href="#/activity" class="btn btn-ghost">Project activity log</a>' : ''}
+            ${isAdm ? `<button type="button" class="btn btn-ghost btn-danger-text" data-action="clear-general-chat">${ICONS.trash} Clear General chat</button>` : ''}
           </div>
         </section>
         <section class="dash-panel support-card support-card-wide">
+          <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
+          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace — projects, boards, a brainstorm canvas, notes, documents, and lightweight chat in one app.</p>
+          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, D3 · Quill · jsPDF · SortableJS · tldraw, and Electron. Made by Everlasting.</p>
+        </section>
+        <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>Release notes</h3></div>
-          <div class="support-changelog">${changelogHtml}</div>
+          <div class="support-changelog support-changelog-scroll">${changelogHtml}</div>
         </section>
       </div>
     </div>`;
@@ -7354,7 +7415,7 @@ async function renderGuidePage() {
   content.innerHTML = `
     <div class="view-page guide-page">
       <div class="projects-page-header">
-        <div class="projects-page-title"><h1>User guide</h1><span class="projects-page-count">How to use Orbitask</span></div>
+        <div class="projects-page-title"><h1>User guide</h1><span class="projects-page-count">How to use Orbitrack</span></div>
         <div class="guide-header-actions">
           <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
         </div>
@@ -7402,21 +7463,33 @@ function _pentPoints(cx, cy, r, rot = -Math.PI / 2) {
   return pts.join(' ');
 }
 
+// Stable colour per department — used for both the map nodes and the legend.
+const TEAM_DEPT_COLORS = ['#6366f1', '#06b6d4', '#f97316', '#22c55e', '#e11d48', '#a855f7', '#eab308', '#14b8a6', '#ec4899', '#3b82f6'];
+function teamMapDeptColor(dept) {
+  const key = String(dept || 'general').toLowerCase();
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return TEAM_DEPT_COLORS[h % TEAM_DEPT_COLORS.length];
+}
+
 async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
   const activityByUser = await DB.getTeamActivitySummary({ days: 7 });
   const vibrant = getThemeMode() === 'normal';
 
+  // Respect each user's "hide me from the team map" preference.
+  const visibleUsers = (users || []).filter(u => !u.hideFromTeamMap);
+
   // Store data for D3 initialization
   const mapId = `team-map-${Date.now()}`;
   window._teamActivityData = window._teamActivityData || {};
-  window._teamActivityData[mapId] = { users, projects, tasks, activityByUser, vibrant };
+  window._teamActivityData[mapId] = { users: visibleUsers, projects, tasks, activityByUser, vibrant };
 
-  const legend = vibrant
-    ? `<span><i style="background:linear-gradient(135deg,#06b6d4,#38bdf8)"></i> Low</span><span><i style="background:linear-gradient(135deg,#a855f7,#7c3aed)"></i> Medium</span><span><i style="background:linear-gradient(135deg,#f97316,#ec4899)"></i> High</span>`
-    : `<span><i style="background:#e5e5e5"></i> Low</span><span><i style="background:#737373"></i> Medium</span><span><i style="background:#1a1a1a"></i> High</span>`;
+  // Legend = departments present (people are coloured by department, linked by collaboration).
+  const depts = [...new Set(visibleUsers.map(u => u.department || 'general'))];
+  const legend = depts.map(d => `<span><i style="background:${teamMapDeptColor(d)}"></i> ${esc(departmentLabel(d))}</span>`).join('');
 
   return `<section class="dash-panel team-activity-map">
-    <div class="dash-panel-head"><h3>Team Activity Map</h3><span class="projects-page-count">Interactive · 7-day activity</span></div>
+    <div class="dash-panel-head"><h3>Team Activity Map</h3><span class="projects-page-count">Linked by collaboration · coloured by team</span></div>
     <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:380px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
     <div class="activity-pent-legend">${legend}</div>
   </section>`;
@@ -7594,16 +7667,6 @@ function initializeTeamActivityD3() {
       .on('zoom', (event) => g.attr('transform', event.transform));
     svg.call(zoomBehavior);
 
-    const deptBands = g.append('g').attr('class', 'team-map-dept-bands');
-    departments.forEach(dept => {
-      deptBands.append('text')
-        .attr('x', deptX(dept))
-        .attr('y', 34)
-        .attr('text-anchor', 'middle')
-        .attr('class', 'team-map-dept-label')
-        .text(departmentLabel(dept));
-    });
-
     // Smooth, curved collaboration links (cubic bezier with horizontal
     // tangents) drawn as paths instead of straight lines.
     const baseLinkOpacity = d => Math.min(0.55, 0.18 + d.weight * 0.08);
@@ -7649,7 +7712,7 @@ function initializeTeamActivityD3() {
 
     nodeSel.append('circle')
       .attr('r', d => 24 + Math.min(20, Math.sqrt(d.activity || 1) * 1.6))
-      .attr('fill', d => colorByHeat(heat(d.activity)))
+      .attr('fill', d => teamMapDeptColor(d.department))
       .attr('stroke', 'var(--card)')
       .attr('stroke-width', 3)
       .on('click', (_event, d) => showUserProfileModal(Number(d.id)))
@@ -7692,8 +7755,9 @@ function initializeTeamActivityD3() {
     const simulation = d3.forceSimulation(nodes)
       .force('link', d3.forceLink(links).id(d => d.id).distance(d => 120 - Math.min(55, d.weight * 9)).strength(0.08))
       .force('charge', d3.forceManyBody().strength(-260))
-      .force('x', d3.forceX(d => deptX(d.department)).strength(0.12))
-      .force('y', d3.forceY(height / 2).strength(0.08))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('x', d3.forceX(width / 2).strength(0.03))
+      .force('y', d3.forceY(height / 2).strength(0.05))
       .force('collide', d3.forceCollide(d => 42 + Math.min(20, Math.sqrt(d.activity || 1) * 1.4)));
 
     simulation.on('tick', () => {
@@ -8051,11 +8115,11 @@ async function renderAboutPage() {
     { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app — files now load from Google Drive'] },
     { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) — existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
     { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
-    { version: '3.0.10', date: 'June 2026', features: ['Orbitask-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports', 'Production build excludes the local AI Copilot'] },
+    { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports', 'Production build excludes the local AI Copilot'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
     { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
     { version: '2.2.21', date: 'May 2026', features: ['Fixed self-DM routing bug', 'Enhanced message delivery tracking'] },
-    { version: '2.2.20', date: 'May 2026', features: ['Branding updated to Orbitask', 'UI refinements'] }
+    { version: '2.2.20', date: 'May 2026', features: ['Branding updated to Orbitrack', 'UI refinements'] }
   ];
 
   content.innerHTML = `
@@ -8063,7 +8127,7 @@ async function renderAboutPage() {
       <header class="about-header">
         <div class="about-header-mark">${ICONS.target || ICONS.sparkles || ''}</div>
         <div class="about-header-text">
-          <h1>Orbitask</h1>
+          <h1>Orbitrack</h1>
           <p class="about-header-tagline">Team project &amp; task management platform</p>
         </div>
         <div class="about-header-meta">
@@ -8081,9 +8145,9 @@ async function renderAboutPage() {
       </section>
 
       <section class="dash-panel">
-        <div class="dash-panel-head"><h3>About Orbitask</h3></div>
-        <p>Orbitask is a powerful, open-source team project and task management platform designed from the ground up for teams that move fast. Built with vanilla JavaScript and Supabase, it combines the speed of local-first databases with secure cloud synchronization.</p>
-        <p>Whether you're managing software projects, coordinating team workflows, or tracking department initiatives, Orbitask provides the tools you need without the bloat of enterprise platforms.</p>
+        <div class="dash-panel-head"><h3>About Orbitrack</h3></div>
+        <p>Orbitrack is a powerful, open-source team project and task management platform designed from the ground up for teams that move fast. Built with vanilla JavaScript and Supabase, it combines the speed of local-first databases with secure cloud synchronization.</p>
+        <p>Whether you're managing software projects, coordinating team workflows, or tracking department initiatives, Orbitrack provides the tools you need without the bloat of enterprise platforms.</p>
       </section>
 
       <section class="dash-panel">
@@ -8168,7 +8232,7 @@ async function renderAboutPage() {
 }
 
 function showAboutModal() {
-  showModal('About Orbitask', `
+  showModal('About Orbitrack', `
     <div class="about-modal">
       <div class="about-logo-row">
         <div class="about-logo-mark">
@@ -8181,7 +8245,7 @@ function showAboutModal() {
           </svg>
         </div>
         <div>
-          <div class="about-app-name">Orbitask</div>
+          <div class="about-app-name">Orbitrack</div>
           <div class="about-version">Version ${esc(getAppVersion())} · Built by Everlasting</div>
         </div>
       </div>
@@ -8833,8 +8897,9 @@ async function handleFormSubmit(e) {
       const tagline = (fd.get('tagline') || '').toString().trim().slice(0, 80);
       const accentColor = (fd.get('accentColor') || '').toString().trim();
       const coverColor = (fd.get('coverColor') || '').toString().trim();
+      const hideFromTeamMap = !!fd.get('hideFromTeamMap');
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, tagline, accentColor, coverColor, ...(color && { color }) };
+      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, tagline, accentColor, coverColor, hideFromTeamMap, ...(color && { color }) };
       if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
@@ -9501,7 +9566,22 @@ const actions = {
     if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
     state.collapsedTaskGroups[pid] = collapsed;
   },
-  'show-about': () => { closeUserMenu(); showAboutModal(); },
+  'show-about': () => { closeUserMenu(); window.location.hash = '#/support'; },
+  'clear-general-chat': async () => {
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+    if (!await showConfirmDialog({
+      title: 'Clear General chat?',
+      message: 'This permanently deletes every message in the General channel for everyone. This cannot be undone.',
+      confirmLabel: 'Clear chat',
+      tone: 'danger'
+    })) return;
+    try {
+      await window.SupabaseDB?.clearGeneralChat?.();
+      await DB.clearGeneralChat?.();
+      window.WTChat?.renderDock?.();
+      showToast('General chat cleared', 'success');
+    } catch (e) { showToast(`Could not clear chat: ${e?.message || e}`, 'error'); }
+  },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
     const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
@@ -9688,7 +9768,7 @@ const actions = {
   'filter-projects': async (b) => { state.projectFilter = b.dataset.filter; await renderProjects(); },
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
   'global-task-view': async (b) => { state.globalTaskViewMode = b.dataset.view; await renderTasks(); },
-  'close-modal': () => hideModal(),
+  'close-modal': () => requestModalClose(),
   'regen-temp-pw': () => {
     const inp = document.querySelector('.temp-pw-input');
     if (inp) inp.value = genTempPassword();
@@ -9907,9 +9987,9 @@ const actions = {
     else if (scope === 'project' && pid) hook = await DB.getProjectWebhook(pid);
     if (!hook?.url) { showToast('No webhook to test', 'warning'); return; }
     const session = getSession();
-    const who = session?.displayName || session?.username || 'WorkTracker';
+    const who = session?.displayName || session?.username || 'Orbitrack';
     const result = await postToDiscordWebhook(hook.url, {
-      content: `Test ping from ${who} — WorkTracker is connected.`
+      content: `Test ping from ${who} — Orbitrack is connected.`
     });
     showToast(result.ok ? 'Test message sent' : discordFailToast(result), result.ok ? 'success' : 'error');
   },
@@ -10448,7 +10528,7 @@ async function router() {
   else if (hash === '/support') await renderSupportPage();
   else if (hash === '/guide') await renderGuidePage();
   else if (hash === '/calendar') await renderCalendarPage();
-  else if (hash === '/about') await renderAboutPage();
+  else if (hash === '/about') await renderSupportPage(); // About folded into Support
   else if (hash === '/admin') await renderAdminTabbed();
   else if (hash === '/settings') await renderSettings();
   else window.location.hash = '#/projects';
@@ -10802,6 +10882,17 @@ async function init() {
         else showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
         return;
       }
+      // Alt+N → Notes, Alt+B → Brainstorm canvas (avoid the taken Ctrl combos).
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !typingTarget && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        window.WTNotes?.toggle?.();
+        return;
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !typingTarget && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        window.location.hash = '#/canvas';
+        return;
+      }
       if (!typingTarget && e.key === '/' && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
         const search = document.querySelector('.orbi-task-search-input, .projects-search-input');
         if (search) {
@@ -10875,6 +10966,7 @@ async function init() {
         window._activeConfirmCancel();
         return;
       }
+      if (e.currentTarget.dataset.lockBackdrop === 'true') return; // don't close on outside click
       hideModal();
     });
     document.addEventListener('keydown', (e) => {
@@ -10888,7 +10980,7 @@ async function init() {
         else if (state.rankingPanelOpen) hideRankingPanel();
         else if (state.projectPanelOpen) hideDocumentPanel();
         else if (state.chatDockOpen) window.WTChat?.closeDock?.();
-        else hideModal();
+        else requestModalClose();
       } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
         && !document.getElementById('file-preview-overlay')?.classList.contains('hidden')) {
         // Page through attachments with the arrow keys while the viewer is open.

@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Orbitask</title>
+  <title>Orbitrack</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3.2.6">
+  <link rel="stylesheet" href="styles.css?v=3.3.0">
   <!-- React Flow (xyflow) island styles for the project task map -->
-  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.2.6">
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.3.0">
   <!-- tldraw collaborative canvas island styles -->
-  <link rel="stylesheet" href="vendor/orbicanvas/orbicanvas.css?v=3.2.6">
+  <link rel="stylesheet" href="vendor/orbicanvas/orbicanvas.css?v=3.3.0">
   <!-- Local Copilot styles (Ollama, proposal-only writes) -->
-  <link rel="stylesheet" href="copilot.css?v=3.2.6">
+  <link rel="stylesheet" href="copilot.css?v=3.3.0">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
-  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.2.6">
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.3.0">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -30,15 +30,15 @@
 </head>
 <body>
 
-  <!-- Loading Splash — Orbitask Black Edition v3 -->
+  <!-- Loading Splash — Orbitrack Black Edition v3 -->
   <div id="splash">
     <canvas id="splash-sphere" class="splash-sphere-canvas" aria-hidden="true"></canvas>
     <div class="splash-inner">
-      <p class="splash-brand">ORBITASK</p>
+      <p class="splash-brand">ORBITRACK</p>
       <p class="splash-edition">Black Edition <span class="splash-edition-dot">·</span> v3</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status" id="splash-status">Loading local database…</p>
-      <p class="splash-version" id="splash-app-version">v3.2.6</p>
+      <p class="splash-version" id="splash-app-version">v3.3.0</p>
     </div>
   </div>
 
@@ -58,7 +58,7 @@
   <!-- Main App (hidden until logged in) -->
   <div id="app" class="app-layout" style="display:none">
     <aside class="sidebar" id="sidebar">
-      <div class="sidebar-brand" title="WorkTracker">
+      <div class="sidebar-brand" title="Orbitrack">
         <div class="brand-icon-svg brand-icon-bw">
           <svg width="20" height="20" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
             <rect x="14" y="28" width="52" height="11" rx="5.5" fill="#fff"/>
@@ -67,7 +67,7 @@
             <rect x="14" y="64" width="26" height="11" rx="5.5" fill="#fff"/>
           </svg>
         </div>
-        <span class="brand-name">Orbitask</span>
+        <span class="brand-name">Orbitrack</span>
       </div>
 
       <div class="sidebar-clock" id="sidebar-clock" aria-live="off" aria-label="Current time">
@@ -117,10 +117,6 @@
         <a href="#/diagnostics" class="nav-item" data-nav="diagnostics">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0Z"/></svg>
           <span>Diagnostics</span>
-        </a>
-        <a href="#/about" class="nav-item" data-nav="about">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-          <span>About</span>
         </a>
         <a href="#/dashboard" class="nav-item" data-nav="dashboard" id="nav-dashboard" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
@@ -227,46 +223,46 @@
   <input type="file" id="import-input" accept=".json" hidden>
   <input type="file" id="library-file-input" hidden multiple accept="image/*,.pdf,.doc,.docx,.txt,application/pdf">
 
-  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.2.6';</script>
-  <script src="config.js?v=3.2.6"></script>
+  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.3.0';</script>
+  <script src="config.js?v=3.3.0"></script>
   <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
-  <script src="vendor/orbiobs/orbiobs.js?v=3.2.6"></script>
+  <script src="vendor/orbiobs/orbiobs.js?v=3.3.0"></script>
   <script>
     window.OrbiObs && window.OrbiObs.init();
     window.addEventListener('error', (e) => window.OrbiObs && window.OrbiObs.captureError(e.error || e.message));
     window.addEventListener('unhandledrejection', (e) => window.OrbiObs && window.OrbiObs.captureError(e.reason));
   </script>
-  <script src="vendor/dexie.min.js?v=3.2.6"></script>
-  <script src="vendor/supabase.min.js?v=3.2.6"></script>
-  <script src="db.js?v=3.2.6"></script>
-  <script src="db-supabase.js?v=3.2.6"></script>
-  <script src="sync.js?v=3.2.6"></script>
-  <script src="sync-v3.js?v=3.2.6"></script>
-  <script src="realtime-sync.js?v=3.2.6"></script>
-  <script src="notification-sounds.js?v=3.2.6"></script>
-  <script src="db-bridge.js?v=3.2.6"></script>
-  <script src="splash-sphere.js?v=3.2.6"></script>
-  <script src="app.js?v=3.2.6"></script>
-  <script src="notes.js?v=3.2.6"></script>
-  <script src="chat.js?v=3.2.6"></script>
-  <script src="canvas.js?v=3.2.6"></script>
-  <script src="reports.js?v=3.2.6"></script>
+  <script src="vendor/dexie.min.js?v=3.3.0"></script>
+  <script src="vendor/supabase.min.js?v=3.3.0"></script>
+  <script src="db.js?v=3.3.0"></script>
+  <script src="db-supabase.js?v=3.3.0"></script>
+  <script src="sync.js?v=3.3.0"></script>
+  <script src="sync-v3.js?v=3.3.0"></script>
+  <script src="realtime-sync.js?v=3.3.0"></script>
+  <script src="notification-sounds.js?v=3.3.0"></script>
+  <script src="db-bridge.js?v=3.3.0"></script>
+  <script src="splash-sphere.js?v=3.3.0"></script>
+  <script src="app.js?v=3.3.0"></script>
+  <script src="notes.js?v=3.3.0"></script>
+  <script src="chat.js?v=3.3.0"></script>
+  <script src="canvas.js?v=3.3.0"></script>
+  <script src="reports.js?v=3.3.0"></script>
   <!-- Hybrid Google Drive storage client (inert unless WT_CONFIG.storageProvider==='google_drive') -->
-  <script src="storage-drive.js?v=3.2.6"></script>
+  <script src="storage-drive.js?v=3.3.0"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
-  <script src="ui.js?v=3.2.6"></script>
-  <script src="bootstrap.js?v=3.2.6"></script>
-  <script src="desktop/updates.js?v=3.2.6"></script>
+  <script src="ui.js?v=3.3.0"></script>
+  <script src="bootstrap.js?v=3.3.0"></script>
+  <script src="desktop/updates.js?v=3.3.0"></script>
   <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
-  <script src="vendor/orbiflow/orbiflow.js?v=3.2.6"></script>
+  <script src="vendor/orbiflow/orbiflow.js?v=3.3.0"></script>
   <!-- Fun pack — confetti, Motion micro-animations, procedural health orb -->
-  <script src="vendor/orbifun/orbifun.js?v=3.2.6"></script>
+  <script src="vendor/orbifun/orbifun.js?v=3.3.0"></script>
   <!-- tldraw collaborative canvas island — bundled React + tldraw + Yjs -->
-  <script src="vendor/orbicanvas/orbicanvas.js?v=3.2.6"></script>
+  <script src="vendor/orbicanvas/orbicanvas.js?v=3.3.0"></script>
   <!-- Quill notes editor island -->
-  <script src="vendor/orbinotes/orbinotes.js?v=3.2.6"></script>
+  <script src="vendor/orbinotes/orbinotes.js?v=3.3.0"></script>
   <!-- Local Copilot (Ollama, proposal-only writes). -->
-  <script src="copilot.js?v=3.2.6"></script>
+  <script src="copilot.js?v=3.3.0"></script>
   <script>
     // Toggle the Copilot drawer with Ctrl+J (Cmd+J on macOS).
     window.addEventListener('keydown', (e) => {

@@ -8044,7 +8044,17 @@ body.theme-normal .sync-status-label.is-live {
 .support-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .support-changelog { display: grid; gap: 14px; padding: 8px 18px 4px; }
 .support-changelog-item ul { margin: 8px 0 0 18px; color: var(--text-secondary); font-size: 0.9rem; }
+.support-changelog-item li { margin-bottom: 4px; }
 .support-changelog-head { display: flex; align-items: center; gap: 10px; }
+/* Release notes get their own scroll so the page doesn't grow endlessly. */
+.support-changelog-scroll { max-height: min(55vh, 540px); overflow-y: auto; padding-right: 14px; }
+.support-changelog-minor { display: flex; align-items: baseline; gap: 10px; }
+.support-changelog-minor .support-changelog-head { flex: 0 0 auto; }
+.support-changelog-minor p { margin: 0; }
+.support-changelog-admin-label { display: flex; align-items: center; gap: 6px; margin: 10px 0 2px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); }
+.support-changelog-admin-label svg { width: 13px; height: 13px; }
+.support-changelog-admin { margin: 2px 0 0 18px; color: var(--text-muted); font-size: 0.86rem; }
+.support-changelog-admin li { margin-bottom: 4px; }
 
 /* ─── One-time password / account security ─── */
 .cred-relay { display: grid; gap: 12px; }
@@ -8072,6 +8082,13 @@ body.theme-normal .sync-status-label.is-live {
   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
 }
 .profile-security-row p { margin: 2px 0 0; }
+.profile-toggle-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; margin: 4px 0 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  cursor: pointer;
+}
+.profile-toggle-row input { width: auto; margin: 2px 0 0; flex-shrink: 0; }
 
 /* ─── User guide page ─── */
 .guide-page { padding-bottom: 32px; }
@@ -8482,6 +8499,9 @@ body.theme-black .activity-map-d3-wrap {
 .canvas-new-form.hidden { display: none; }
 .canvas-new-name { flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 0.9rem; }
 .canvas-new-purpose { flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 0.9rem; }
+.canvas-new-template { padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 0.9rem; }
+.canvas-export-menu { display: grid; gap: 8px; }
+.canvas-export-menu .btn { justify-content: flex-start; }
 .canvas-new-private { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.85rem; }
 .canvas-rooms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .canvas-room-card {

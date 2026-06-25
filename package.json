@@ -1,7 +1,7 @@
 {
-  "name": "worktracker-desktop",
-  "version": "3.2.6",
-  "description": "Orbitask Black Edition — project, task, file, and team activity tracking.",
+  "name": "orbitrack-desktop",
+  "version": "3.3.0",
+  "description": "Orbitrack Black Edition — project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
   "main": "desktop/main.js",
@@ -59,7 +59,7 @@
   },
   "build": {
     "appId": "com.everlasting.worktracker",
-    "productName": "WorkTracker",
+    "productName": "Orbitrack",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "copyright": "Copyright (c) 2026 Everlasting",
     "directories": {
@@ -115,7 +115,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "WorkTracker",
+      "shortcutName": "Orbitrack",
       "deleteAppDataOnUninstall": false
     },
     "publish": [

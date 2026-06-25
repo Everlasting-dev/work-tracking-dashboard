@@ -14,6 +14,7 @@
   let _db = null;
   let _handle = null;       // current mounted island handle
   let _room = null;         // current room object
+  let _pendingTemplate = null; // template to stamp once a freshly-created board mounts
   let _mobileReadonly = false;
   let _modeTimer = null;
 
@@ -290,6 +291,107 @@
     openRoom(updated.id);
   }
 
+  /* ── Export (PNG / PDF / SVG) ───────────────────────────────────── */
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
+  }
+
+  function safeRoomName() {
+    return String(_room?.name || 'canvas').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 60) || 'canvas';
+  }
+
+  async function exportCanvas(format) {
+    const e = _handle && _handle._editor;
+    if (!e) { showToast?.('Canvas is still loading — try again in a moment.', 'warning'); return; }
+    let ids = [];
+    try { ids = [...e.getCurrentPageShapeIds()]; } catch (_) {}
+    if (!ids.length) { showToast?.('Nothing on the canvas to export yet.', 'info'); return; }
+    const fmt = format === 'svg' ? 'svg' : 'png';
+    try {
+      let blob = null;
+      if (typeof e.toImage === 'function') {
+        const res = await e.toImage(ids, { format: fmt, background: true, padding: 24, scale: 2 });
+        blob = res?.blob || (res instanceof Blob ? res : null);
+      }
+      if (!blob && fmt === 'svg' && typeof e.getSvgString === 'function') {
+        const r = await e.getSvgString(ids, { background: true });
+        const svg = r?.svg || r;
+        if (svg) blob = new Blob([svg], { type: 'image/svg+xml' });
+      }
+      if (!blob) { showToast?.('Export is not supported in this build.', 'warning'); return; }
+      const name = safeRoomName();
+      if (format === 'pdf') await exportCanvasPdf(blob, name);
+      else downloadBlob(blob, `${name}.${fmt}`);
+      showToast?.('Canvas exported', 'success');
+    } catch (err) {
+      console.warn('[canvas] export failed', err);
+      showToast?.('Could not export the canvas.', 'error');
+    }
+  }
+
+  async function exportCanvasPdf(pngBlob, name) {
+    const Ctor = window.jspdf?.jsPDF || window.jsPDF;
+    if (!Ctor) { downloadBlob(pngBlob, `${name}.png`); showToast?.('PDF tool unavailable — exported a PNG instead.', 'info'); return; }
+    const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(pngBlob); });
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+    const orient = img.width >= img.height ? 'landscape' : 'portrait';
+    const pdf = new Ctor({ orientation: orient, unit: 'pt', format: 'a4' });
+    const pw = pdf.internal.pageSize.getWidth();
+    const ph = pdf.internal.pageSize.getHeight();
+    const margin = 24;
+    const scale = Math.min((pw - margin * 2) / img.width, (ph - margin * 2) / img.height);
+    const w = img.width * scale, h = img.height * scale;
+    pdf.addImage(dataUrl, 'PNG', (pw - w) / 2, (ph - h) / 2, w, h);
+    pdf.save(`${name}.pdf`);
+  }
+
+  function showCanvasExportMenu() {
+    if (typeof showModal !== 'function') { exportCanvas('png'); return; }
+    showModal('Export canvas', `
+      <div class="canvas-export-menu">
+        <button type="button" class="btn btn-ghost" data-canvas-export="png">${ICONS.file || ''} PNG image</button>
+        <button type="button" class="btn btn-ghost" data-canvas-export="pdf">${ICONS.file || ''} PDF document</button>
+        <button type="button" class="btn btn-ghost" data-canvas-export="svg">${ICONS.file || ''} SVG vector</button>
+      </div>`);
+    document.querySelectorAll('#modal-overlay [data-canvas-export]').forEach(btn => {
+      btn.addEventListener('click', () => { const f = btn.dataset.canvasExport; try { hideModal?.(); } catch (_) {} exportCanvas(f); });
+    });
+  }
+
+  /* ── Templates: stamp starter stickies once the editor is ready ──── */
+  const CANVAS_TEMPLATES = {
+    kanban: ['To do', 'Doing', 'Done'],
+    flowchart: ['Start', 'Next step', 'Decision?', 'End'],
+    moodboard: ['Mood board', 'Inspiration', 'Colours / type'],
+  };
+  function applyCanvasTemplate(name) {
+    const cols = CANVAS_TEMPLATES[name];
+    if (!cols || !_handle?.addNote) return;
+    const mount = document.getElementById('orbi-canvas-mount');
+    const rect = mount?.getBoundingClientRect?.() || { left: 80, top: 120, width: 900 };
+    const gap = Math.min(280, (rect.width - 120) / cols.length);
+    cols.forEach((label, i) => {
+      const x = rect.left + 60 + i * gap;
+      const y = rect.top + 90;
+      try { _handle.addNote(label, x, y); } catch (_) {}
+    });
+  }
+  function maybeApplyPendingTemplate() {
+    if (!_pendingTemplate) return;
+    const name = _pendingTemplate; _pendingTemplate = null;
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      if (_handle?._editor) { clearInterval(timer); applyCanvasTemplate(name); }
+      else if (tries > 40) clearInterval(timer); // ~6s give-up
+    }, 150);
+  }
+
   /* ── Doc persistence (isolated from the sync queue) ─────────────── */
   async function loadDoc(roomId) {
     try { const d = db(); const row = d ? await d.docs.get(roomId) : null; if (row?.doc) return row.doc; } catch (_) {}
@@ -325,6 +427,12 @@
         <form id="canvas-new-form" class="canvas-new-form hidden">
           <input type="text" id="canvas-new-name" class="canvas-new-name" placeholder="Canvas name (e.g. Q3 planning)" autocomplete="off" maxlength="120">
           <input type="text" id="canvas-new-purpose" class="canvas-new-purpose" placeholder="Purpose (optional)" autocomplete="off" maxlength="280">
+          <select id="canvas-new-template" class="canvas-new-template" title="Start from a template">
+            <option value="blank">Blank canvas</option>
+            <option value="kanban">Kanban (To do · Doing · Done)</option>
+            <option value="flowchart">Flowchart</option>
+            <option value="moodboard">Mood board</option>
+          </select>
           <label class="canvas-new-private"><input type="checkbox" id="canvas-new-priv"> Private — pick who can join</label>
           <button type="submit" class="btn btn-primary btn-sm">Create &amp; open</button>
           <div class="canvas-participants hidden" id="canvas-new-participants">
@@ -361,6 +469,8 @@
       const purpose = content.querySelector('#canvas-new-purpose')?.value?.trim();
       const priv = privChk?.checked;
       const participantIds = priv ? Array.from(form.querySelectorAll('input[name="participantIds"]:checked')).map(i => Number(i.value)) : [];
+      const tmpl = content.querySelector('#canvas-new-template')?.value;
+      _pendingTemplate = (tmpl && tmpl !== 'blank') ? tmpl : null;
       const room = await createRoom(name, priv, purpose, participantIds);
       openRoom(room.id);
     });
@@ -389,6 +499,7 @@
         <div class="breadcrumb"><a href="#/canvas" class="breadcrumb-link" id="canvas-back">${ICONS.arrowLeft || '←'} Canvases</a><span class="breadcrumb-sep">/</span><span>${_room.isPrivate ? '🔒 ' : ''}${esc(_room.name)}</span></div>
         <div class="view-actions">
           ${canManage ? `<button type="button" class="btn btn-ghost" id="canvas-settings" title="Canvas settings">${ICONS.settings || '⚙'} Settings</button>` : ''}
+          <button type="button" class="btn btn-ghost" id="canvas-export" title="Export this board">${ICONS.download || '⤓'} Export</button>
           <button type="button" class="btn btn-ghost" id="canvas-notes" title="Open notes — drag a note onto the canvas">${ICONS.edit || '✎'} Notes</button>
           <button type="button" class="btn btn-ghost" id="canvas-fs" title="Fullscreen (Esc to exit)">⛶ Fullscreen</button>
           ${canConvert ? `<button type="button" class="btn btn-primary" id="canvas-to-project">${ICONS.sparkles || '✦'} Make this a project</button>` : ''}
@@ -404,6 +515,7 @@
     content.querySelector('#canvas-notes')?.addEventListener('click', () => window.WTNotes?.open?.());
     content.querySelector('#canvas-fs')?.addEventListener('click', () => toggleFullscreen());
     content.querySelector('#canvas-settings')?.addEventListener('click', () => showRoomSettings(_room.id));
+    content.querySelector('#canvas-export')?.addEventListener('click', () => showCanvasExportMenu());
 
     const mountEl = document.getElementById('orbi-canvas-mount');
     if (_mobileReadonly) {
@@ -435,6 +547,7 @@
       return;
     }
     syncCanvasMode();
+    maybeApplyPendingTemplate();
 
     // Drag a note from the notes panel onto the canvas and drop it as a text box.
     let dragDepth = 0;

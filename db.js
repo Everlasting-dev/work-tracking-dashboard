@@ -704,6 +704,15 @@ const LocalDB = {
     return rows.sort((a, b) => (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
   },
 
+  async clearGeneralChat() {
+    // General messages = in-app chat activity (projectId null) + Discord relay.
+    const rows = await db.activityLog.toArray().catch(() => []);
+    const ids = rows.filter(e => e.action === 'sent_message' && e.entityType === 'chat' && e.projectId == null).map(e => e.id);
+    if (ids.length) await db.activityLog.bulkDelete(ids).catch(() => {});
+    try { await db.discordMessages.where('channelId').equals('general').delete(); } catch (_) {}
+    return ids.length;
+  },
+
   async getChatActivityLog(channelId, { limit = 100 } = {}) {
     const projectId = channelId?.startsWith('project-') ? Number(channelId.split('-')[1]) : null;
     let rows = await db.activityLog

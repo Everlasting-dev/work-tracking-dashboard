@@ -56,7 +56,7 @@ function createWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    title: app.getName() || 'Orbitask',
+    title: app.getName() || 'Orbitrack',
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     show: false,
@@ -211,12 +211,12 @@ function configureAutoUpdater() {
     sendUpdateStatus({
       state: 'available',
       version: info.version,
-      message: `Downloading WorkTracker ${info.version}...`
+      message: `Downloading Orbitrack ${info.version}...`
     });
   });
 
   autoUpdater.on('update-not-available', () => {
-    sendUpdateStatus({ state: 'idle', message: 'WorkTracker is up to date.' });
+    sendUpdateStatus({ state: 'idle', message: 'Orbitrack is up to date.' });
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -229,13 +229,13 @@ function configureAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     if (info.version === app.getVersion()) {
-      sendUpdateStatus({ state: 'idle', message: 'WorkTracker is up to date.' });
+      sendUpdateStatus({ state: 'idle', message: 'Orbitrack is up to date.' });
       return;
     }
     sendUpdateStatus({
       state: 'downloaded',
       version: info.version,
-      message: `WorkTracker ${info.version} is ready to install.`
+      message: `Orbitrack ${info.version} is ready to install.`
     });
   });
 

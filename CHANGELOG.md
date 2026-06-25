@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.3.0
+
+### Changed
+- **Renamed to Orbitrack** across the app, installer, and shortcuts (existing installs auto-update in place).
+- **Tidier account menu** — only Sync now, Mute, My Profile, and Reload & sync (plus Export/Import for admins, and Log Out). Theme switching stays on the sidebar toggle.
+- **Support & About merged** into one Support page with a single, **scrollable** release-notes list; minor releases collapse to one line and admin-only notes show only to admins.
+
+### Added
+- **Keyboard shortcuts** — Alt+N opens Notes, Alt+B opens the Brainstorm canvas.
+- **Canvas export & templates** — export a board to PNG, PDF, or SVG, and start from a Kanban / Flowchart / Mood-board template.
+- **Team activity map rework** — organic layout linked by collaboration, colour-coded by department, with a "hide me from the team map" toggle in My Profile.
+- **Welcome note** seeded for new users on first sign-in.
+
+### Fixed
+- The new-user popup no longer closes when you click away, and asks to confirm before cancelling.
+- The General chat was cleared.
+
 ## 3.2.6
 
 ### Fixed

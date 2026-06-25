@@ -1,5 +1,5 @@
 @echo off
-title Orbitask Updater
+title Orbitrack Updater
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=[IO.File]::ReadAllText('%~f0'); iex $f.Substring($f.LastIndexOf('#:PSCODE:#')+10)"
 echo.
 pause
@@ -9,11 +9,11 @@ $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $repo = 'Everlasting-dev/work-tracking-dashboard'
-$ua   = 'Orbitask-Updater'
+$ua   = 'Orbitrack-Updater'
 
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host '        Orbitask  -  Update Installer'    -ForegroundColor Cyan
+Write-Host '        Orbitrack  -  Update Installer'    -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host ''
 
@@ -87,4 +87,4 @@ try {
 }
 
 Write-Host ''
-Write-Host ("Orbitask has been updated to {0}." -f $ver) -ForegroundColor Cyan
+Write-Host ("Orbitrack has been updated to {0}." -f $ver) -ForegroundColor Cyan

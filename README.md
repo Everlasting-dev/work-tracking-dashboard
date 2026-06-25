@@ -1,10 +1,10 @@
-# WorkTracker
+# Orbitrack
 
-WorkTracker is a desktop project and task workspace for teams — projects, boards, files, activity, and lightweight chat in one app.
+Orbitrack is a desktop project and task workspace for teams — projects, boards, files, activity, and lightweight chat in one app.
 
 ## Current release
 
-**v3.2.4** - one-time-password accounts, private personal spaces, profile customization, canvas collaboration, an in-app user guide, plus fixes for document loading (Google Drive), in-app PDF previews, new-user sync, and user deletion (clear Delete button + transfer to the main admin). Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+**v3.3.0** - rebranded to Orbitrack; Notes (Alt+N) and Canvas (Alt+B) shortcuts; canvas export (PNG/PDF/SVG) and templates; team activity map coloured by department with a "hide me" option; a tidier account menu and a single, scrollable release-notes page. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 
 1. Download and run the installer (Windows 10/11, x64).
 2. Sign in with your team account.
