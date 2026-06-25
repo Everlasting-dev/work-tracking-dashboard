@@ -58,6 +58,24 @@
     return res.data?.session || null;
   }
 
+  // Silently restore a lapsed session on app start using the persisted refresh
+  // token, so users aren't told to "sign out and back in" after a relaunch.
+  // Returns true if a valid session is available afterwards.
+  async function recoverSession() {
+    if (!enabled()) return false;
+    const client = sb();
+    if (!client?.auth) return false;
+    try {
+      const { data } = await client.auth.getSession();
+      if (data?.session?.access_token) return true;
+    } catch (_) {}
+    try {
+      const { data } = await client.auth.refreshSession();
+      if (data?.session?.access_token) return true;
+    } catch (_) {}
+    return false;
+  }
+
   async function token() {
     const client = sb();
     const { data } = await client.auth.getSession();
@@ -184,5 +202,5 @@
     return data || null;
   }
 
-  window.DriveStorage = { enabled, ensureAuthSession, checkAuthStatus, upload, objectUrl, remove, list, getOne };
+  window.DriveStorage = { enabled, ensureAuthSession, recoverSession, checkAuthStatus, upload, objectUrl, remove, list, getOne };
 })();

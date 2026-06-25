@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.3.0'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.3.1'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -2116,6 +2116,9 @@ async function maybeNotifyStorageAuthIssue(status) {
 
 async function runStorageAuthHealthCheck({ notify = false, force = false } = {}) {
   if (!getActiveSession?.()) return { ok: true, code: 'no_session', message: 'No active user session.' };
+  // Try a silent recovery first (refresh the persisted Supabase session) so a
+  // merely-lapsed session doesn't nag the user to sign out and back in.
+  try { await window.DriveStorage?.recoverSession?.(); } catch (_) {}
   const status = await getStorageAuthStatusSafe({ force });
   if (!status.ok) {
     recordUserIssue({ level: 'warning', source: 'storage_auth', message: status.message, details: status });
@@ -7224,6 +7227,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.3.1', date: '2026-06-25', minor: true },
   { version: '3.3.0', date: '2026-06-25', highlights: [
     'Renamed to Orbitrack.',
     'Keyboard shortcuts: Alt+N opens Notes, Alt+B opens the Brainstorm canvas.',

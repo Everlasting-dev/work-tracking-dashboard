@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.1
+
+### Fixed
+- **"Document storage authorization is missing" after the Orbitrack rename** - the rename moved the desktop app's data folder, so updated users started on a fresh profile that lost their saved sign-in session (Google Drive files then reported missing authorization). The app now keeps its original data folder across the rename, so your session, local data, and settings carry over. The sign-in session is also restored automatically when it lapses, instead of asking you to sign out and back in.
+
 ## 3.3.0
 
 ### Changed

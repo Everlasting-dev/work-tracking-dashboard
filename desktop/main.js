@@ -9,6 +9,20 @@ let autoUpdater;
 
 const isDev = !app.isPackaged;
 const packageMeta = getPackageMeta();
+
+// IMPORTANT: pin the user-data directory to the legacy "WorkTracker" name.
+// Electron derives userData from productName, so the v3.3.0 rename to "Orbitrack"
+// would otherwise move every desktop user to a FRESH profile — logging them out,
+// resetting local data (re-synced from cloud), and orphaning the persisted
+// Supabase Auth session (→ "Document storage authorization is missing"). Pinning
+// the path keeps everyone on their existing profile across the rebrand. Must run
+// before app 'ready'. (Override with WT_USERDATA_DIR if ever needed.)
+try {
+  const legacyName = process.env.WT_USERDATA_DIR || 'WorkTracker';
+  app.setPath('userData', path.join(app.getPath('appData'), legacyName));
+} catch (e) {
+  console.warn('[userData] could not pin legacy path:', e?.message || e);
+}
 const launchMode = process.env.WT_APP_MODE || packageMeta.orbitaskMode || '';
 const useModularApp = process.env.WT_MODULAR === '1' || launchMode === 'workspace' || launchMode === 'control';
 const modularDevUrl = process.env.WT_MODULAR_URL || 'http://127.0.0.1:5174/modular/';

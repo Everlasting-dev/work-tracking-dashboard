@@ -891,7 +891,12 @@ const SyncEngine = (() => {
 
     // Create the shared Supabase client and inject into SupabaseDB
     try {
-      _client = window.supabase.createClient(url, anonKey);
+      // Explicit auth persistence so the Drive-storage session survives app
+      // restarts and auto-refreshes (otherwise files lose authorization after the
+      // access token lapses and the user is told to "sign out and back in").
+      _client = window.supabase.createClient(url, anonKey, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+      });
       window.SupabaseDB._client = _client;
       // SupabaseDB caches fetched rows in its internal shadow state. In the
       // offline-first architecture SupabaseDB.init()/_initLocalSync() is never
