@@ -85,38 +85,50 @@
   }
 
   async function checkAuthStatus() {
+    const base = { provider: cfg().storageProvider || "default", functionsBase: fnBase() };
     if (!enabled()) {
-      return { ok: true, code: "disabled", message: "Document storage is not using the Drive bridge in this build." };
+      return { ...base, ok: true, code: "disabled", message: "Document storage is not using the Drive bridge in this build." };
     }
     const client = sb();
     if (!client?.auth) {
-      return { ok: false, code: "missing_client", message: "Document storage client is not ready." };
-    }
-
-    const { data, error } = await client.auth.getSession();
-    if (error) {
-      return { ok: false, code: "session_error", message: error.message || "Could not read document storage authorization." };
-    }
-    const session = data?.session;
-    if (!session?.access_token) {
-      return { ok: false, code: "missing_session", message: "Document storage authorization is missing. Sign out and back in before opening files." };
+      return { ...base, ok: false, code: "missing_client", message: "Document storage client is not ready." };
     }
 
     const appUid = window.WT_getActiveSession?.()?.userId || window.getSession?.()?.userId || null;
+    const { data, error } = await client.auth.getSession();
+    if (error) {
+      return { ...base, ok: false, code: "session_error", message: error.message || "Could not read document storage authorization.", hasSession: false, appUserId: appUid };
+    }
+    const session = data?.session;
+    const detail = {
+      ...base,
+      appUserId: appUid,
+      hasSession: !!session?.access_token,
+      authUserId: session?.user?.id || null,
+      authEmail: session?.user?.email || null,
+      expiresAt: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
+      linkedUserId: null,
+    };
+    if (!session?.access_token) {
+      return { ...detail, ok: false, code: "missing_session", message: "Document storage authorization is missing. Use “Reconnect storage”, or sign out and back in." };
+    }
+
     if (appUid && session.user?.id && client.from) {
       const { data: linked, error: linkError } = await client.from("wt_users")
         .select("id")
         .eq("auth_user_id", session.user.id)
         .maybeSingle();
       if (linkError) {
-        return { ok: false, code: "link_check_failed", message: linkError.message || "Could not verify document storage account link." };
+        return { ...detail, ok: false, code: "link_check_failed", message: linkError.message || "Could not verify document storage account link." };
       }
+      detail.linkedUserId = linked?.id != null ? Number(linked.id) : null;
       if (Number(linked?.id) !== Number(appUid)) {
-        return { ok: false, code: "wrong_user", message: "Document storage is signed in as a different user. Sign out and back in to refresh authorization." };
+        return { ...detail, ok: false, code: "wrong_user", message: "Document storage is signed in as a different user. Sign out and back in to refresh authorization." };
       }
     }
 
     return {
+      ...detail,
       ok: true,
       code: "ok",
       message: "Document storage authorization is valid.",

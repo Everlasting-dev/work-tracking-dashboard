@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.3.2
+
+### Fixed
+- **Document storage "not authorized" for many users** - sign-in sessions were being invalidated when the same account was active on more than one device or after relaunching the app, which knocked out Google Drive file access. The session handling was changed so sessions stay valid across devices and restarts.
+
+### Changed
+- **More detailed Diagnostics** - the Diagnostics page now shows the document-storage session state (present/missing, expiry, signed-in account, account-link match), an Environment panel (version, web/desktop, cloud mode, storage endpoint), and a one-click **Reconnect storage** button.
+
 ## 3.3.1
 
 ### Fixed

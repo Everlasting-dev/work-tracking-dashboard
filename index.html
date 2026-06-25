@@ -8,17 +8,17 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3.3.1">
+  <link rel="stylesheet" href="styles.css?v=3.3.2">
   <!-- React Flow (xyflow) island styles for the project task map -->
-  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.3.1">
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.3.2">
   <!-- tldraw collaborative canvas island styles -->
-  <link rel="stylesheet" href="vendor/orbicanvas/orbicanvas.css?v=3.3.1">
+  <link rel="stylesheet" href="vendor/orbicanvas/orbicanvas.css?v=3.3.2">
   <!-- Local Copilot styles (Ollama, proposal-only writes) -->
-  <link rel="stylesheet" href="copilot.css?v=3.3.1">
+  <link rel="stylesheet" href="copilot.css?v=3.3.2">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
-  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.3.1">
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.3.2">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -38,7 +38,7 @@
       <p class="splash-edition">Black Edition <span class="splash-edition-dot">·</span> v3</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status" id="splash-status">Loading local database…</p>
-      <p class="splash-version" id="splash-app-version">v3.3.1</p>
+      <p class="splash-version" id="splash-app-version">v3.3.2</p>
     </div>
   </div>
 
@@ -223,46 +223,46 @@
   <input type="file" id="import-input" accept=".json" hidden>
   <input type="file" id="library-file-input" hidden multiple accept="image/*,.pdf,.doc,.docx,.txt,application/pdf">
 
-  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.3.1';</script>
-  <script src="config.js?v=3.3.1"></script>
+  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.3.2';</script>
+  <script src="config.js?v=3.3.2"></script>
   <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
-  <script src="vendor/orbiobs/orbiobs.js?v=3.3.1"></script>
+  <script src="vendor/orbiobs/orbiobs.js?v=3.3.2"></script>
   <script>
     window.OrbiObs && window.OrbiObs.init();
     window.addEventListener('error', (e) => window.OrbiObs && window.OrbiObs.captureError(e.error || e.message));
     window.addEventListener('unhandledrejection', (e) => window.OrbiObs && window.OrbiObs.captureError(e.reason));
   </script>
-  <script src="vendor/dexie.min.js?v=3.3.1"></script>
-  <script src="vendor/supabase.min.js?v=3.3.1"></script>
-  <script src="db.js?v=3.3.1"></script>
-  <script src="db-supabase.js?v=3.3.1"></script>
-  <script src="sync.js?v=3.3.1"></script>
-  <script src="sync-v3.js?v=3.3.1"></script>
-  <script src="realtime-sync.js?v=3.3.1"></script>
-  <script src="notification-sounds.js?v=3.3.1"></script>
-  <script src="db-bridge.js?v=3.3.1"></script>
-  <script src="splash-sphere.js?v=3.3.1"></script>
-  <script src="app.js?v=3.3.1"></script>
-  <script src="notes.js?v=3.3.1"></script>
-  <script src="chat.js?v=3.3.1"></script>
-  <script src="canvas.js?v=3.3.1"></script>
-  <script src="reports.js?v=3.3.1"></script>
+  <script src="vendor/dexie.min.js?v=3.3.2"></script>
+  <script src="vendor/supabase.min.js?v=3.3.2"></script>
+  <script src="db.js?v=3.3.2"></script>
+  <script src="db-supabase.js?v=3.3.2"></script>
+  <script src="sync.js?v=3.3.2"></script>
+  <script src="sync-v3.js?v=3.3.2"></script>
+  <script src="realtime-sync.js?v=3.3.2"></script>
+  <script src="notification-sounds.js?v=3.3.2"></script>
+  <script src="db-bridge.js?v=3.3.2"></script>
+  <script src="splash-sphere.js?v=3.3.2"></script>
+  <script src="app.js?v=3.3.2"></script>
+  <script src="notes.js?v=3.3.2"></script>
+  <script src="chat.js?v=3.3.2"></script>
+  <script src="canvas.js?v=3.3.2"></script>
+  <script src="reports.js?v=3.3.2"></script>
   <!-- Hybrid Google Drive storage client (inert unless WT_CONFIG.storageProvider==='google_drive') -->
-  <script src="storage-drive.js?v=3.3.1"></script>
+  <script src="storage-drive.js?v=3.3.2"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
-  <script src="ui.js?v=3.3.1"></script>
-  <script src="bootstrap.js?v=3.3.1"></script>
-  <script src="desktop/updates.js?v=3.3.1"></script>
+  <script src="ui.js?v=3.3.2"></script>
+  <script src="bootstrap.js?v=3.3.2"></script>
+  <script src="desktop/updates.js?v=3.3.2"></script>
   <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
-  <script src="vendor/orbiflow/orbiflow.js?v=3.3.1"></script>
+  <script src="vendor/orbiflow/orbiflow.js?v=3.3.2"></script>
   <!-- Fun pack — confetti, Motion micro-animations, procedural health orb -->
-  <script src="vendor/orbifun/orbifun.js?v=3.3.1"></script>
+  <script src="vendor/orbifun/orbifun.js?v=3.3.2"></script>
   <!-- tldraw collaborative canvas island — bundled React + tldraw + Yjs -->
-  <script src="vendor/orbicanvas/orbicanvas.js?v=3.3.1"></script>
+  <script src="vendor/orbicanvas/orbicanvas.js?v=3.3.2"></script>
   <!-- Quill notes editor island -->
-  <script src="vendor/orbinotes/orbinotes.js?v=3.3.1"></script>
+  <script src="vendor/orbinotes/orbinotes.js?v=3.3.2"></script>
   <!-- Local Copilot (Ollama, proposal-only writes). -->
-  <script src="copilot.js?v=3.3.1"></script>
+  <script src="copilot.js?v=3.3.2"></script>
   <script>
     // Toggle the Copilot drawer with Ctrl+J (Cmd+J on macOS).
     window.addEventListener('keydown', (e) => {

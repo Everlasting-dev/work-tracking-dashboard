@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.3.1'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.3.2'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -5774,20 +5774,26 @@ async function renderDiagnosticsPage() {
           <span class="projects-page-count">v${esc(getAppVersion())} · ${online ? 'Online' : 'Offline'}</span>
         </div>
         <div class="diagnostics-actions">
-          <button type="button" class="btn btn-ghost" data-action="check-storage-auth">${ICONS.refresh} Check authorization</button>
+          <button type="button" class="btn btn-primary" data-action="reconnect-storage">${ICONS.refresh} Reconnect storage</button>
+          <button type="button" class="btn btn-ghost" data-action="check-storage-auth">${ICONS.refresh} Re-check</button>
           <button type="button" class="btn btn-ghost" data-action="diagnostics-copy">${ICONS.file} Copy report</button>
-          <button type="button" class="btn btn-primary" data-action="diagnostics-report">${ICONS.send || ''} Send to admin</button>
+          <button type="button" class="btn btn-ghost" data-action="diagnostics-report">${ICONS.send || ''} Send to admin</button>
         </div>
       </div>
       <div class="diagnostics-grid">
         <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
-          <div class="dash-panel-head"><h3>Authorization</h3>${badge(auth.ok ? 'Valid' : 'Issue', auth.ok ? 'green' : 'amber')}</div>
+          <div class="dash-panel-head"><h3>Document storage</h3>${badge(auth.ok ? 'Authorized' : 'Not authorized', auth.ok ? 'green' : 'red')}</div>
           <p class="diagnostics-big">${esc(auth.message || '')}</p>
           <dl class="diagnostics-meta">
-            <div><dt>Provider</dt><dd>${window.DriveStorage?.enabled?.() ? 'Google Drive bridge' : 'Default/local'}</dd></div>
-            <div><dt>Code</dt><dd>${esc(auth.code || 'unknown')}</dd></div>
-            <div><dt>Checked</dt><dd>${auth.checkedAt ? esc(timeAgo(auth.checkedAt)) : 'Not checked'}</dd></div>
+            <div><dt>Provider</dt><dd>${window.DriveStorage?.enabled?.() ? 'Google Drive' : 'Default / local'}</dd></div>
+            <div><dt>Status code</dt><dd>${esc(auth.code || 'unknown')}</dd></div>
+            <div><dt>Auth session</dt><dd>${auth.hasSession ? 'Present' : 'Missing'}</dd></div>
+            ${auth.expiresAt ? `<div><dt>Session expires</dt><dd>${esc(timeAgo(auth.expiresAt))}</dd></div>` : ''}
+            ${auth.authEmail ? `<div><dt>Signed in as</dt><dd>${esc(auth.authEmail)}</dd></div>` : ''}
+            <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched ✓' : `Mismatch (linked #${esc(String(auth.linkedUserId))}, you are #${esc(String(auth.appUserId))})`) : '—'}</dd></div>
+            <div><dt>Checked</dt><dd>${auth.checkedAt ? esc(timeAgo(auth.checkedAt)) : 'just now'}</dd></div>
           </dl>
+          ${auth.ok ? '' : '<p class="text-muted text-sm" style="padding:0 18px 4px">Try “Reconnect storage”. If it stays unauthorized, log out and back in once.</p>'}
         </section>
         <section class="dash-panel diagnostics-card diagnostics-card--${syncStatus.failed ? 'warn' : 'ok'}">
           <div class="dash-panel-head"><h3>Cloud sync</h3>${badge(syncStatus.failed ? 'Issue' : 'Ready', syncStatus.failed ? 'red' : 'green')}</div>
@@ -5805,6 +5811,16 @@ async function renderDiagnosticsPage() {
             <button type="button" class="btn btn-ghost btn-sm" data-action="diagnostics-clear"${issues.length ? '' : ' disabled'}>${ICONS.trash} Clear log</button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="open-sync-diagnostics">${ICONS.refresh} Sync modal</button>
           </div>
+        </section>
+        <section class="dash-panel diagnostics-card">
+          <div class="dash-panel-head"><h3>Environment</h3>${badge(online ? 'Online' : 'Offline', online ? 'green' : 'amber')}</div>
+          <dl class="diagnostics-meta">
+            <div><dt>App version</dt><dd>v${esc(getAppVersion())}</dd></div>
+            <div><dt>Build</dt><dd>${window.workTrackerDesktop?.isDesktop ? 'Desktop (Electron)' : 'Web'}</dd></div>
+            <div><dt>Signed-in user</dt><dd>${esc(getSession()?.displayName || getSession()?.username || '—')} (#${esc(String(actorId() || '—'))})</dd></div>
+            <div><dt>Cloud mode</dt><dd>${isCloudMode() ? 'On' : 'Off (local only)'}</dd></div>
+            <div><dt>Storage endpoint</dt><dd class="diagnostics-mono">${esc(auth.functionsBase || '—')}</dd></div>
+          </dl>
         </section>
       </div>
       <section class="dash-panel diagnostics-card diagnostics-wide">
@@ -7227,6 +7243,10 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.3.2', date: '2026-06-25', highlights: [
+    'Fixed Google Drive file access dropping to "not authorized" — sign-in sessions now stay valid across devices and app restarts.',
+    'More detailed Diagnostics: storage session state, environment panel, and a one-click "Reconnect storage" button.',
+  ] },
   { version: '3.3.1', date: '2026-06-25', minor: true },
   { version: '3.3.0', date: '2026-06-25', highlights: [
     'Renamed to Orbitrack.',
@@ -9359,6 +9379,15 @@ const actions = {
   'check-storage-auth': async () => {
     const status = await runStorageAuthHealthCheck({ notify: true, force: true });
     if (status.ok) showToast('Document storage authorization is valid.', 'success');
+    if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
+  },
+  'reconnect-storage': async (b) => {
+    if (b) { b.disabled = true; b.textContent = 'Reconnecting…'; }
+    let recovered = false;
+    try { recovered = await window.DriveStorage?.recoverSession?.(); } catch (_) {}
+    const status = await runStorageAuthHealthCheck({ notify: false, force: true });
+    if (status.ok) showToast('Document storage reconnected.', 'success');
+    else showToast('Could not reconnect automatically — log out and back in once to restore file access.', 'warning');
     if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
   },
   'diagnostics-copy': async () => {

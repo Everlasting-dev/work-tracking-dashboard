@@ -8199,6 +8199,7 @@ body.theme-normal .sync-status-label.is-live {
   text-align: right;
   word-break: break-word;
 }
+.diagnostics-meta dd.diagnostics-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; font-size: 0.72rem; }
 .diagnostics-kpis {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
