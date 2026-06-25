@@ -1399,6 +1399,16 @@ const SupabaseDB = {
       delete payload.must_change_password;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
+    // Idempotent: a retried sync op can re-run createUser after the row already
+    // exists. Treat a unique-violation (username/id) as success and resolve the
+    // existing id instead of throwing a scary duplicate-key error forever.
+    if (error && error.code === '23505') {
+      const { data: ex } = await this._sb().from('wt_users').select('id').eq('username', payload.username).maybeSingle();
+      if (ex?.id) {
+        await this.setUserClassrooms(ex.id, data.classroomIds || [await this.ensureDefaultClassroom()]).catch(() => {});
+        return ex.id;
+      }
+    }
     if (error) throw error;
     await this.setUserClassrooms(row.id, data.classroomIds || [await this.ensureDefaultClassroom()]).catch(() => {});
     return row.id;

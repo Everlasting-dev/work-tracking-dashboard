@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.2.4'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.2.5'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -1641,7 +1641,6 @@ async function handleAuth(e) {
     const existing = await DB.getUserByUsername(username);
     if (existing) { showAuthError('Username already taken'); return; }
     const id = await DB.createUser({ username, displayName, email, password, role: 'admin' });
-    try { await DB.ensurePersonalClassroom?.(id, displayName); } catch (_) {}
     await DB.setMasterKey(masterKey);
     setSession({ id, username, displayName, role: 'admin' }, { remember: true });
     await ensureDriveStorageSession({ id, username, displayName, email, role: 'admin' }, password);
@@ -1696,11 +1695,16 @@ async function showApp() {
   const s = getSession();
   await DB.migrateFromLocalStorage(s.userId);
   if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
-  // Personal spaces are created at user-creation, NOT on login. Here we only
-  // merge any duplicate personal classrooms (e.g. left over from an earlier bug).
-  if (DB.dedupePersonalClassrooms) {
+  // Personal space is created on the user's OWN first login, where s.userId is
+  // their canonical cloud id — so owner_id and membership are correct and survive
+  // sync. owner_id now persists in the cloud, so this is idempotent (no per-login
+  // duplicates). Dedupe first to clean up any spaces left mis-owned by the old
+  // admin-side creation, then ensure exactly one exists.
+  if (DB.ensurePersonalClassroom) {
     const me = await DB.getUser(s.userId).catch(() => null);
-    await DB.dedupePersonalClassrooms(s.userId, me?.displayName || me?.username || s.username).catch(() => {});
+    const nm = me?.displayName || me?.username || s.username;
+    await DB.dedupePersonalClassrooms?.(s.userId, nm).catch(() => {});
+    await DB.ensurePersonalClassroom(s.userId, nm).catch(() => {});
   }
   if (await DB.isEmpty() && !isCloudMode()) await DB.createSampleData(s.userId);
   prewarmWorkspaceCache();
@@ -7186,6 +7190,7 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.2.5', date: '2026-06-25', items: ['Fixed a new user not seeing their private personal space — it is now created (correctly owned) on their first sign-in. Also stopped a repeating duplicate-username sync error after creating a user.'] },
   { version: '3.2.4', date: '2026-06-24', items: ['Admin: every user card now has a clear Delete button (hidden on your own). Deleting a user transfers their projects, updates, and files to the main admin.'] },
   { version: '3.2.3', date: '2026-06-24', items: ['Admin: deleting a user now works permanently — their projects, updates, and files transfer to you and the account no longer reappears after sync.'] },
   { version: '3.2.2', date: '2026-06-24', items: ['Admin: fixed new users failing to sync to the cloud (auth-link constraint error). New accounts now save correctly and link their own login on first sign-in.'] },
@@ -8741,7 +8746,10 @@ async function handleFormSubmit(e) {
       const exists = await DB.getUserByUsername(username);
       if (exists) { showToast('Username already taken', 'error'); return; }
       const newUid = await DB.createUser({ username, displayName, email, password, role, department, color, birthDate, gender, phone, classroomIds, mustChangePassword: true });
-      try { await DB.ensurePersonalClassroom?.(newUid, displayName); } catch (_) {}
+      // NOTE: the personal classroom is created on the user's OWN first login
+      // (showApp), where their canonical cloud id is known. Creating it here on
+      // the admin's machine used the new user's local id, which doesn't survive
+      // the cloud id-remap and produced mis-owned / duplicate personal spaces.
       bustWorkspaceCache();
       await router(); // refresh the admin user list behind the modal
       showCredentialModal(username, password, { title: 'User created — share these' });

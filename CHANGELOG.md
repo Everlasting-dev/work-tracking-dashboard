@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.5
+
+### Fixed
+- **Personal space not visible to a new user** - a user's private space was created on the admin's device using the new user's local id, which didn't survive the cloud sync, so the space ended up owned by the wrong id (and sometimes duplicated) and stayed hidden. Personal spaces are now created on the user's own first login, where their real account id is known, so the space is correctly owned and visible.
+- **Duplicate-username sync error** - after a user was created, the sync could keep retrying and logging a `wt_users_username_key` error. Creating a user that already exists is now treated as success, so the error no longer recurs.
+
 ## 3.2.4
 
 ### Changed
