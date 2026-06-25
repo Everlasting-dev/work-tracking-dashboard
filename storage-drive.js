@@ -17,16 +17,28 @@
 
   function enabled() { return cfg().storageProvider === "google_drive"; }
 
+  // Stable Drive-storage Auth password for a user id. Independent of the app
+  // password so password changes never break Drive. The admin resync sets every
+  // Supabase Auth account's password to this exact value — keep the pepper in sync.
+  const DRIVE_PEPPER = "Orb1track$Drive$2026$kx9";
+  function drivePassword(uid) { return `orbtrk_${Number(uid)}_${DRIVE_PEPPER}`; }
+
   // The backend needs a real Supabase Auth JWT. Call this during login (after the
   // app's own auth) to establish/refresh the Supabase Auth session under the
   // hood. Email is synthesized from username when the user has none — the login
   // UI is unchanged.
-  async function ensureAuthSession({ username, email, password }) {
+  async function ensureAuthSession({ username, email, password, userId }) {
     const client = sb();
     if (!client?.auth) return null;
     const mail = (email && email.includes("@")) ? email : `${String(username || "user").toLowerCase().replace(/[^a-z0-9._-]/g, "")}@orbitrack.local`;
-    // Supabase Auth needs >= 6 char passwords; derive a valid one for short ones.
-    const pw = (password && password.length >= 6) ? password : `wtk_${password || ""}_orbitrack`;
+    // The Drive-storage Auth password is a STABLE per-user value derived from the
+    // user's id — INDEPENDENT of the app password. This is the durable fix for the
+    // recurring "authorization missing": app password changes (OTP/reset) used to
+    // desync the Auth password and lock the user out of Drive forever. Must match
+    // the one-time admin resync (drivePassword in the resync script). Falls back to
+    // the legacy app-password derivation only if the user id is unknown.
+    const uid = Number(userId || window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId || 0);
+    const pw = uid ? drivePassword(uid) : ((password && password.length >= 6) ? password : `wtk_${password || ""}_orbitrack`);
     let { data } = await client.auth.getSession();
     if (data?.session?.access_token) {
       const appUid = window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId;

@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.3.2'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.3.3'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -1522,6 +1522,7 @@ async function ensureDriveStorageSession(user, password) {
   const email = user.email || `${user.username}@worktracker.app`;
   try {
     return await window.DriveStorage.ensureAuthSession({
+      userId: user.id,
       username: user.username,
       email,
       password
@@ -7243,6 +7244,9 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.3.3', date: '2026-06-25', highlights: [
+    'Fixed document storage staying "not authorized" after a password change — file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
+  ] },
   { version: '3.3.2', date: '2026-06-25', highlights: [
     'Fixed Google Drive file access dropping to "not authorized" — sign-in sessions now stay valid across devices and app restarts.',
     'More detailed Diagnostics: storage session state, environment panel, and a one-click "Reconnect storage" button.',

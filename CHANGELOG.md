@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.3
+
+### Fixed
+- **Document storage permanently "not authorized" after a password change** - the file-storage sign-in was tied to each user's app password, so changing a password (including the one-time-password flow) locked that user out of Google Drive files for good, and signing out/in didn't help. File-storage sign-in is now independent of the app password, so it keeps working through password changes. Existing accounts were repaired.
+
 ## 3.3.2
 
 ### Fixed
