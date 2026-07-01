@@ -1885,17 +1885,29 @@ const SupabaseDB = {
     if (resolvedAssignee != null) {
       resolvedAssignee = await this._resolveSupabaseUserId(resolvedAssignee);
     }
-    const id = data.id ?? await this._nextTableId('wt_tasks');
-    const { data: row, error } = await this._sb().from('wt_tasks').insert({
-      id, project_id: projectId, milestone_id: data.milestoneId || null, assignee_id: resolvedAssignee,
+    const base = {
+      project_id: projectId, milestone_id: data.milestoneId || null, assignee_id: resolvedAssignee,
       workflow_step_key: data.workflowStepKey || '',
       title: data.title || '', due_date: data.dueDate || '', status: data.status || 'todo',
       priority: data.priority || 'medium',
       notes: data.notes || '',
       custom_fields: JSON.stringify(data.customFields || []),
       sort_order: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000)
-    }).select().single();
-    if (error) throw error;
+    };
+    // The DB owns the task id. We deliberately do NOT reuse data.id (the local
+    // id): it can collide with a task another client already created in the cloud,
+    // which is what caused the "duplicate key wt_tasks_pkey" failures. Allocate
+    // max+1 and, on the rare concurrent collision, recompute and retry so two
+    // clients never wedge on the same id. The sync engine remaps local→remote.
+    let row = null, lastErr = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const id = await this._nextTableId('wt_tasks');
+      const res = await this._sb().from('wt_tasks').insert({ id, ...base }).select().single();
+      if (!res.error) { row = res.data; break; }
+      lastErr = res.error;
+      if (!/duplicate key|_pkey|already exists/i.test(String(res.error.message || ''))) throw res.error;
+    }
+    if (!row) throw lastErr || new Error('createTask: could not allocate a unique id');
     const updatedAt = new Date().toISOString();
     await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', projectId);
     this._shadowUpsert('tasks', this._mapTask(row));

@@ -375,12 +375,14 @@ const SyncEngine = (() => {
     const callArgs = REMOTE_ONLY_OPS.has(op.method) ? [...remapped, true] : remapped;
     const result = await sb[op.method](...callArgs);
 
-    // After a create: record offline local→remote ID mapping and patch LocalDB
+    // After a create: reconcile the local id with the id the server actually
+    // assigned. The server now owns task ids (it no longer reuses the local id),
+    // so the returned id can differ even for non-offline local ids — remap
+    // whenever they differ, not only for offline temp ids.
     if (_isCreate(op.method) && op.localId != null && result != null) {
       const remoteId = typeof result === 'number' ? result : result?.id;
-      if (remoteId != null && String(op.localId) !== String(remoteId) && _isOfflineId(op.localId)) {
-        _idMap[String(op.localId)] = remoteId;
-        _saveIdMap();
+      if (remoteId != null && String(op.localId) !== String(remoteId)) {
+        if (_isOfflineId(op.localId)) { _idMap[String(op.localId)] = remoteId; _saveIdMap(); }
         await _patchLocalId(op.method, op.localId, remoteId);
       }
     }
@@ -422,6 +424,14 @@ const SyncEngine = (() => {
           .modify({ classroomId: Number(remoteId) }).catch(() => {});
         await window.LocalDB?.db?.userClassrooms?.where('classroomId').equals(Number(localId))
           .modify({ classroomId: Number(remoteId) }).catch(() => {});
+      }
+      if (method === 'createTask') {
+        // Task ids are referenced by task dependencies — keep those pointing at the
+        // remapped id so blockers don't dangle after the server reassigns the id.
+        await window.LocalDB?.db?.taskDependencies?.where('fromTaskId').equals(Number(localId))
+          .modify({ fromTaskId: Number(remoteId) }).catch(() => {});
+        await window.LocalDB?.db?.taskDependencies?.where('toTaskId').equals(Number(localId))
+          .modify({ toTaskId: Number(remoteId) }).catch(() => {});
       }
     } catch (_) {}
   }
@@ -892,6 +902,17 @@ const SyncEngine = (() => {
       const before = _queue.length;
       _queue = _queue.filter(op => op?.method !== 'touchLastSeen' && op?.method !== 'recordLoginSession');
       if (_queue.length !== before) _saveQueue();
+    }
+    // Auto-heal ops that failed with a duplicate-key/PK collision under the old
+    // id scheme. Creates now let the server assign the id, so re-running succeeds.
+    if (Array.isArray(_queue)) {
+      let reset = 0;
+      _queue.forEach(op => {
+        if (op && op.status === 'failed' && /duplicate key|_pkey|already exists/i.test(String(op.error || ''))) {
+          op.status = 'pending'; op.attempts = 0; op.error = null; reset++;
+        }
+      });
+      if (reset) { _saveQueue(); console.warn('[SyncEngine] requeued', reset, 'create op(s) that hit the old id-collision bug'); }
     }
     _loadIdMap();
 
