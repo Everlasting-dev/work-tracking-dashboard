@@ -23,6 +23,22 @@ try {
 } catch (e) {
   console.warn('[userData] could not pin legacy path:', e?.message || e);
 }
+// GPU acceleration for the arcade's WebGL renderers (Pixi treasure map + Phaser
+// games). Electron enables hardware accel by default, but on many Windows setups
+// Chromium's driver blocklist silently drops WebGL to the software SwiftShader
+// backend — which is what makes the canvas games feel laggy. Forcing past the
+// blocklist + GPU rasterization keeps everything on the real GPU. Set
+// WT_DISABLE_GPU=1 to fall back to software if a machine has broken drivers.
+if (process.env.WT_DISABLE_GPU === '1') {
+  try { app.disableHardwareAcceleration(); } catch (_) {}
+} else {
+  try {
+    app.commandLine.appendSwitch('ignore-gpu-blocklist');
+    app.commandLine.appendSwitch('enable-gpu-rasterization');
+    app.commandLine.appendSwitch('enable-zero-copy');
+  } catch (_) {}
+}
+
 const launchMode = process.env.WT_APP_MODE || packageMeta.orbitaskMode || '';
 const useModularApp = process.env.WT_MODULAR === '1' || launchMode === 'workspace' || launchMode === 'control';
 const modularDevUrl = process.env.WT_MODULAR_URL || 'http://127.0.0.1:5174/modular/';

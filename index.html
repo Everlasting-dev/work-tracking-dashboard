@@ -245,6 +245,14 @@
   <script src="db-bridge.js?v=3.3.3"></script>
   <script src="splash-sphere.js?v=3.3.3"></script>
   <script src="vendor/orbiemoji/orbiemoji.js?v=3.3.3"></script>
+  <!-- App-wide trophy engine (window.OrbiTrophies) — must load before app.js so task/project hooks can award. -->
+  <script src="trophies.js?v=3.3.3"></script>
+  <!-- Animated SVG icons from cssvg-icon (MIT) — window.CSSVG.get()/hydrate(). -->
+  <script src="icons-cssvg.js?v=3.3.3"></script>
+  <!-- Sprite-sheet + pop-up character system (window.OrbiSprites). -->
+  <script src="sprites.js?v=3.3.3"></script>
+  <!-- Rive runtime island (window.OrbiRive) — player-card animations; inert until a .riv asset exists. -->
+  <script src="vendor/orbirive/orbirive.js?v=3.3.3"></script>
   <script src="app.js?v=3.3.3"></script>
   <!-- LOCAL EXPERIMENT: TipTap notes editor island (must load before notes.js mounts an editor). Roll back by removing this tag + vendor/orbitiptap + build-src/orbitiptap.js + the OrbiTipTap branch in notes.js. -->
   <script src="vendor/orbitiptap/orbitiptap.js?v=3.3.3"></script>
@@ -270,6 +278,8 @@
   <script src="copilot.js?v=3.3.3"></script>
   <!-- LOCAL EXPERIMENT: Orbitrack Labs island — Motion/AutoAnimate/Howler/TipTap/Phaser/dnd-kit/Sonner/cmdk/React Flow. Self-mounts a launcher (bottom-left) + Ctrl+K palette. Remove this tag + the orbilabs.css link + build-src/orbilabs.jsx to roll back. -->
   <script src="vendor/orbilabs/orbilabs.js?v=3.3.3"></script>
+  <!-- Doodle Dash — co-op Pictionary on our own Supabase Realtime. Opened by a secret phrase. -->
+  <script src="pictionary.js?v=3.3.3"></script>
   <script>
     // Toggle the Copilot drawer with Ctrl+J (Cmd+J on macOS).
     window.addEventListener('keydown', (e) => {
@@ -278,6 +288,22 @@
         window.WTCopilot?.toggle();
       }
     });
+
+    // Secret phrase: typing "monkeybanana" into the command palette or the global
+    // task search launches the hidden Doodle Dash drawing game.
+    (function () {
+      var PHRASE = 'monkeybanana';
+      var SEARCH_IDS = ['command-palette-input', 'global-task-search'];
+      document.addEventListener('input', function (e) {
+        var t = e.target;
+        if (!t || SEARCH_IDS.indexOf(t.id) === -1) return;
+        if (String(t.value || '').toLowerCase().replace(/[^a-z]/g, '').indexOf(PHRASE) === -1) return;
+        t.value = '';
+        try { t.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+        try { t.blur(); } catch (_) {}
+        if (window.OrbiPictionary && window.OrbiPictionary.open) window.OrbiPictionary.open();
+      }, true);
+    })();
   </script>
 </body>
 </html>

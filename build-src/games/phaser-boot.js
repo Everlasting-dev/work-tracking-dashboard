@@ -1,18 +1,24 @@
-/* phaser-boot.js — Phaser lifecycle for arcade games only (map uses Leaflet+Pixi) */
+/* phaser-boot.js — Phaser lifecycle for arcade games only (map uses Pixi) */
 import Phaser from 'phaser';
-import { PongScene } from './scenes/PongScene.js';
-import { ConstellationScene } from './scenes/ConstellationScene.js';
-import { SnakeScene } from './scenes/SnakeScene.js';
-import { RelayScene } from './scenes/RelayScene.js';
 import { RepairScene } from './scenes/RepairScene.js';
+// v1 ships only Shared Spaceship Repair. Pong / Constellation / Snake / Relay
+// scenes still live under scenes/ and return in a future update — re-add their
+// imports here + entries in hotspots.js SCENE_BY_GAME to bring them back.
 
-const GAME_SCENES = [PongScene, ConstellationScene, SnakeScene, RelayScene, RepairScene];
+/* An idle scene that boots first so Phaser never auto-starts a real game
+   (and never joins a realtime channel) until the player picks a station. */
+class BootScene extends Phaser.Scene {
+  constructor() { super('BootScene'); }
+  create() { this.cameras.main.setBackgroundColor(0x0b0e14); }
+}
+
+const GAME_SCENES = [BootScene, RepairScene];
 
 let game = null;
 
 export function startArcadePhaser(parent, width, height) {
   if (!parent) return null;
-  destroyArcadePhaser();
+  if (game) return game;
   const w = Math.max(320, Math.floor(width || parent.clientWidth || 640));
   const h = Math.max(240, Math.floor(height || parent.clientHeight || 400));
   game = new Phaser.Game({
@@ -47,6 +53,16 @@ export function startScene(key, data) {
   });
   if (scenes.isActive(key)) scenes.stop(key);
   scenes.start(key, data || {});
+}
+
+/* Stop whatever game scene is running and return to the idle BootScene
+   (this fires each scene's shutdown() so its realtime channel is left). */
+export function stopArcadeScenes() {
+  if (!game) return;
+  game.scene.getScenes(true).forEach((s) => {
+    if (s.scene.key !== 'BootScene' && s.sys?.isActive?.()) game.scene.stop(s.scene.key);
+  });
+  if (!game.scene.isActive('BootScene')) game.scene.start('BootScene');
 }
 
 export function getArcadeGame() {

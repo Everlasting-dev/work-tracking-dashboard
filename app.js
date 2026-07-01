@@ -6814,6 +6814,7 @@ async function showUserProfileModal(userId) {
       <div class="pcard-id">
         <div class="pcard-avatar-ring ${online ? 'is-online' : ''}">
           ${avatar}
+          <div class="pcard-rive" data-rive-src="assets/rive/player-card.riv"></div>
           <span class="pcard-orbit"></span>
         </div>
         <div class="pcard-id-meta">
@@ -6859,6 +6860,18 @@ async function showUserProfileModal(userId) {
         </div>
       </div>
 
+      <div class="pcard-section">
+        ${(() => {
+          try { window.OrbiTrophies && window.OrbiTrophies.hydrate && window.OrbiTrophies.hydrate(user); } catch (_) {}
+          const ts = (window.OrbiTrophies && window.OrbiTrophies.forUser) ? window.OrbiTrophies.forUser(user) : [];
+          const total = (window.OrbiTrophies && window.OrbiTrophies.CATALOGUE) ? window.OrbiTrophies.CATALOGUE.length : 0;
+          const trophyIco = (window.CSSVG && window.CSSVG.get) ? window.CSSVG.get('award', { size: 15, hover: true }) : '';
+          const head = `<div class="pcard-section-h">${trophyIco}Trophies${ts.length ? ` · ${ts.length}${total ? '/' + total : ''}` : ''}</div>`;
+          if (!ts.length) return head + `<div class="pcard-trophies-empty">${isSelf ? 'No trophies yet — complete tasks and explore the app to earn them.' : 'No trophies yet.'}</div>`;
+          return head + `<div class="pcard-trophies">${ts.map(t => `<span class="pcard-trophy pcard-trophy--${esc(t.category)}" title="${esc(t.title)} — ${esc(t.desc)}"><i>${t.icon}</i><b>${esc(t.title)}</b></span>`).join('')}</div>`;
+        })()}
+      </div>
+
       ${userClassrooms.length ? `<div class="pcard-section pcard-spaces">
         <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces · ${userClassrooms.length}<span class="pcard-caret">▸</span></button>
         <div class="pcard-spaces-list" data-spaces hidden>
@@ -6892,6 +6905,13 @@ async function showUserProfileModal(userId) {
   ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
   window.OrbiFun?.enterModal(ov.querySelector('.modal'));
+  try { window.CSSVG?.hydrate?.(ov); } catch (_) {}
+  try {
+    const riveHost = ov.querySelector('.pcard-rive');
+    if (riveHost && window.OrbiRive?.mount) {
+      window.OrbiRive.mount(riveHost, { src: riveHost.dataset.riveSrc, stateMachine: 'State Machine 1', onError: () => {} });
+    }
+  } catch (_) {}
 
   // Animate the rank bar + wire the small in-card toggles (spaces / overflow menu).
   requestAnimationFrame(() => {
@@ -7966,7 +7986,7 @@ function initializeTeamActivityD3() {
       const t = d3.zoomTransform(svg.node());
       const sx = wrapRect.left + t.applyX(d.x);
       const sy = wrapRect.top + t.applyY(d.y);
-      const pw = 248, ph = 220, margin = 12;
+      const pw = 300, ph = 250, margin = 14;
       let left = sx + 20, top = sy - 40;
       if (left + pw > window.innerWidth - margin) left = sx - pw - 20;
       if (left < margin) left = margin;
@@ -8035,6 +8055,10 @@ function initializeTeamActivityD3() {
     nodeSel.append('circle').attr('class', 'team-map-online-dot').attr('r', 6).attr('display', d => d.online ? null : 'none');
     nodeSel.append('text').attr('class', 'team-map-name').attr('text-anchor', 'middle').attr('y', d => d._r + 18)
       .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}…` : d.name);
+
+    // Persistent emoji "stickers" teammates leave on each blob (synced, removable).
+    nodeSel.append('g').attr('class', 'team-map-reactions-layer');
+    nodeSel.each(function (d) { renderNodeReactions(d, d3.select(this).select('.team-map-reactions-layer')); });
 
     /* ── Simulation with dept clustering + activity-based centering ── */
     const deptAngle = {}; departments.forEach((d, i) => { deptAngle[d] = (i / departments.length) * Math.PI * 2; });
@@ -8128,6 +8152,7 @@ function initializeTeamActivityD3() {
         <div class="team-pop-row"><span>Current</span> ${d.currentTask ? esc(d.currentTask.title) : 'Available for collaboration'}</div>
         ${collabs.length ? `<div class="team-pop-row"><span>Works with</span> ${collabs.map(c => esc(c.name.split(' ')[0])).join(', ')}</div>` : ''}
         <div class="team-pop-actions">
+          <button data-pop-action="react" title="Leave an emoji sticker on this blob">😊 Sticker</button>
           <button data-pop-action="profile">Profile</button>
           <button data-pop-action="focus">Focus</button>
           ${Number(d.id) === Number(actorId()) ? '' : '<button data-pop-action="message">Message</button><button data-pop-action="assign">Assign</button>'}
@@ -8138,7 +8163,12 @@ function initializeTeamActivityD3() {
       popoverEl.querySelectorAll('[data-pop-action]').forEach(btn => btn.onclick = (e) => {
         e.stopPropagation();
         const act = btn.dataset.popAction;
-        if (act === 'profile') showUserProfileModal(d.id);
+        if (act === 'react') {
+          const r = btn.getBoundingClientRect();
+          if (typeof window.TeamEmojiPicker?.open === 'function') window.TeamEmojiPicker.open(r, (emoji) => addBlobReaction(d, emoji));
+          else addBlobReaction(d, '⭐');
+        }
+        else if (act === 'profile') showUserProfileModal(d.id);
         else if (act === 'focus') enterFocus(d);
         else if (act === 'message') { hideModal?.(); document.querySelector(`[data-action="select-chat-channel"][data-channel-id="dm-${d.id}"]`)?.click(); window.location.hash = '#/chat'; }
         else if (act === 'assign') showTaskModal(null, 'todo', d.id);
@@ -8147,6 +8177,54 @@ function initializeTeamActivityD3() {
     popoverEl.addEventListener('click', (e) => e.stopPropagation());
     const onMapResize = () => { if (selectedNodeData) positionPopoverForNode(selectedNodeData); };
     window.addEventListener('resize', onMapResize);
+
+    /* ── Persistent blob emoji stickers (stored on the target's profile) ── */
+    function blobReactionsOf(d) { return Array.isArray(d.user?.blobReactions) ? d.user.blobReactions : []; }
+    function canRemoveReaction(r) { return Number(r.by) === Number(actorId()); }
+    function renderNodeReactions(d, layerSel) {
+      if (!layerSel || layerSel.empty()) return;
+      layerSel.selectAll('*').remove();
+      const rx = blobReactionsOf(d);
+      const n = Math.min(rx.length, 8);
+      if (!n) return;
+      const R = d._r + 15;
+      const spread = Math.min(Math.PI * 1.35, 0.42 * n);
+      rx.slice(0, 8).forEach((r, i) => {
+        const a = -Math.PI / 2 + (n > 1 ? (spread * (i / (n - 1)) - spread / 2) : 0);
+        const gg = layerSel.append('g').attr('class', 'team-map-reaction')
+          .attr('transform', `translate(${Math.cos(a) * R},${Math.sin(a) * R})`).style('cursor', 'pointer');
+        gg.append('circle').attr('class', 'team-map-reaction-bg').attr('r', 10);
+        gg.append('text').attr('text-anchor', 'middle').attr('dy', '0.34em').text(r.emoji);
+        gg.append('title').text(`${r.emoji} · from ${r.byName || 'someone'}${canRemoveReaction(r) ? ' · click to remove' : ''}`);
+        gg.on('click', (event) => { event.stopPropagation(); tryRemoveReaction(d, r); });
+      });
+    }
+    function renderNodeReactionsFor(d) {
+      nodeSel.filter(n => n.id === d.id).each(function (nd) { renderNodeReactions(nd, d3.select(this).select('.team-map-reactions-layer')); });
+    }
+    function persistReactions(d) {
+      try { window.DB?.updateUser?.(Number(d.id), { blobReactions: blobReactionsOf(d) }, Number(actorId())); } catch (_) {}
+    }
+    function addBlobReaction(d, emoji) {
+      emoji = (emoji || '').trim();
+      if (!emoji || !d) return;
+      const me = Number(actorId());
+      const byName = getSession()?.displayName || getSession()?.username || 'Someone';
+      const at = new Date().toISOString();
+      d.user.blobReactions = blobReactionsOf(d).concat([{ emoji, by: me, byName, at }]);
+      persistReactions(d);
+      renderNodeReactionsFor(d);
+      try { net?.send({ type: 'blob-reaction', targetId: d.id, emoji, by: me, byName, at }); } catch (_) {}
+      statusEl.textContent = `Added ${emoji} to ${d.name.split(' ')[0]}`;
+      setTimeout(() => { if (statusEl.textContent.startsWith('Added ')) statusEl.textContent = ''; }, 2000);
+    }
+    function tryRemoveReaction(d, r) {
+      if (!canRemoveReaction(r)) { statusEl.textContent = 'Only whoever added that emoji can remove it'; setTimeout(() => { statusEl.textContent = ''; }, 2200); return; }
+      d.user.blobReactions = blobReactionsOf(d).filter(x => !(x.emoji === r.emoji && String(x.by) === String(r.by) && x.at === r.at));
+      persistReactions(d);
+      renderNodeReactionsFor(d);
+      try { net?.send({ type: 'blob-reaction-remove', targetId: d.id, emoji: r.emoji, by: r.by, at: r.at }); } catch (_) {}
+    }
 
     /* ── Filters ── */
     let filterMode = 'all';
@@ -8301,6 +8379,16 @@ function initializeTeamActivityD3() {
         const d = nodeById.get(Number(msg.fromId));
         if (d) floatBadge(d.x, d.y - d._r, emoji, 'var(--accent)');
         else { statusEl.textContent = `${msg.fromName || 'Someone'} reacted ${emoji}`; setTimeout(() => { statusEl.textContent = ''; }, 2500); }
+      } else if (msg.type === 'blob-reaction') {
+        const d = nodeById.get(Number(msg.targetId));
+        if (d && !blobReactionsOf(d).some(x => String(x.by) === String(msg.by) && x.emoji === msg.emoji && x.at === new Date(msg.at || 0).toISOString())) {
+          d.user.blobReactions = blobReactionsOf(d).concat([{ emoji: msg.emoji, by: msg.by, byName: msg.byName, at: new Date(msg.at || Date.now()).toISOString() }]);
+          renderNodeReactionsFor(d);
+          if (typeof floatBadge === 'function') floatBadge(d.x, d.y - d._r, msg.emoji, 'var(--accent)');
+        }
+      } else if (msg.type === 'blob-reaction-remove') {
+        const d = nodeById.get(Number(msg.targetId));
+        if (d) { d.user.blobReactions = blobReactionsOf(d).filter(x => !(x.emoji === msg.emoji && String(x.by) === String(msg.by))); renderNodeReactionsFor(d); }
       } else if (msg.type === 'exchange') {
         const l = links.find(x => pairKey(x.source.id ?? x.source, x.target.id ?? x.target) === msg.link);
         if (l) exchangeParticle(l);
@@ -9208,6 +9296,7 @@ async function handleFormSubmit(e) {
         const data = { ...baseData, title };
         const newId = await DB.createTask(data);
         createdCount++;
+        window.OrbiTrophies?.award('task-created', { title: data.title });
         await recordProjectActivity({
           userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
           details: data.title,
@@ -9250,6 +9339,7 @@ async function handleFormSubmit(e) {
         };
         const newId = await DB.createTask(data);
         createdCount++;
+        window.OrbiTrophies?.award('task-created', { title: data.title });
         await recordProjectActivity({
           userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
           details: data.title,
@@ -9799,8 +9889,10 @@ const actions = {
     // Celebrate only the big moment: this task was the last one to finish.
     if (nextStatus === 'done') {
       window.OrbiObs?.track('task_completed');
+      window.OrbiTrophies?.award('task-done', { taskId: t.id });
       if (projectTasks.length > 1 && projectTasks.filter(x => x.id !== t.id && x.status !== 'done').length === 0) {
         window.OrbiFun?.celebrate({ big: true });
+        window.OrbiTrophies?.award('project-done', { projectId: p?.id });
       }
     }
     await router();

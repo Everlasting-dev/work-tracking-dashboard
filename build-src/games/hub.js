@@ -1,70 +1,115 @@
-/* hub.js — Orbitrack Arcade: Leaflet+Pixi map, Phaser games */
+/* hub.js — Orbitrack Arcade: cozy Pixi treasure map + Phaser mini-games.
+ *
+ * The arcade is a self-contained warm "cabin" overlay (its own parchment/wood
+ * palette, independent of the app theme). Two views share the body:
+ *   • map   — the Pixi treasure map (pan/zoom, glowing stations)
+ *   • game  — a dedicated Phaser stage flanked by how-to / room-roster panels.
+ * The game canvas gets its OWN rectangle (never covered by chrome), which is
+ * what makes the games actually playable.
+ */
 import { getGameIdentity } from './net.js';
 import * as Arcade from './achievements.js';
 import { SCENE_BY_GAME, GAME_META } from './hotspots.js';
-import { createTreasureMap, destroyTreasureMap, refreshMapTrophies, invalidateTreasureMap } from './map-leaflet-pixi.js';
-import { startArcadePhaser, resizeArcadePhaser, startScene, destroyArcadePhaser, getArcadeGame } from './phaser-boot.js';
+import {
+  createTreasureMap, destroyTreasureMap, refreshMapTrophies,
+  invalidateTreasureMap, pauseTreasureMap, resumeTreasureMap,
+} from './map-pixi.js';
+import {
+  startArcadePhaser, resizeArcadePhaser, startScene, stopArcadeScenes,
+  destroyArcadePhaser, getArcadeGame,
+} from './phaser-boot.js';
 
 const CSS_TEXT = `
-.arcade-backdrop{position:fixed;inset:0;z-index:8810;background:color-mix(in srgb,var(--bg) 40%,transparent);backdrop-filter:blur(6px);opacity:0;transition:opacity .2s ease}
+.arcade,.arcade-backdrop,.arcade-toast-wrap{
+  --ac-bg:#1c140d; --ac-panel:#241a11; --ac-panel-2:#2d2115; --ac-card:#f4e7cf;
+  --ac-ink:#f6ecd8; --ac-ink-2:#d8c39b; --ac-ink-3:#a58a63; --ac-gold:#e7b64b;
+  --ac-gold-soft:#f5d68a; --ac-line:rgba(231,182,75,.24); --ac-line-2:rgba(231,182,75,.14);
+  --ac-green:#34d399; --ac-red:#f87171;
+}
+.arcade-backdrop{position:fixed;inset:0;z-index:8810;background:radial-gradient(120% 120% at 50% 30%,rgba(30,20,10,.55),rgba(8,5,2,.82));backdrop-filter:blur(7px);opacity:0;transition:opacity .22s ease}
 .arcade-backdrop.is-open{opacity:1}
-.arcade{position:fixed;inset:3vh 3vw;z-index:8820;background:var(--card);color:var(--text);border:1px solid var(--border);
-  border-radius:var(--radius,12px);box-shadow:var(--shadow-lg,0 40px 120px rgba(0,0,0,.25));display:flex;flex-direction:column;overflow:hidden;
-  transform:translateY(14px) scale(.99);opacity:0;transition:opacity .22s ease,transform .22s ease;font-size:13px;font-family:inherit}
+.arcade{position:fixed;inset:3vh 3vw;z-index:8820;color:var(--ac-ink);border-radius:18px;overflow:hidden;
+  background:linear-gradient(180deg,#241a11,#1a120b);border:1px solid var(--ac-line);
+  box-shadow:0 40px 120px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,240,210,.03),inset 0 1px 0 rgba(255,240,210,.06);
+  display:flex;flex-direction:column;font-size:13px;font-family:inherit;
+  transform:translateY(16px) scale(.99);opacity:0;transition:opacity .24s ease,transform .24s ease}
 .arcade.is-open{opacity:1;transform:none}
-.arcade-top{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0}
-.arcade-mark{width:28px;height:28px;border-radius:8px;background:var(--accent);color:var(--card);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.arcade-top{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--ac-line-2);
+  background:linear-gradient(180deg,rgba(231,182,75,.08),transparent);flex-shrink:0}
+.arcade-mark{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  color:#2a1c0b;background:linear-gradient(160deg,var(--ac-gold-soft),var(--ac-gold));box-shadow:0 2px 8px rgba(231,182,75,.35)}
 .arcade-title{min-width:0;flex:1}
-.arcade-title b{font-size:.95rem;font-weight:750;letter-spacing:.01em;display:block}
-.arcade-title span{display:block;font-size:.72rem;color:var(--text-muted);margin-top:2px;line-height:1.35}
-.arcade-top .arcade-close{margin-left:auto;width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text-secondary);font-size:1.15rem;cursor:pointer;flex-shrink:0}
-.arcade-top .arcade-close:hover{border-color:var(--accent);color:var(--text)}
-.arcade-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:12px 18px;border-bottom:1px solid var(--border-light);flex-shrink:0}
-.arcade-stat{border:1px solid var(--border-light);border-radius:10px;padding:10px 12px;background:var(--bg);display:flex;flex-direction:column;justify-content:center;min-height:58px}
-.arcade-stat .k{font-size:.62rem;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);line-height:1.2}
-.arcade-stat .v{font-size:1.12rem;font-weight:750;margin-top:4px;font-variant-numeric:tabular-nums;color:var(--text)}
-.arcade-body{flex:1;min-height:280px;position:relative;background:var(--bg)}
-.arcade-map-root{position:absolute;inset:0;z-index:1}
-.arcade-map-root .leaflet-container{width:100%;height:100%;background:#0b0e14}
-.arcade-phaser-root{position:absolute;inset:0;z-index:2;display:none}
-.arcade-phaser-root.is-active{display:block}
-.arcade-phaser-root canvas{border-radius:0}
-.arcade-map-ui{position:absolute;inset:0;z-index:3;pointer-events:none;display:flex;flex-direction:column;min-height:0}
-.arcade-map-head{padding:10px 18px 8px;font-size:.76rem;color:var(--text-secondary);line-height:1.4;flex-shrink:0;background:linear-gradient(var(--bg),transparent)}
-.arcade-map-head b{color:var(--text);font-weight:650}
-.arcade-map-ui .arcade-trophies{margin-top:auto}
-.arcade-trophies{border-top:1px solid var(--border-light);padding:10px 18px;display:flex;align-items:center;gap:10px;overflow-x:auto;min-height:56px;scrollbar-width:thin;background:color-mix(in srgb,var(--bg) 92%,transparent);flex-shrink:0}
-.arcade-trophies .tlabel{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);flex-shrink:0;font-weight:700}
-.arcade-trophy{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:9px;border:1px solid var(--border-light);background:var(--card);flex-shrink:0}
-.arcade-trophy.locked{opacity:.38;filter:grayscale(1)}
+.arcade-title b{font-size:.98rem;font-weight:800;letter-spacing:.01em;display:block;color:var(--ac-gold-soft)}
+.arcade-title span{display:block;font-size:.72rem;color:var(--ac-ink-3);margin-top:2px;line-height:1.35}
+.arcade-top .ac-iconbtn{width:32px;height:32px;border-radius:9px;border:1px solid var(--ac-line);background:rgba(255,240,210,.04);
+  color:var(--ac-ink-2);font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:.15s}
+.arcade-top .ac-iconbtn:hover{border-color:var(--ac-gold);color:var(--ac-gold-soft);background:rgba(231,182,75,.1)}
+.arcade-top .arcade-close{margin-left:4px}
+.arcade-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:12px 18px;border-bottom:1px solid var(--ac-line-2);flex-shrink:0}
+.arcade-stat{border:1px solid var(--ac-line-2);border-radius:12px;padding:9px 13px;background:rgba(255,240,210,.03);min-height:56px;display:flex;flex-direction:column;justify-content:center}
+.arcade-stat .k{font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ac-ink-3);line-height:1.2}
+.arcade-stat .v{font-size:1.14rem;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;color:var(--ac-gold-soft)}
+.arcade-body{flex:1;min-height:280px;position:relative;overflow:hidden;background:#140e08}
+.arcade-view{position:absolute;inset:0}
+.arcade-view[hidden]{display:none}
+
+/* ── Map view ── */
+.arcade-map-root{position:absolute;inset:0;z-index:1;overflow:hidden}
+.arcade-map-root .arcade-map-tip{z-index:20}
+.arcade-map-head{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:6;pointer-events:none;text-align:center;
+  padding:7px 16px;border-radius:999px;font-size:.74rem;color:var(--ac-ink-2);line-height:1.4;white-space:nowrap;
+  background:rgba(28,18,10,.72);border:1px solid var(--ac-line);box-shadow:0 8px 24px rgba(0,0,0,.35);backdrop-filter:blur(3px)}
+.arcade-map-head b{color:var(--ac-gold-soft);font-weight:750}
+.arcade-map-hint{position:absolute;right:14px;top:14px;z-index:6;pointer-events:none;font-size:.66rem;color:var(--ac-ink-3);
+  background:rgba(28,18,10,.6);border:1px solid var(--ac-line-2);border-radius:9px;padding:5px 9px;line-height:1.5}
+.arcade-trophies{position:absolute;left:0;right:0;bottom:0;z-index:6;border-top:1px solid var(--ac-line-2);padding:9px 16px;display:flex;align-items:center;gap:9px;
+  overflow-x:auto;min-height:54px;scrollbar-width:thin;background:linear-gradient(0deg,rgba(20,14,8,.94),rgba(20,14,8,.55) 70%,transparent)}
+.arcade-trophies .tlabel{font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ac-ink-3);flex-shrink:0;font-weight:800}
+.arcade-trophy{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:10px;border:1px solid var(--ac-line-2);background:rgba(255,240,210,.04);flex-shrink:0}
+.arcade-trophy.locked{opacity:.4;filter:grayscale(.6)}
 .arcade-trophy .ico{font-size:1rem;line-height:1}
-.arcade-trophy .tt b{font-size:.72rem;display:block;color:var(--text)}
-.arcade-trophy .tt span{font-size:.62rem;color:var(--text-muted);display:block;margin-top:1px}
-.arcade-gameview{position:absolute;inset:0;z-index:4;pointer-events:none;display:grid;grid-template-columns:220px 1fr 200px;min-height:0}
-.arcade-gv-left{border-right:1px solid var(--border-light);padding:14px 12px;display:flex;flex-direction:column;gap:8px;overflow:auto;pointer-events:auto;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(4px)}
-.arcade-gv-btn{border:1px solid var(--border);background:var(--card);color:var(--text);padding:9px 12px;border-radius:9px;font-size:.8rem;font-weight:650;cursor:pointer;text-align:left;width:100%}
-.arcade-gv-btn:hover{border-color:var(--accent);background:var(--accent-light,var(--bg))}
-.arcade-howto{margin-top:4px;border:1px solid var(--border-light);border-radius:10px;background:var(--card);padding:11px 12px}
-.arcade-howto h4{margin:0 0 6px;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);font-weight:700}
-.arcade-howto p{margin:0 0 8px;font-size:.76rem;line-height:1.55;color:var(--text-secondary)}
-.arcade-howto .ctrl{font-size:.72rem;color:var(--text-muted);border-top:1px dashed var(--border-light);padding-top:7px;margin-top:4px}
-.arcade-main{pointer-events:none;min-width:0}
-.arcade-main-h{display:flex;align-items:baseline;gap:10px;padding:10px 14px;font-size:.72rem;color:var(--text-muted);flex-wrap:wrap;background:linear-gradient(var(--bg),transparent);pointer-events:none}
-.arcade-main-h b{color:var(--text);font-size:.84rem;font-weight:700}
-.arcade-side{border-left:1px solid var(--border-light);padding:12px 14px;overflow:auto;pointer-events:auto;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(4px)}
-.arcade-side-h{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;font-weight:700}
-.arcade-peer{display:flex;align-items:center;gap:8px;padding:6px 2px}
-.arcade-peer .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-.arcade-peer .nm{font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.arcade-peer .hostbadge{margin-left:auto;font-size:.58rem;color:var(--accent);border:1px solid var(--border);border-radius:999px;padding:0 6px}
+.arcade-trophy .tt b{font-size:.72rem;display:block;color:var(--ac-ink)}
+.arcade-trophy .tt span{font-size:.6rem;color:var(--ac-ink-3);display:block;margin-top:1px}
+
+/* ── Game view ── */
+.arcade-view-game{display:flex;flex-direction:column}
+.arcade-gv-top{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--ac-line-2);flex-shrink:0;
+  background:linear-gradient(180deg,rgba(231,182,75,.06),transparent)}
+.arcade-gv-titles{min-width:0;flex:1}
+.arcade-gv-titles b{display:block;font-size:.92rem;font-weight:800;color:var(--ac-gold-soft)}
+.arcade-gv-titles span{display:block;font-size:.72rem;color:var(--ac-ink-3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arcade-gv-btn{border:1px solid var(--ac-line);background:rgba(255,240,210,.04);color:var(--ac-ink);padding:8px 13px;border-radius:10px;
+  font-size:.8rem;font-weight:700;cursor:pointer;flex-shrink:0;transition:.15s}
+.arcade-gv-btn:hover{border-color:var(--ac-gold);color:var(--ac-gold-soft);background:rgba(231,182,75,.1)}
+.arcade-gv-cols{flex:1;display:grid;grid-template-columns:210px 1fr 190px;min-height:0}
+.arcade-gv-left,.arcade-gv-right{padding:13px 12px;overflow:auto;background:rgba(20,14,8,.55);min-width:0}
+.arcade-gv-left{border-right:1px solid var(--ac-line-2)}
+.arcade-gv-right{border-left:1px solid var(--ac-line-2)}
+.arcade-stage{position:relative;min-width:0;min-height:0;background:radial-gradient(120% 120% at 50% 40%,#0f1524,#0a0d16)}
+.arcade-stage canvas{display:block;width:100%;height:100%}
+.arcade-howto h4{margin:0 0 6px;font-size:.64rem;letter-spacing:.07em;text-transform:uppercase;color:var(--ac-ink-2);font-weight:800}
+.arcade-howto p{margin:0 0 9px;font-size:.76rem;line-height:1.55;color:var(--ac-ink-2)}
+.arcade-howto .ctrl{font-size:.72rem;color:var(--ac-ink-3);border-top:1px dashed var(--ac-line-2);padding-top:8px;margin-top:4px}
+.arcade-side-h{font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ac-ink-3);margin-bottom:9px;font-weight:800}
+.arcade-peer{display:flex;align-items:center;gap:8px;padding:5px 2px}
+.arcade-peer .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 2px rgba(0,0,0,.25)}
+.arcade-peer .nm{font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ac-ink)}
+.arcade-peer .hostbadge{margin-left:auto;font-size:.56rem;color:var(--ac-gold);border:1px solid var(--ac-line);border-radius:999px;padding:0 6px}
+
+/* ── Toasts ── */
 .arcade-toast-wrap{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:8900;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
-.arcade-toast{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:11px;padding:11px 18px;font-size:.84rem;font-weight:600;
-  box-shadow:var(--shadow-lg);opacity:0;transform:translateY(12px);transition:opacity .25s ease,transform .25s ease;max-width:80vw;pointer-events:auto}
+.arcade-toast{background:linear-gradient(180deg,#2d2115,#241a11);color:var(--ac-ink);border:1px solid var(--ac-line);border-radius:12px;padding:11px 18px;font-size:.84rem;font-weight:650;
+  box-shadow:0 18px 44px rgba(0,0,0,.5);opacity:0;transform:translateY(12px);transition:opacity .25s ease,transform .25s ease;max-width:80vw;pointer-events:auto}
 .arcade-toast.show{opacity:1;transform:none}
-.arcade-toast.success{border-color:color-mix(in srgb,var(--green,#22c55e) 50%,var(--border))}
-.arcade-toast.error{border-color:color-mix(in srgb,var(--danger,#ef4444) 50%,var(--border))}
-@media (max-width:820px){.arcade-gameview{grid-template-columns:1fr}.arcade-gv-left,.arcade-side{display:none}.arcade-stats{grid-template-columns:repeat(2,1fr)}}
+.arcade-toast.success{border-color:color-mix(in srgb,var(--ac-green) 55%,var(--ac-line))}
+.arcade-toast.error{border-color:color-mix(in srgb,var(--ac-red) 55%,var(--ac-line))}
+@media (max-width:820px){.arcade-gv-cols{grid-template-columns:1fr}.arcade-gv-left,.arcade-gv-right{display:none}.arcade-stats{grid-template-columns:repeat(2,1fr)}}
 `;
+
+// The games hub is disabled for now (being rebuilt around Rive + sprite sheets).
+// All the map/scene/hub code below stays intact — flip this to true to bring it
+// back. While false, open()/toggle() no-op so no entry point can surface it.
+const ARCADE_ENABLED = false;
 
 let backdropEl = null, rootEl = null, mounted = false, isOpen = false, openedAt = 0;
 let sessionTimer = null, sessionStart = 0, unsubArcade = null;
@@ -125,7 +170,7 @@ function renderPeers(players) {
   setStat('players', list.length);
   box.innerHTML = list.map((p, i) => `
     <div class="arcade-peer">
-      <span class="dot" style="background:${esc(p.color || '#818cf8')}"></span>
+      <span class="dot" style="background:${esc(p.color || '#e7b64b')}"></span>
       <span class="nm">${esc(p.name || 'Player')}</span>
       ${i === 0 ? '<span class="hostbadge">host</span>' : ''}
     </div>`).join('');
@@ -133,23 +178,20 @@ function renderPeers(players) {
 
 function showView(view) {
   const isMap = view === 'map';
-  rootEl.querySelector('.arcade-map-ui').hidden = !isMap;
-  rootEl.querySelector('[data-view="game"]').hidden = isMap;
-  rootEl.querySelector('#arcade-map-root').hidden = !isMap;
-  const phaserHost = rootEl.querySelector('#arcade-phaser-root');
-  if (isMap) phaserHost.classList.remove('is-active');
-  else phaserHost.classList.add('is-active');
+  rootEl.querySelector('[data-view-map]').hidden = !isMap;
+  rootEl.querySelector('[data-view-game]').hidden = isMap;
+  if (isMap) resumeTreasureMap(); else pauseTreasureMap();
 }
 
-function measurePhaserHost() {
-  const body = rootEl?.querySelector('.arcade-body');
-  if (!body) return { w: 640, h: 400 };
-  return { w: Math.max(320, body.clientWidth), h: Math.max(240, body.clientHeight) };
+function measureStage() {
+  const stage = rootEl?.querySelector('.arcade-stage');
+  if (!stage) return { w: 640, h: 400 };
+  return { w: Math.max(320, stage.clientWidth), h: Math.max(240, stage.clientHeight) };
 }
 
 async function ensureTreasureMap() {
   const host = rootEl?.querySelector('#arcade-map-root');
-  if (!host || host.hidden) return;
+  if (!host) return;
   if (!mapReady) {
     await createTreasureMap(host);
     mapReady = true;
@@ -161,7 +203,7 @@ async function ensureTreasureMap() {
 function ensurePhaserGame() {
   const host = rootEl?.querySelector('#arcade-phaser-root');
   if (!host) return;
-  const { w, h } = measurePhaserHost();
+  const { w, h } = measureStage();
   if (!getArcadeGame()) startArcadePhaser(host, w, h);
   else resizeArcadePhaser(w, h);
 }
@@ -176,17 +218,17 @@ function openGame(id) {
   rootEl.querySelector('[data-gdesc]').textContent = meta.desc;
   const howto = rootEl.querySelector('[data-howto]');
   howto.innerHTML = `<h4>How to play</h4><p>${esc(meta.tutorial?.how || '')}</p>${meta.tutorial?.controls ? `<div class="ctrl">${esc(meta.tutorial.controls)}</div>` : ''}`;
-  destroyArcadePhaser();
-  requestAnimationFrame(() => {
+  // Two frames: let the stage lay out at its real size before Phaser measures it.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     ensurePhaserGame();
     startScene(sceneKey);
     renderPeers(null);
-  });
+  }));
 }
 
 async function backToMap() {
   currentGameId = null;
-  destroyArcadePhaser();
+  stopArcadeScenes();
   showView('map');
   renderPeers(null);
   await ensureTreasureMap();
@@ -195,8 +237,14 @@ async function backToMap() {
 function resetCurrentGame() {
   const g = getArcadeGame();
   if (!g) return;
-  const active = g.scene.getScenes(true).find((s) => s.sys.isActive());
+  const active = g.scene.getScenes(true).find((s) => s.sys.isActive() && s.scene.key !== 'BootScene');
   try { active?.resetGame?.(); } catch (_) {}
+}
+
+function toggleMute(btn) {
+  window.__arcadeMuted = !window.__arcadeMuted;
+  btn.textContent = window.__arcadeMuted ? '🔇' : '🔊';
+  btn.title = window.__arcadeMuted ? 'Sound off' : 'Sound on';
 }
 
 function build() {
@@ -213,9 +261,10 @@ function build() {
   rootEl.style.display = 'none';
   rootEl.innerHTML = `
     <div class="arcade-top">
-      <div class="arcade-mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="14" r="1"/><rect x="2" y="6" width="20" height="12" rx="4"/></svg></div>
-      <div class="arcade-title"><b>Orbitrack Arcade</b><span>Hidden co-op space · pick a station on the map</span></div>
-      <button class="arcade-close" aria-label="Close">×</button>
+      <div class="arcade-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="14" r="1"/><rect x="2" y="6" width="20" height="12" rx="4"/></svg></div>
+      <div class="arcade-title"><b>Orbitrack Arcade</b><span>A cozy hidden harbor · pan the map, pick a station, play together</span></div>
+      <button class="ac-iconbtn arcade-mute" title="Sound on">🔊</button>
+      <button class="ac-iconbtn arcade-close" aria-label="Close">×</button>
     </div>
     <div class="arcade-stats">
       <div class="arcade-stat"><div class="k">Players online</div><div class="v" data-stat="players">1</div></div>
@@ -224,24 +273,25 @@ function build() {
       <div class="arcade-stat"><div class="k">Session</div><div class="v" data-stat="session">0:00</div></div>
     </div>
     <div class="arcade-body">
-      <div id="arcade-map-root" class="arcade-map-root"></div>
-      <div id="arcade-phaser-root" class="arcade-phaser-root"></div>
-      <div class="arcade-map-ui" data-view="map">
-        <div class="arcade-map-head"><b>Team treasure map</b> · click a numbered station to play (or explore what's coming)</div>
+      <div class="arcade-view arcade-view-map" data-view-map>
+        <div id="arcade-map-root" class="arcade-map-root"></div>
+        <div class="arcade-map-head"><b>Team treasure map</b> · click a glowing station to play</div>
+        <div class="arcade-map-hint">drag to pan · scroll to zoom · double-click to zoom in</div>
         <div class="arcade-trophies" data-trophies></div>
       </div>
-      <div class="arcade-gameview" data-view="game" hidden>
-        <div class="arcade-gv-left">
-          <button class="arcade-gv-btn" data-back>← Back to map</button>
-          <button class="arcade-gv-btn" data-reset>↻ Reset game</button>
-          <div class="arcade-howto" data-howto></div>
+      <div class="arcade-view arcade-view-game" data-view-game hidden>
+        <div class="arcade-gv-top">
+          <button class="arcade-gv-btn" data-back>← Map</button>
+          <div class="arcade-gv-titles"><b data-gtitle>Game</b><span data-gdesc></span></div>
+          <button class="arcade-gv-btn" data-reset>↻ Reset</button>
         </div>
-        <div class="arcade-main">
-          <div class="arcade-main-h"><b data-gtitle>Game</b><span data-gdesc></span></div>
-        </div>
-        <div class="arcade-side">
-          <div class="arcade-side-h">In this room</div>
-          <div data-peers></div>
+        <div class="arcade-gv-cols">
+          <div class="arcade-gv-left"><div class="arcade-howto" data-howto></div></div>
+          <div class="arcade-stage"><div id="arcade-phaser-root" style="position:absolute;inset:0"></div></div>
+          <div class="arcade-gv-right">
+            <div class="arcade-side-h">In this room</div>
+            <div data-peers></div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -250,6 +300,8 @@ function build() {
   document.body.appendChild(rootEl);
 
   rootEl.querySelector('.arcade-close').addEventListener('click', close);
+  const muteBtn = rootEl.querySelector('.arcade-mute');
+  muteBtn.addEventListener('click', () => toggleMute(muteBtn));
   rootEl.querySelector('[data-back]').addEventListener('click', () => { backToMap(); });
   rootEl.querySelector('[data-reset]').addEventListener('click', resetCurrentGame);
 
@@ -260,6 +312,7 @@ function build() {
 }
 
 function open(clickCount) {
+  if (!ARCADE_ENABLED) return;
   build();
   isOpen = true;
   openedAt = Date.now();
@@ -277,7 +330,7 @@ function open(clickCount) {
   requestAnimationFrame(() => {
     backdropEl.classList.add('is-open');
     rootEl.classList.add('is-open');
-    setTimeout(() => { ensureTreasureMap(); }, 80);
+    setTimeout(() => { ensureTreasureMap(); }, 90);
   });
   sessionStart = Date.now();
   clearInterval(sessionTimer);

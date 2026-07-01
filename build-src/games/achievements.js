@@ -92,6 +92,11 @@ function award(event, meta = {}) {
   }
 
   save();
+  // Bridge arcade milestones into the app-wide, team-visible trophy shelf.
+  try {
+    if (event === 'enter-space') window.OrbiTrophies?.award('arcade-enter');
+    else if (event === 'finish') window.OrbiTrophies?.award('game-clear', { gameId: meta.gameId });
+  } catch (_) {}
   return unlocked;
 }
 

@@ -531,7 +531,9 @@ const SupabaseDB = {
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null,
       mustChangePassword: !!r.must_change_password,
       tagline: r.tagline || '', accentColor: r.accent_color || '', coverColor: r.cover_color || '',
-      hideFromTeamMap: !!r.hide_from_team_map
+      hideFromTeamMap: !!r.hide_from_team_map,
+      trophies: Array.isArray(r.trophies) ? r.trophies : [],
+      blobReactions: Array.isArray(r.blob_reactions) ? r.blob_reactions : []
     };
   },
 
@@ -1472,6 +1474,8 @@ const SupabaseDB = {
     if (changes.accentColor != null) patch.accent_color = changes.accentColor || '';
     if (changes.coverColor != null) patch.cover_color = changes.coverColor || '';
     if (changes.hideFromTeamMap != null) patch.hide_from_team_map = !!changes.hideFromTeamMap;
+    if (changes.trophies != null) patch.trophies = changes.trophies;
+    if (changes.blobReactions != null) patch.blob_reactions = changes.blobReactions;
     if (changes.hoursLoggedTotal != null) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
     if (changes.username != null) {
       const next = String(changes.username).trim().toLowerCase();
@@ -1490,6 +1494,8 @@ const SupabaseDB = {
       delete patch.accent_color;
       delete patch.cover_color;
       delete patch.hide_from_team_map;
+      delete patch.trophies;
+      delete patch.blob_reactions;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
     }
     if (error) throw error;
@@ -2418,7 +2424,8 @@ const SupabaseDB = {
     if (!userId) return;
     const patch = { last_seen_at: new Date().toISOString() };
     if (ip) patch.last_seen_ip = ip;
-    await this._sb().from('wt_users').update(patch).eq('id', userId);
+    const { error } = await this._sb().from('wt_users').update(patch).eq('id', userId);
+    if (error) throw error;
   },
 
   async recordLoginSession(userId, { deviceId = '', deviceLabel = '', userAgent = '', ip = '' } = {}) {

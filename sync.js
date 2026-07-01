@@ -196,17 +196,16 @@ const SyncEngine = (() => {
       }
     }
 
-    // Presence heartbeats fire every minute — keep only one pending op per user
-    // so the queue doesn't grow unbounded while offline.
+    // Presence heartbeats / login telemetry are best-effort ONLY — never durable.
+    // They fire every minute; a stale "last seen" is worthless to retry, and
+    // queuing them made a single op linger forever as a phantom "pending issue"
+    // in the sync diagnostics ("touchLastSeen — 1"). Fire the remote write
+    // directly (fire-and-forget) and drop it from the durable queue entirely.
     if (method === 'touchLastSeen' || method === 'recordLoginSession') {
-      const idx = _queue.findLastIndex?.(o => o.method === method && String(o.args?.[0]) === String(args[0]) && o.status === 'pending');
-      if (idx >= 0) {
-        _queue[idx].args = _serialize(args);
-        _queue[idx].createdAt = new Date().toISOString();
-        _saveQueue();
-        if (navigator.onLine && !_syncing) _scheduleFlush(400);
-        return;
+      if (navigator.onLine && typeof window.SupabaseDB?.[method] === 'function') {
+        Promise.resolve(window.SupabaseDB[method](...args)).catch(() => {});
       }
+      return;
     }
 
     // Deduplicate: collapse rapid update+update for same entity
@@ -887,6 +886,13 @@ const SyncEngine = (() => {
       _queue = _queue.filter(op => !_ATTACHMENT_OPS.has(op?.method));
       if (_queue.length !== before) _saveQueue();
     }
+    // Drop any presence heartbeats that older builds queued durably — they're
+    // best-effort now and only lingered as phantom "pending" diagnostics rows.
+    if (Array.isArray(_queue)) {
+      const before = _queue.length;
+      _queue = _queue.filter(op => op?.method !== 'touchLastSeen' && op?.method !== 'recordLoginSession');
+      if (_queue.length !== before) _saveQueue();
+    }
     _loadIdMap();
 
     // Create the shared Supabase client and inject into SupabaseDB
@@ -946,7 +952,7 @@ const SyncEngine = (() => {
 
   function getQueueDetails() {
     return _queue
-      .filter(o => o.status !== 'done')
+      .filter(o => o.status !== 'done' && o.method !== 'touchLastSeen' && o.method !== 'recordLoginSession')
       .map(o => ({
         type: o.method,
         status: o.status,

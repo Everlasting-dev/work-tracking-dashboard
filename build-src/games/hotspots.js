@@ -1,22 +1,22 @@
 /* Treasure map hotspot layout — shared by MapScene and hub metadata */
 
+// left/top are the badge centres as a PERCENTAGE of the map image (1024×768).
+// Tune with window.__arcadeCalibrate = true, then click a badge (see map-pixi.js).
+// v1: only Crystal Cave (Shared Spaceship Repair) is live. The other stations
+// are charted but "coming soon" — their games return in a future update.
 export const HOTSPOTS = [
-  { id: 1, label: 'Puzzle Ruins', left: 17, top: 14, game: 'constellation' },
-  { id: 2, label: 'Lighthouse Challenge', left: 17, top: 42, game: 'pong' },
-  { id: 3, label: 'Summit Climb', left: 45, top: 12, soon: true },
-  { id: 4, label: 'Haunted Castle', left: 72, top: 17, game: 'snake' },
-  { id: 5, label: 'Harbor Dash', left: 28, top: 60, game: 'relay' },
-  { id: 6, label: 'Forest Cabin', left: 48, top: 36, soon: true },
-  { id: 7, label: 'Oasis Escape', left: 76, top: 38, soon: true },
-  { id: 8, label: 'Crystal Cave', left: 68, top: 58, game: 'repair' },
-  { id: 9, label: 'Command Center', left: 50, top: 58, hub: true },
+  { id: 1, label: 'Puzzle Ruins', left: 16.8, top: 14.3, soon: true },
+  { id: 2, label: 'Lighthouse Challenge', left: 17.4, top: 41.9, soon: true },
+  { id: 3, label: 'Summit Climb', left: 45.1, top: 13.0, soon: true },
+  { id: 4, label: 'Haunted Castle', left: 73.0, top: 18.0, soon: true },
+  { id: 5, label: 'Harbor Dash', left: 31.1, top: 62.2, soon: true },
+  { id: 6, label: 'Forest Cabin', left: 47.7, top: 37.8, soon: true },
+  { id: 7, label: 'Oasis Escape', left: 77.9, top: 41.9, soon: true },
+  { id: 8, label: 'Crystal Cave', left: 69.5, top: 62.2, game: 'repair' },
+  { id: 9, label: 'Command Center', left: 50.6, top: 63.8, hub: true },
 ];
 
 export const SCENE_BY_GAME = {
-  pong: 'PongScene',
-  constellation: 'ConstellationScene',
-  snake: 'SnakeScene',
-  relay: 'RelayScene',
   repair: 'RepairScene',
 };
 

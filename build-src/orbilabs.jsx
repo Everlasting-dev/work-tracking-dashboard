@@ -278,7 +278,6 @@ function CmdkPalette() {
             ))}
           </Command.Group>
           <Command.Group heading="Actions">
-            <Command.Item value="Open Arcade" onSelect={() => run(() => window.OrbiGames?.open())}>Open Orbitrack Arcade</Command.Item>
             <Command.Item value="Toggle theme" onSelect={() => run(() => { document.querySelector('[data-action="toggle-theme-mode"]')?.click(); })}>Toggle theme mode</Command.Item>
             <Command.Item value="Celebrate" onSelect={() => run(() => window.OrbiFun?.celebrate?.({ big: true }))}>Celebrate 🎉</Command.Item>
           </Command.Group>
@@ -420,9 +419,9 @@ function setupEntry() {
       clicks = 0; wasted = 0;
       clearTimeout(timer);
       if (!reduceMotion()) animate(icon, { transform: ['rotate(0deg)', 'rotate(720deg)'] }, { duration: 0.9, easing: 'ease-out' });
-      // Bigger celebratory burst on the threshold that opens the arcade.
+      // Bigger celebratory burst on the threshold (arcade launch disabled for now).
       try { window.OrbiFun?.celebrate?.({ big: true }); } catch (_) {}
-      try { window.OrbiGames?.open(count); } catch (_) {}
+      void count;
     }
   });
 }
