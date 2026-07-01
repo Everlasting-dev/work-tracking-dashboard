@@ -208,20 +208,45 @@
     for (var i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i].x * r.width, s.pts[i].y * r.height);
     ctx.stroke();
   }
-  function pos(e) { var r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; }
+  function pos(e) { var r = canvas.getBoundingClientRect(); return { x: +((e.clientX - r.left) / r.width).toFixed(4), y: +((e.clientY - r.top) / r.height).toFixed(4) }; }
+  // Draw a single segment incrementally (no full-canvas redraw) so the drawer stays smooth.
+  function drawSegment(a, b, color, size) {
+    var r = canvas.getBoundingClientRect();
+    ctx.strokeStyle = color; ctx.lineWidth = size; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(a.x * r.width, a.y * r.height); ctx.lineTo(b.x * r.width, b.y * r.height); ctx.stroke();
+  }
   function setupDrawing() {
-    var drawing = false;
+    var drawing = false, sendBuf = [], lastSend = 0;
+    function flush(force) {
+      if (!cur || sendBuf.length < 2) return;
+      var now = performance.now();
+      if (!force && now - lastSend < 60) return;   // cap broadcasts at ~16/sec
+      lastSend = now;
+      send('draw', { color: cur.color, size: cur.size, p: sendBuf });
+      sendBuf = [sendBuf[sendBuf.length - 1]];       // keep last point to connect the next batch
+    }
     canvas.addEventListener('pointerdown', function (e) {
       if (!amDrawer() || G.phase !== 'drawing') return;
       drawing = true; try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-      cur = { color: drawColor, size: drawSize, pts: [pos(e)] };
+      var p = pos(e);
+      cur = { color: drawColor, size: drawSize, pts: [p] };
+      sendBuf = [p];
     });
     canvas.addEventListener('pointermove', function (e) {
       if (!drawing || !cur) return;
-      cur.pts.push(pos(e)); redraw();
-      send('draw', { color: cur.color, size: cur.size, p: cur.pts.slice(-2) });
+      var p = pos(e);
+      var prev = cur.pts[cur.pts.length - 1];
+      cur.pts.push(p);
+      drawSegment(prev, p, cur.color, cur.size);     // local: incremental only
+      sendBuf.push(p);
+      flush(false);
     });
-    function end() { if (!drawing) return; drawing = false; if (cur) { strokes.push(cur); send('stroke', cur); cur = null; } }
+    function end() {
+      if (!drawing) return;
+      drawing = false;
+      flush(true);
+      if (cur) { strokes.push(cur); send('stroke', cur); cur = null; }
+    }
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
     canvas.addEventListener('pointerleave', end);
@@ -259,7 +284,12 @@
     channel.on('broadcast', { event: 'state' }, function (m) { if (m.payload) { G = m.payload; renderAll(); } });
     channel.on('broadcast', { event: 'secret' }, function (m) { var p = m.payload; if (p && String(p.to) === String(myId())) { myWord = p.word || ''; } });
     channel.on('broadcast', { event: 'guess' }, function (m) { if (amHost() && m.payload) hostHandleGuess(m.payload); });
-    channel.on('broadcast', { event: 'needSync' }, function () { if (amDrawer() && strokes.length) send('strokesFull', { strokes: strokes }); });
+    channel.on('broadcast', { event: 'needSync' }, function () {
+      // Host replays the authoritative state so late joiners aren't stuck in "waiting"
+      // (that was leaving their guess box disabled). Drawer replays the canvas so far.
+      if (amHost()) { send('state', G); if (G.phase === 'drawing' && hostWord) send('secret', { to: G.drawerId, word: hostWord }); }
+      if (amDrawer() && strokes.length) send('strokesFull', { strokes: strokes });
+    });
 
     var onPresence = function () { players = flattenPresence(); onPlayersChanged(); renderPlayers(); };
     channel.on('presence', { event: 'sync' }, onPresence);
@@ -285,7 +315,10 @@
       // If no active round and we have players, kick one off.
       if (G.phase === 'waiting' && players.length >= 1 && !transitioning) startRound();
       // If the drawer left mid-round, end the round.
-      if (G.phase === 'drawing' && !ids[G.drawerId]) endRound(false);
+      else if (G.phase === 'drawing' && !ids[G.drawerId]) endRound(false);
+      // Push current state to whoever just joined/changed so they sync right away.
+      send('state', G);
+      if (G.phase === 'drawing' && hostWord) send('secret', { to: G.drawerId, word: hostWord });
     }
   }
 
@@ -341,6 +374,7 @@
       send('feed', { text: (g.name || 'Someone') + ': ' + String(g.text).slice(0, 40), kind: '' });
     }
   }
+  var lastStateBeat = 0;
   function startHostLoop() {
     clearInterval(loopTimer);
     loopTimer = setInterval(function () {
@@ -350,6 +384,10 @@
         if (G.endsAt && Date.now() > G.endsAt) endRound(false);
         else if (everyoneGuessed()) endRound(true);
       }
+      // Heartbeat: re-broadcast state every ~2s so any client that missed a state
+      // event converges (keeps guess boxes / timers correct for everyone).
+      var now = Date.now();
+      if (now - lastStateBeat > 2000) { lastStateBeat = now; send('state', G); }
     }, 500);
   }
 
