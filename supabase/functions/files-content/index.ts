@@ -65,7 +65,13 @@ serve(async (req) => {
 
     return new Response(driveRes.body, { status: driveRes.status === 206 ? 206 : 200, headers });
   } catch (err) {
-    if (err instanceof DriveAuthRevokedError) return json({ error: "Storage authorization error." }, 502);
+    if (err instanceof DriveAuthRevokedError) {
+      log("drive.auth_revoked", { operation: "content" });
+      return json({
+        code: "drive_auth_revoked",
+        error: "Storage authorization error. Reconnect the central Google Drive storage account.",
+      }, 502);
+    }
     log("content.error", { err: String(err) });
     return json({ error: "Could not load file." }, 500);
   }

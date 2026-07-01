@@ -27,6 +27,12 @@ const launchMode = process.env.WT_APP_MODE || packageMeta.orbitaskMode || '';
 const useModularApp = process.env.WT_MODULAR === '1' || launchMode === 'workspace' || launchMode === 'control';
 const modularDevUrl = process.env.WT_MODULAR_URL || 'http://127.0.0.1:5174/modular/';
 const modularStartRoute = process.env.WT_MODULAR_ROUTE || (launchMode === 'control' ? '#/control' : '#/app');
+// Local React/Vite UI rewrite (test build). Default OFF — only active when
+// WT_REACT=1, so the shipping app is byte-for-byte unchanged otherwise.
+const useReactApp = process.env.WT_REACT === '1';
+const reactDevMode = process.env.WT_REACT_DEV === '1'; // use the Vite dev server instead of the built dist
+const reactDevUrl = process.env.WT_REACT_URL || 'http://127.0.0.1:5175/';
+const reactStartRoute = process.env.WT_REACT_ROUTE || '#/projects';
 
 function getPackageMeta() {
   try {
@@ -39,6 +45,12 @@ function getPackageMeta() {
 function modularUrlWithRoute(url) {
   const next = new URL(url);
   next.hash = modularStartRoute;
+  return next.toString();
+}
+
+function reactUrlWithRoute(url) {
+  const next = new URL(url);
+  next.hash = reactStartRoute;
   return next.toString();
 }
 
@@ -88,7 +100,13 @@ function createWindow() {
     }
   });
 
-  if (isDev && useModularApp) {
+  if (useReactApp && reactDevMode) {
+    mainWindow.loadURL(reactUrlWithRoute(reactDevUrl));
+  } else if (useReactApp) {
+    mainWindow.loadFile(path.join(__dirname, '..', 'orbitrack-react', 'dist', 'index.html'), {
+      hash: reactStartRoute.replace(/^#/, '')
+    });
+  } else if (isDev && useModularApp) {
     mainWindow.loadURL(modularUrlWithRoute(modularDevUrl));
   } else if (useModularApp) {
     mainWindow.loadFile(path.join(__dirname, '..', 'modular-dist', 'modular', 'index.html'), {

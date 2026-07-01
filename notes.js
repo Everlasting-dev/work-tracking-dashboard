@@ -15,6 +15,38 @@ function stripNoteHtml(html) {
   return (div.textContent || div.innerText || '').replace(/\s+/g, ' ').trim();
 }
 
+// Clean pasted HTML so it matches the editor's own formatting. Strips inline
+// styles/classes (the cause of "black box" pastes from dark-mode apps), Word/
+// Docs cruft, and anything outside a small allow-list; keeps semantic tags and
+// real lists. Returns sanitized innerHTML.
+function sanitizePastedHtml(html) {
+  const ALLOWED = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL',
+    'UL', 'OL', 'LI', 'P', 'BR', 'A', 'H1', 'H2', 'H3', 'BLOCKQUOTE', 'CODE', 'PRE']);
+  const tmp = document.createElement('div');
+  tmp.innerHTML = String(html || '');
+  // Drop dangerous / noise elements entirely (incl. images that would blow the
+  // 4000-char content cap and Word's <o:p> filler).
+  tmp.querySelectorAll('script,style,meta,link,img,svg,object,iframe,o\\:p').forEach((el) => el.remove());
+  const walk = (node) => {
+    for (const el of Array.from(node.children)) {
+      walk(el);
+      const tag = el.tagName;
+      const href = tag === 'A' ? (el.getAttribute('href') || '') : '';
+      // Strip ALL attributes — this removes style/class/color/bgcolor in one shot.
+      Array.from(el.attributes).forEach((a) => el.removeAttribute(a.name));
+      if (tag === 'A' && /^(https?:|mailto:)/i.test(href)) el.setAttribute('href', href);
+      if (!ALLOWED.has(tag)) {
+        // Unwrap (e.g. span/div/font/table): keep text, drop the element.
+        const parent = el.parentNode;
+        while (el.firstChild) parent.insertBefore(el.firstChild, el);
+        parent.removeChild(el);
+      }
+    }
+  };
+  walk(tmp);
+  return tmp.innerHTML;
+}
+
 function deriveNoteTitle(note) {
   const title = String(note?.title || '').trim();
   if (title) return title.slice(0, 90);
@@ -169,6 +201,27 @@ function mountRichEditor(container, initialHTML, onChange, opts = {}) {
     });
   });
   area.addEventListener('input', emit);
+  // Sanitize on paste so pasted content matches editor formatting instead of
+  // arriving as styled "black boxes" or broken lists.
+  area.addEventListener('paste', (e) => {
+    const cd = e.clipboardData || window.clipboardData;
+    if (!cd) return; // let the browser handle it if no clipboard data
+    e.preventDefault();
+    const html = cd.getData('text/html');
+    let clean;
+    if (html) {
+      clean = sanitizePastedHtml(html);
+    } else {
+      const text = cd.getData('text/plain') || '';
+      clean = esc(text).replace(/\r\n|\r|\n/g, '<br>');
+    }
+    try {
+      document.execCommand('insertHTML', false, clean);
+    } catch (_) {
+      try { document.execCommand('insertText', false, cd.getData('text/plain') || ''); } catch (_) {}
+    }
+    emit();
+  });
   return {
     getHTML() { return area.innerHTML; },
     setHTML(html) { area.innerHTML = html || ''; },
@@ -179,11 +232,18 @@ function mountRichEditor(container, initialHTML, onChange, opts = {}) {
 
 function mountPreferredEditor(container, initialHTML, onChange, opts = {}) {
   if (!container) return { getHTML() { return ''; }, setHTML() {}, unmount() {}, focus() {} };
-  // Always use the built-in contenteditable editor. The BlockNote island
-  // (window.OrbiNotes) mounts without throwing but renders a blank, non-typeable
-  // box in packaged Electron builds, so the try/catch fallback never triggered.
-  // See memory: notes-editor. Do not reintroduce OrbiNotes without verifying a
-  // packaged dist build actually renders it.
+  // Prefer the TipTap (ProseMirror) editor island when present — its schema-driven
+  // lists fix the bullet/numbering bugs the execCommand fallback had, and pastes
+  // are sanitized to the schema for free. Falls back to the dependency-free
+  // contenteditable editor if the bundle is missing or fails to mount.
+  if (window.OrbiTipTap && typeof window.OrbiTipTap.mount === 'function') {
+    try {
+      const ed = window.OrbiTipTap.mount(container, initialHTML, onChange, opts);
+      if (ed && typeof ed.getHTML === 'function') return ed;
+    } catch (err) {
+      console.warn('[notes] TipTap editor failed to mount, using fallback', err);
+    }
+  }
   return mountRichEditor(container, initialHTML, onChange, opts);
 }
 

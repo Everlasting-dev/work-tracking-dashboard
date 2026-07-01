@@ -20,15 +20,33 @@ const reduceMotion = () => {
 };
 
 /* ── Celebration confetti (orbit particles, not party blobs) ────── */
+const CONFETTI_ZONES = [
+  { x: 0.08, y: 0.08, angle: 135 }, { x: 0.92, y: 0.08, angle: 225 },
+  { x: 0.08, y: 0.92, angle: 45 }, { x: 0.92, y: 0.92, angle: 315 },
+  { x: 0.5, y: 0.06, angle: 270 }, { x: 0.5, y: 0.94, angle: 90 },
+  { x: 0.06, y: 0.5, angle: 0 }, { x: 0.94, y: 0.5, angle: 180 },
+  { x: 0.5, y: 0.5, angle: 270 }, { x: 0.28, y: 0.32, angle: 300 },
+  { x: 0.72, y: 0.32, angle: 240 }, { x: 0.35, y: 0.68, angle: 60 },
+  { x: 0.65, y: 0.68, angle: 120 },
+];
+function randomOrigin(exclude) {
+  const pool = exclude ? CONFETTI_ZONES.filter((z) => z !== exclude) : CONFETTI_ZONES;
+  return pool[(Math.random() * pool.length) | 0];
+}
+function burstFrom(zone, base, count, extra = {}) {
+  confetti({ ...base, particleCount: count, origin: { x: zone.x, y: zone.y }, angle: zone.angle, ...extra });
+}
 function celebrate(opts = {}) {
   if (reduceMotion()) return;
   const colors = opts.colors || ['#ffffff', '#38bdf8', '#818cf8', '#94a3b8'];
   const base = { spread: 70, startVelocity: 42, ticks: 220, gravity: 0.9, scalar: 0.85, colors, shapes: ['circle', 'square'] };
-  // Two angled bursts from the lower corners for a tidy, premium feel.
-  confetti({ ...base, particleCount: 60, origin: { x: 0.15, y: 0.95 }, angle: 60 });
-  confetti({ ...base, particleCount: 60, origin: { x: 0.85, y: 0.95 }, angle: 120 });
+  const z1 = randomOrigin();
+  burstFrom(z1, base, opts.big ? 70 : 55);
   if (opts.big) {
-    setTimeout(() => confetti({ ...base, particleCount: 90, spread: 100, origin: { x: 0.5, y: 0.6 }, startVelocity: 50 }), 160);
+    const z2 = randomOrigin(z1);
+    setTimeout(() => burstFrom(z2, base, 65, { spread: 90 }), 90);
+    const z3 = randomOrigin(z2);
+    setTimeout(() => burstFrom(z3, base, 80, { spread: 100, startVelocity: 50 }), 200);
   }
 }
 

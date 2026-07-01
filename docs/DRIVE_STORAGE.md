@@ -101,6 +101,24 @@ supabase secrets set GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… \
 - Smoke upload (needs a real user JWT):
   `curl -X POST "$SUPABASE_URL/functions/v1/files-upload" -H "Authorization: Bearer $JWT" -H "apikey: $ANON" -F projectId=1 -F file=@photo.png`
 
+## Troubleshooting: storage authorization error
+
+If uploads and previews return `Storage authorization error`, the Supabase
+database connection may still look healthy. Check Edge Function logs, not only
+Postgres logs. A `drive.auth_revoked` event means the central Google Drive
+refresh token is expired or revoked.
+
+Regenerate it with:
+
+```
+node scripts/google-drive-oauth-bootstrap.mjs
+supabase secrets set GOOGLE_REFRESH_TOKEN=... GOOGLE_DRIVE_ROOT_FOLDER_ID=...
+supabase functions deploy files-upload files-content files-delete
+```
+
+Sign in during bootstrap as the dedicated Orbitrack storage Google account, then
+copy the newly printed values into Supabase secrets. Do not commit them.
+
 ## Production deployment
 
 ```

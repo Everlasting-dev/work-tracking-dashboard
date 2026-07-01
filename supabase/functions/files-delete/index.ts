@@ -32,7 +32,13 @@ serve(async (req) => {
     try {
       await trashFile(row.drive_file_id);
     } catch (e) {
-      if (e instanceof DriveAuthRevokedError) return json({ error: "Storage authorization error." }, 502);
+      if (e instanceof DriveAuthRevokedError) {
+        log("drive.auth_revoked", { operation: "delete" });
+        return json({
+          code: "drive_auth_revoked",
+          error: "Storage authorization error. Reconnect the central Google Drive storage account.",
+        }, 502);
+      }
       log("delete.drive_failed", { fileId: row.id, err: String(e) });
       return json({ error: "Could not remove the file from storage; nothing was deleted." }, 502);
     }

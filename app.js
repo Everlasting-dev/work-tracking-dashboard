@@ -4635,7 +4635,8 @@ async function renderAdminTabbed() {
     ['bugs', `Bugs${openBugCount ? ` (${openBugCount})` : ''}`],
     ['users', `Users (${users.length})`],
     ['workspace', 'Workspace'],
-    ['data', 'Data & Integrations']
+    ['data', 'Data & Integrations'],
+    ['library', 'Library']
   ];
   const tabsHtml = `<div class="tab-bar admin-tab-bar">
     ${tabs.map(([key, label]) => `<button type="button" class="tab-btn ${active === key ? 'active' : ''}" data-action="admin-tab" data-tab="${key}">${label}</button>`).join('')}
@@ -4790,7 +4791,15 @@ async function renderAdminTabbed() {
       </div>
     </section>
   </div>`;
-  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : overviewHtml;
+  const libraryHtml = `
+  <div class="admin-tab-grid admin-tab-grid--library">
+    <section class="section-card">
+      <div class="section-header"><h2>UI Library Showcase</h2></div>
+      <p class="text-secondary text-sm" style="margin:-6px 0 14px">Live demos of the front-end libraries evaluated for Orbitrack (local experiment).</p>
+      <div id="admin-library-mount" class="admin-library-mount"></div>
+    </section>
+  </div>`;
+  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : active === 'library' ? libraryHtml : overviewHtml;
   content.innerHTML = `
     <div class="view-header admin-suite-header">
       <div><h1>Admin</h1><p class="view-subtitle">Oversight, people, workspace templates, bugs, and data tools.</p></div>
@@ -4801,6 +4810,14 @@ async function renderAdminTabbed() {
     </div>
     ${tabsHtml}
     ${body}`;
+  // Mount the UI-library showcase island into the Library tab (mirrors how the
+  // React Flow / canvas islands mount into their rendered containers).
+  if (active === 'library') {
+    const mountEl = document.getElementById('admin-library-mount');
+    if (mountEl && window.OrbiLabs?.mountShowcase) {
+      try { window.OrbiLabs.mountShowcase(mountEl); } catch (e) { console.warn('[admin] library showcase mount failed', e); }
+    }
+  }
 }
 
 async function renderSettings() {
@@ -6165,7 +6182,7 @@ function parseTaskTitleLines(raw) {
     .slice(0, 60);
 }
 
-async function showTaskModal(preId = null, defaultStatus = 'todo') {
+async function showTaskModal(preId = null, defaultStatus = 'todo', preAssigneeId = null) {
   const projects = await DB.getProjects();
   const editable = projects.filter(p => canEdit(p));
   if (editable.length === 0) { showToast('No projects you can add tasks to', 'warning'); return; }
@@ -6177,7 +6194,7 @@ async function showTaskModal(preId = null, defaultStatus = 'todo') {
     : `<label class="quick-task-project"><span>Project</span><select name="projectId" required>${editable.map(p => `<option value="${p.id}" data-owner-id="${p.ownerId || ''}">${esc(p.name)}</option>`).join('')}</select></label>`;
   const users = await DB.getUsers();
   const meId = actorId();
-  const defaultAssigneeId = lockedProject?.ownerId || editable[0]?.ownerId || meId;
+  const defaultAssigneeId = preAssigneeId != null ? Number(preAssigneeId) : (lockedProject?.ownerId || editable[0]?.ownerId || meId);
   const sorted = [...users].sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0));
   const assigneeOptions = sorted
     .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
@@ -6587,39 +6604,63 @@ function assigneeChipHtml(user) {
   return `<span class="assignee-chip" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
 
-// Simple, theme-colored chess-piece silhouettes for each rank tier.
+// Theme-colored, Orbitrack space-themed silhouettes for each rank tier.
 function rankIcon(label, size = 18) {
   const k = String(label || '').toLowerCase();
   const paths = {
-    pawn: '<circle cx="12" cy="7" r="3.1"/><path d="M9.3 10h5.4l1.3 4H8z"/><path d="M7 20l1.4-6.2h7.2L17 20z"/>',
-    knight: '<path d="M8.5 20H17c0-5-1-8.3-4.2-10.8.5-1 .3-2.1-.6-2.9L10.8 4l-.6 2.2-2.4 1.3C6 8.5 5.3 10.2 5.3 12c0 .9.7 1.5 1.6 1.3l1.7-.3-1 3-2 2z"/>',
-    bishop: '<path d="M12 3c1.5 1 2.3 2.2 2.3 3.5 0 1-.5 1.7-1.1 2.3 1.9 1.2 3.1 3.1 3.1 5.4 0 1-.3 1.9-.9 2.6H6.6c-.6-.7-.9-1.6-.9-2.6 0-2.3 1.2-4.2 3.1-5.4-.6-.6-1.1-1.3-1.1-2.3C7.7 5.2 8.5 4 10 3z"/><path d="M6.8 20h10.4v1.6H6.8z"/>',
-    rook: '<path d="M6.4 6h2.1v1.7h2V6h3v1.7h2V6h2.1v4.2l-1.6 1.4.6 6.9H7.4l.6-6.9-1.6-1.4z"/><path d="M5.8 19.2h12.4V21H5.8z"/>',
-    queen: '<path d="M4.8 9l1.9 9.3h10.6L19.2 9l-3.1 3.2-2.1-5.3-2 5.3-2-5.3-2.1 5.3z"/><path d="M5.8 19.4h12.4V21H5.8z"/><circle cx="4.8" cy="7.8" r="1.5"/><circle cx="12" cy="5.6" r="1.5"/><circle cx="19.2" cy="7.8" r="1.5"/>',
-    king: '<path d="M11 2.6h2v2h2v2h-2v1.6h-2V6.6H9v-2h2z"/><path d="M5.4 10c2.1 1.1 4.1 1.6 6.6 1.6S16.5 11.1 18.6 10l-1.4 8.4H6.8z"/><path d="M5.8 19.4h12.4V21H5.8z"/>',
-    emperor: '<path d="M4 9l2 9h12l2-9-4 3-2-5-2 5z"/><path d="M5 20h14v2H5z"/><circle cx="4" cy="7" r="1.5"/><circle cx="12" cy="5" r="1.5"/><circle cx="20" cy="7" r="1.5"/>',
-    titan: '<path d="M7 20V9l5-4 5 4v11z"/><path d="M5 20h14v2H5z"/><path d="M10 12h4v8h-4z"/>',
-    mythic: '<path d="M12 2l2.4 6.8H21l-5.5 4 2.1 6.7L12 16.8 6.4 19.5l2.1-6.7L3 8.8h6.6z"/>',
-    veteran: '<circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M9 11l3 3 5-6"/>',
-    ascendant: '<path d="M12 3v6"/><path d="M8 7l4-4 4 4"/><path d="M6 20h12"/><path d="M8 14h8l-1 6H9z"/>',
-    transcendent: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8"/><path d="M12 8v8"/>',
+    pawn: '<circle cx="12" cy="10.5" r="4.3"/><path d="M6 20c1.2-2.4 3.4-3.6 6-3.6s4.8 1.2 6 3.6z"/>',
+    scout: '<path d="M12 3.5l6.2 8.3H5.8z"/><circle cx="12" cy="16.5" r="2.4"/>',
+    pilot: '<path d="M3 12l17.5-7.5L13 21l-3-7.2z"/>',
+    navigator: '<path d="M12 2.2l2.5 6.7 6.9.3-5.4 4.3 1.9 6.7L12 16.6 6.1 20.5l1.9-6.7L2.6 9.2l6.9-.3z"/>',
+    commander: '<path d="M12 3l7.5 2.4v6.1c0 4.3-3.1 7.6-7.5 8.7-4.4-1.1-7.5-4.4-7.5-8.7V5.4z"/>',
+    architect: '<path d="M12 2.6l8 4.6v9.6l-8 4.6-8-4.6V7.2z"/><path d="M12 7.4l4 2.3v4.6l-4 2.3-4-2.3V9.7z" fill="#0b0e14" opacity=".35"/>',
+    orbital: '<circle cx="12" cy="12" r="4.2"/><ellipse cx="12" cy="12" rx="9.4" ry="3.6" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(-22 12 12)"/>',
+    veteran: '<circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 20v-2a6 6 0 0 1 12 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 11l3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+    ascendant: '<path d="M12 3v6M8 7l4-4 4 4M6 20h12M8 14h8l-1 6H9z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+    transcendent: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8M12 8v8" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   };
   const body = paths[k] || paths.pawn;
   return `<svg class="rank-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${body}</svg>`;
 }
 
-const RANK_ORDER = { Pawn: 0, Knight: 1, Bishop: 2, Rook: 3, Queen: 4, King: 5, Veteran: 6, Emperor: 7, Ascendant: 8, Titan: 9, Mythic: 10, Transcendent: 11 };
+// Orbitrack-themed rank tiers (score thresholds). Each tier spans five levels
+// (I–V) toward the next tier, matching the "Pawn V → Scout I" progression.
+const RANK_TIERS = [
+  { label: 'Pawn', tone: 'muted', min: 0 },
+  { label: 'Scout', tone: 'amber', min: 25 },
+  { label: 'Pilot', tone: 'green', min: 60 },
+  { label: 'Navigator', tone: 'blue', min: 110 },
+  { label: 'Commander', tone: 'purple', min: 180 },
+  { label: 'Architect', tone: 'purple', min: 300 },
+  { label: 'Orbital', tone: 'purple', min: 460 },
+];
+const RANK_ORDER = { Pawn: 0, Scout: 1, Pilot: 2, Navigator: 3, Commander: 4, Architect: 5, Orbital: 6, Veteran: 3, Ascendant: 5, Transcendent: 7 };
+const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
+function romanLevel(n) { return ROMAN[Math.max(0, Math.min(4, n - 1))]; }
 
 function profileRank(score) {
-  if (score >= 500) return { label: 'Mythic', tone: 'purple', next: null };
-  if (score >= 350) return { label: 'Titan', tone: 'purple', next: 500 - score };
-  if (score >= 200) return { label: 'Emperor', tone: 'purple', next: 350 - score };
-  if (score >= 120) return { label: 'King', tone: 'purple', next: 200 - score };
-  if (score >= 80) return { label: 'Queen', tone: 'purple', next: 120 - score };
-  if (score >= 50) return { label: 'Rook', tone: 'blue', next: 80 - score };
-  if (score >= 28) return { label: 'Bishop', tone: 'green', next: 50 - score };
-  if (score >= 12) return { label: 'Knight', tone: 'amber', next: 28 - score };
-  return { label: 'Pawn', tone: 'muted', next: 12 - score };
+  const s = Math.max(0, Number(score) || 0);
+  let idx = 0;
+  for (let i = 0; i < RANK_TIERS.length; i++) if (s >= RANK_TIERS[i].min) idx = i;
+  const tier = RANK_TIERS[idx];
+  const next = RANK_TIERS[idx + 1] || null;
+  let level, need = null, nextLabel = null;
+  if (next) {
+    const span = next.min - tier.min;
+    const levelSize = span / 5;
+    level = Math.min(5, 1 + Math.floor((s - tier.min) / levelSize));
+    if (level < 5) {
+      const boundary = tier.min + level * levelSize;
+      need = Math.max(1, Math.ceil(boundary - s));
+      nextLabel = `${tier.label} ${romanLevel(level + 1)}`;
+    } else {
+      need = Math.max(1, next.min - s);
+      nextLabel = `${next.label} I`;
+    }
+  } else {
+    level = Math.min(5, 1 + Math.floor((s - tier.min) / 120));
+  }
+  return { label: tier.label, tone: tier.tone, level, levelRoman: romanLevel(level), next: need, nextLabel };
 }
 
 function completionMilestone(completedTasks) {
@@ -6635,7 +6676,7 @@ function resolveUserRank(score, completedTasks) {
   if (!milestone) return scoreRank;
   const scoreOrd = RANK_ORDER[scoreRank.label] ?? 0;
   const mileOrd = RANK_ORDER[milestone.label] ?? 0;
-  if (mileOrd > scoreOrd) return { ...milestone, next: null };
+  if (mileOrd > scoreOrd) return { ...milestone, level: null, next: null, nextLabel: null };
   return scoreRank;
 }
 
@@ -6659,74 +6700,213 @@ function userProfileStats(userId, projects = [], tasks = []) {
   };
 }
 
+// ── Player-card data helpers ─────────────────────────────────────────────
+const STATUS_LABELS = { todo: 'To do', doing: 'In progress', done: 'Done', blocked: 'Blocked', review: 'In review' };
+
+// The user's single most relevant open task (prefer in-progress, then nearest due).
+function pcardCurrentActivity(uid, projects, tasks) {
+  const open = tasks.filter(t => Number(t.assigneeId) === Number(uid) && t.status !== 'done');
+  if (!open.length) return null;
+  open.sort((a, b) => {
+    const ap = a.status === 'doing' ? 0 : 1, bp = b.status === 'doing' ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return String(a.dueDate || '9999-99').localeCompare(String(b.dueDate || '9999-99'));
+  });
+  const task = open[0];
+  const project = projects.find(p => Number(p.id) === Number(task.projectId)) || null;
+  const progress = project ? projectStatsFromTasks(tasks, project.id).progress : null;
+  return { task, project, progress };
+}
+
+// 7-day activity dots + current daily streak from userActivityDaily.
+function pcardWeekly(rows) {
+  const map = {};
+  (rows || []).forEach(r => { map[r.date] = (r.activeMinutes || 0) + (r.actionCount || 0); });
+  const days = [];
+  const LBL = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000);
+    const key = d.toISOString().slice(0, 10);
+    days.push({ label: LBL[d.getUTCDay()], active: (map[key] || 0) > 0, today: i === 0 });
+  }
+  let streak = 0;
+  for (let i = days.length - 1; i >= 0; i--) { if (days[i].active) streak++; else break; }
+  return { days, streak };
+}
+
 async function showUserProfileModal(userId) {
   const user = await DB.getUser(Number(userId));
   if (!user) { showToast('User not found', 'error'); return; }
   const { projects, tasks } = await getWorkspaceData();
   const stats = userProfileStats(user.id, projects, tasks);
-  const joined = formatDateShort(user.createdAt) || 'recently';
   const isSelf = Number(user.id) === Number(actorId());
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
   const accent = user.accentColor || user.color || userColor(user);
-  const cover = user.coverColor || accent;
-  const tagline = (user.tagline || '').trim();
-  const avatar = user.avatarBase64
-    ? `<img src="${esc(user.avatarBase64)}" class="profile-view-avatar-img" alt="${esc(initials)}">`
-    : `<div class="profile-view-avatar" ${userColorStyle(user)}>${initials}</div>`;
+  const online = typeof isUserOnline === 'function' ? isUserOnline(user) : false;
+  const workload = tasks.filter(t => Number(t.assigneeId) === Number(user.id) && t.status !== 'done').length;
 
-  // Fetch user's classroom access
-  const userClassroomIds = DB.getUserClassroomIds ? await DB.getUserClassroomIds(user.id) : [];
-  const allClassrooms = DB.getClassrooms ? await DB.getClassrooms() : [];
+  const avatar = user.avatarBase64
+    ? `<img src="${esc(user.avatarBase64)}" class="pcard-avatar-img" alt="${esc(initials)}">`
+    : `<div class="pcard-avatar" ${userColorStyle(user)}>${initials}</div>`;
+
+  // Async data (classrooms, per-user activity, recent contribution).
+  const [userClassroomIds, allClassrooms, activityDaily, recentLog, allUsers] = await Promise.all([
+    DB.getUserClassroomIds ? DB.getUserClassroomIds(user.id).catch(() => []) : [],
+    DB.getClassrooms ? DB.getClassrooms().catch(() => []) : [],
+    DB.getUserActivityDaily ? DB.getUserActivityDaily(user.id, { days: 7 }).catch(() => []) : [],
+    DB.getActivityLog ? DB.getActivityLog({ userId: user.id, limit: 1 }).catch(() => []) : [],
+    DB.getUsers ? DB.getUsers().catch(() => []) : [],
+  ]);
   const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
-  showModal(esc(user.displayName || user.username), `
-    <div class="profile-view-card profile-view-card-rich">
-      <div class="profile-view-hero profile-view-hero-v2" style="--profile-color:${esc(accent)};--profile-cover:${esc(cover)}">
-        <div class="profile-view-cover"></div>
-        <div class="profile-view-hero-body">
-          <div class="profile-view-avatar-ring">${avatar}</div>
-          <div class="profile-view-meta">
+  const uMap = Object.fromEntries((allUsers || []).map(u => [u.id, u]));
+  const current = pcardCurrentActivity(user.id, projects, tasks);
+  const week = pcardWeekly(activityDaily);
+
+  const rk = stats.rank;
+  const rankName = `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}`;
+  const progressPct = rk.next != null
+    ? Math.max(6, Math.min(97, Math.round((stats.score / (stats.score + rk.next)) * 100)))
+    : 100;
+  const rankHint = rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached';
+
+  const statCell = (val, label, extraAttrs = '') => `<button type="button" class="pcard-stat ${val ? '' : 'is-zero'}" ${extraAttrs}><b>${val}</b><span>${label}</span></button>`;
+
+  // Current activity block.
+  let activityHtml;
+  if (current) {
+    const t = current.task;
+    const od = typeof isOverdue === 'function' && isOverdue(t.dueDate) && t.status !== 'done';
+    activityHtml = `
+      <div class="pcard-activity">
+        <div class="pcard-activity-title">${esc(t.title || 'Untitled task')}</div>
+        <div class="pcard-activity-meta">
+          ${current.project ? `<span class="pcard-chip">${esc(current.project.name)}</span>` : ''}
+          <span class="pcard-chip pcard-chip--${t.status === 'doing' ? 'doing' : 'todo'}">${esc(STATUS_LABELS[t.status] || t.status || 'To do')}</span>
+          ${t.dueDate ? `<span class="pcard-chip ${od ? 'pcard-chip--overdue' : ''}">Due ${esc(formatDateShort(t.dueDate))}</span>` : ''}
+        </div>
+        ${current.progress != null ? `<div class="pcard-mini-track"><div class="pcard-mini-fill" style="width:${current.progress}%"></div></div><span class="pcard-mini-label">${current.progress}% project progress</span>` : ''}
+      </div>`;
+  } else {
+    activityHtml = `<div class="pcard-activity pcard-activity--idle">Available for collaboration</div>`;
+  }
+
+  // Recent contribution.
+  const recent = (recentLog && recentLog[0]) || null;
+  const recentHtml = recent
+    ? `<div class="pcard-recent">${formatActivityMessage(recent, uMap)}<small>${timeAgo(recent.createdAt)}</small></div>`
+    : `<div class="pcard-recent pcard-recent--empty">No recent activity yet.</div>`;
+
+  // About / strengths fallback.
+  const bio = (user.bio || '').trim();
+  const tagline = (user.tagline || '').trim();
+  const aboutHtml = bio
+    ? esc(bio)
+    : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet — ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, currently carrying ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+
+  const actionsRight = isSelf
+    ? `<button type="button" class="pcard-btn pcard-btn--primary" data-action="edit-my-profile">Edit profile</button>`
+    : `<button type="button" class="pcard-btn pcard-btn--primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button>`;
+
+  const body = `
+    <div class="pcard" style="--dept:${esc(accent)}">
+      <button class="pcard-x" data-action="close-modal" aria-label="Close">${ICONS.x}</button>
+
+      <div class="pcard-id">
+        <div class="pcard-avatar-ring ${online ? 'is-online' : ''}">
+          ${avatar}
+          <span class="pcard-orbit"></span>
+        </div>
+        <div class="pcard-id-meta">
+          <div class="pcard-name-row">
             <h3>${esc(user.displayName || user.username)}</h3>
-            ${tagline ? `<span class="profile-view-tagline">${esc(tagline)}</span>` : ''}
-            <span class="profile-view-handle">@${esc(user.username)} · Joined ${esc(joined)}</span>
-            <div class="admin-ucard-badges">${badge(user.role === 'admin' ? 'Admin' : 'Member', user.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(user.department || '')}</div>
+            <span class="pcard-presence ${online ? 'on' : 'off'}">${online ? 'Online' : 'Offline'}</span>
           </div>
-          <div class="profile-rank profile-rank--${esc(stats.rank.tone)}">
-            <span class="rank-label">${rankIcon(stats.rank.label, 16)}${esc(stats.rank.label)}</span>
-            <strong>${stats.score}</strong>
-          </div>
+          <span class="pcard-handle">@${esc(user.username)}</span>
+          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} · ${user.role === 'admin' ? 'Admin' : 'Member'}</span>
         </div>
       </div>
-      <div class="profile-stat-grid">
-        <div><strong>${stats.founded}</strong><span>Founded</span></div>
-        <div><strong>${stats.completedFounded}</strong><span>Projects completed</span></div>
-        <div><strong>${stats.coediting}</strong><span>Co-editing</span></div>
-        <div><strong>${stats.completedTasks}</strong><span>Tasks completed</span></div>
+
+      <div class="pcard-rank profile-rank--${esc(rk.tone)}">
+        <div class="pcard-rank-top">
+          <span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span>
+          <span class="pcard-xp">${stats.score} XP</span>
+        </div>
+        <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
+        <div class="pcard-rank-hint">${rankHint}</div>
       </div>
-      <div class="profile-personal-grid">
-        ${user.birthDate ? `<div><span>Birthday</span><strong>${formatDateShort(user.birthDate)}</strong></div>` : ''}
-        ${user.gender ? `<div><span>Gender</span><strong>${esc(user.gender.replace(/_/g, ' '))}</strong></div>` : ''}
-        ${user.phone ? `<div><span>Phone</span><strong>${esc(user.phone)}</strong></div>` : ''}
-        ${user.hoursLoggedTotal ? `<div><span>Hours</span><strong>${Number(user.hoursLoggedTotal).toFixed(1)}</strong></div>` : ''}
-        ${user.address ? `<div class="profile-personal-wide"><span>Address</span><strong>${esc(user.address)}</strong></div>` : ''}
+
+      <div class="pcard-stats">
+        ${statCell(stats.founded, 'Projects created')}
+        ${statCell(stats.completedFounded, 'Completed')}
+        ${statCell(stats.completedTasks, 'Tasks done')}
+        ${statCell(stats.coediting, 'Collaborations', `data-action="pcard-highlight-collabs" data-user-id="${user.id}" title="Highlight collaborations on the team map"`)}
       </div>
-      ${userClassrooms.length ? `<div class="profile-classrooms-section">
-        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
-          <p style="font-size:0.85rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px">Classroom Access</p>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            ${userClassrooms.map(c => `<span style="display:inline-flex;align-items:center;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:999px;font-size:0.82rem">${esc(c.name)}</span>`).join('')}
-          </div>
+
+      <div class="pcard-section">
+        <div class="pcard-section-h">Current activity</div>
+        ${activityHtml}
+      </div>
+
+      <div class="pcard-section">
+        <div class="pcard-section-h">Recent contribution</div>
+        ${recentHtml}
+      </div>
+
+      <div class="pcard-section">
+        <div class="pcard-section-h">Weekly activity${week.streak ? ` · ${week.streak}-day streak` : ''}</div>
+        <div class="pcard-week">
+          ${week.days.map(d => `<span class="pcard-day ${d.active ? 'on' : ''} ${d.today ? 'today' : ''}"><i>${d.label}</i><b></b></span>`).join('')}
+        </div>
+      </div>
+
+      ${userClassrooms.length ? `<div class="pcard-section pcard-spaces">
+        <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces · ${userClassrooms.length}<span class="pcard-caret">▸</span></button>
+        <div class="pcard-spaces-list" data-spaces hidden>
+          ${userClassrooms.map(c => `<button type="button" class="pcard-space" data-action="open-classroom" data-classroom-id="${c.id}">${esc(c.name)}</button>`).join('')}
         </div>
       </div>` : ''}
-      <div class="profile-rank-track">
-        <div class="profile-rank-track-fill" style="width:${Math.min(100, Math.round((stats.score / (stats.score + (stats.rank.next || 0) || 1)) * 100))}%"></div>
+
+      <div class="pcard-section">
+        <div class="pcard-section-h">About</div>
+        <div class="pcard-about">${aboutHtml}</div>
       </div>
-      <p class="profile-view-bio">${user.bio ? esc(user.bio) : 'No bio added yet.'}</p>
-      ${stats.rank.next ? `<p class="text-muted text-sm">${stats.rank.next} more points to the next rank.</p>` : '<p class="text-muted text-sm">Top rank reached.</p>'}
-    </div>
-    <div class="form-actions">
-      <button type="button" class="btn btn-ghost" data-action="close-modal">Close</button>
-      ${isSelf ? `<button type="button" class="btn btn-primary" data-action="edit-my-profile">Edit profile</button>` : `<button type="button" class="btn btn-primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button>`}
-    </div>`);
+
+      <div class="pcard-actions">
+        ${actionsRight}
+        ${isSelf ? '' : `<button type="button" class="pcard-btn" data-action="add-task" data-default-status="todo" data-assignee-id="${user.id}">Assign task</button>`}
+        <button type="button" class="pcard-btn" data-action="show-user-profile-full" data-user-id="${user.id}">View profile</button>
+        <div class="pcard-menu">
+          <button type="button" class="pcard-btn pcard-btn--icon" data-pcard-toggle="menu" aria-label="More">⋯</button>
+          <div class="pcard-menu-list" data-menu hidden>
+            ${isSelf ? '' : `<button type="button" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Send message</button>`}
+            <button type="button" data-action="pcard-highlight-collabs" data-user-id="${user.id}">Highlight on map</button>
+            ${isSelf ? `<button type="button" data-action="user-view-profile">Open my profile</button>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  const ov = document.getElementById('modal-overlay');
+  ov.innerHTML = `<div class="modal pcard-modal">${body}</div>`;
+  ov.classList.remove('hidden');
+  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  delete ov.dataset.confirmDialog;
+  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
+
+  // Animate the rank bar + wire the small in-card toggles (spaces / overflow menu).
+  requestAnimationFrame(() => {
+    const fill = ov.querySelector('[data-rank-fill]');
+    if (fill) setTimeout(() => { fill.style.width = fill.dataset.target + '%'; }, 60);
+    ov.querySelectorAll('[data-pcard-toggle]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const kind = btn.dataset.pcardToggle;
+        const target = ov.querySelector(kind === 'spaces' ? '[data-spaces]' : '[data-menu]');
+        if (target) target.hidden = !target.hidden;
+        if (kind === 'spaces') btn.classList.toggle('open', !target.hidden);
+      });
+    });
+  });
 }
 
 function showMilestoneModal(pid) {
@@ -7078,78 +7258,140 @@ async function showProfileModal() {
   const user = await DB.getUser(s.userId);
   if (!user) { showToast('Could not load profile', 'error'); return; }
   const isAdm = s.role === 'admin';
-  const avatarUrl = user.avatarBase64 || '';
+  const { projects, tasks } = await getWorkspaceData();
+  const stats = userProfileStats(user.id, projects, tasks);
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
   const isHex = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
   const accentHex = isHex(user.accentColor) ? user.accentColor : (isHex(user.color) ? user.color : '#4f46e5');
   const coverHex = isHex(user.coverColor) ? user.coverColor : accentHex;
-  showModal('My Profile', `
-    <form data-form="edit-profile" class="profile-form-v2">
-      <div class="profile-avatar-section">
-        <div class="profile-avatar-wrap">
-          ${avatarUrl
-            ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar">`
-            : `<div id="profile-avatar-preview" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`}
-          <label class="profile-avatar-edit-btn" title="Change photo">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
-          </label>
-        </div>
-        <div class="profile-identity">
-          <strong class="profile-username">@${esc(user.username)}</strong>
-          ${isAdm ? `<span class="admin-tag">${ICONS.crown} Admin</span>` : ''}
-          ${departmentBadge(user.department || '')}
+  const accent = user.accentColor || user.color || userColor(user);
+  const avatarUrl = user.avatarBase64 || '';
+  const online = typeof isUserOnline === 'function' ? isUserOnline(user) : false;
+  const workload = tasks.filter(t => Number(t.assigneeId) === Number(user.id) && t.status !== 'done').length;
+
+  const [userClassroomIds, allClassrooms, activityDaily, recentLog, allUsers] = await Promise.all([
+    DB.getUserClassroomIds ? DB.getUserClassroomIds(user.id).catch(() => []) : [],
+    DB.getClassrooms ? DB.getClassrooms().catch(() => []) : [],
+    DB.getUserActivityDaily ? DB.getUserActivityDaily(user.id, { days: 7 }).catch(() => []) : [],
+    DB.getActivityLog ? DB.getActivityLog({ userId: user.id, limit: 1 }).catch(() => []) : [],
+    DB.getUsers ? DB.getUsers().catch(() => []) : [],
+  ]);
+  const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
+  const uMap = Object.fromEntries((allUsers || []).map(u => [u.id, u]));
+  const current = pcardCurrentActivity(user.id, projects, tasks);
+  const week = pcardWeekly(activityDaily);
+  const rk = stats.rank;
+  const rankName = `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}`;
+  const progressPct = rk.next != null ? Math.max(6, Math.min(97, Math.round((stats.score / (stats.score + rk.next)) * 100))) : 100;
+  const rankHint = rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached';
+  const statCell = (val, label) => `<div class="pcard-stat ${val ? '' : 'is-zero'}"><b>${val}</b><span>${label}</span></div>`;
+
+  let activityHtml;
+  if (current) {
+    const t = current.task;
+    const od = typeof isOverdue === 'function' && isOverdue(t.dueDate) && t.status !== 'done';
+    activityHtml = `<div class="pcard-activity"><div class="pcard-activity-title">${esc(t.title || 'Untitled task')}</div>
+      <div class="pcard-activity-meta">${current.project ? `<span class="pcard-chip">${esc(current.project.name)}</span>` : ''}
+      <span class="pcard-chip pcard-chip--${t.status === 'doing' ? 'doing' : 'todo'}">${esc(STATUS_LABELS[t.status] || t.status || 'To do')}</span>
+      ${t.dueDate ? `<span class="pcard-chip ${od ? 'pcard-chip--overdue' : ''}">Due ${esc(formatDateShort(t.dueDate))}</span>` : ''}</div>
+      ${current.progress != null ? `<div class="pcard-mini-track"><div class="pcard-mini-fill" style="width:${current.progress}%"></div></div><span class="pcard-mini-label">${current.progress}% project progress</span>` : ''}</div>`;
+  } else activityHtml = `<div class="pcard-activity pcard-activity--idle">Available for collaboration</div>`;
+
+  const recent = (recentLog && recentLog[0]) || null;
+  const recentHtml = recent ? `<div class="pcard-recent">${formatActivityMessage(recent, uMap)}<small>${timeAgo(recent.createdAt)}</small></div>` : `<div class="pcard-recent pcard-recent--empty">No recent activity yet.</div>`;
+  const bio = (user.bio || '').trim();
+  const tagline = (user.tagline || '').trim();
+  const aboutHtml = bio ? esc(bio) : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet — ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+
+  const avatarPreview = avatarUrl
+    ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="pcard-avatar-img" alt="${esc(initials)}">`
+    : `<div id="profile-avatar-preview" class="pcard-avatar" ${userColorStyle(user)}>${initials}</div>`;
+
+  const ov = document.getElementById('modal-overlay');
+  ov.innerHTML = `<div class="modal pcard-modal pcard-modal--edit"><form data-form="edit-profile" class="profile-form-v2">
+    <div class="pcard" style="--dept:${esc(accent)}">
+      <button type="button" class="pcard-x" data-action="close-modal" aria-label="Close">${ICONS.x}</button>
+      <div class="pcard-id">
+        <div class="pcard-avatar-ring ${online ? 'is-online' : ''}">${avatarPreview}<span class="pcard-orbit"></span></div>
+        <div class="pcard-id-meta">
+          <div class="pcard-name-row"><h3>${esc(user.displayName || user.username)}</h3><span class="pcard-presence ${online ? 'on' : 'off'}">${online ? 'Online' : 'Offline'}</span></div>
+          <span class="pcard-handle">@${esc(user.username)}</span>
+          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} · ${isAdm ? 'Admin' : 'Member'}</span>
         </div>
       </div>
-      <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
-      <div class="profile-customize">
-        <div class="profile-cust-preview" id="profile-cust-preview" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
-          <span class="profile-cust-preview-avatar">${initials}</span>
-          <div class="profile-cust-preview-text">
-            <strong id="profile-cust-name">${esc(user.displayName || user.username)}</strong>
-            <span id="profile-cust-tag">${esc((user.tagline || '').trim()) || 'Your tagline appears here'}</span>
+      <div class="pcard-rank profile-rank--${esc(rk.tone)}">
+        <div class="pcard-rank-top"><span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span><span class="pcard-xp">${stats.score} XP</span></div>
+        <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
+        <div class="pcard-rank-hint">${rankHint}</div>
+      </div>
+      <div class="pcard-stats">${statCell(stats.founded, 'Projects created')}${statCell(stats.completedFounded, 'Completed')}${statCell(stats.completedTasks, 'Tasks done')}${statCell(stats.coediting, 'Collaborations')}</div>
+      <div class="pcard-section"><div class="pcard-section-h">Current activity</div>${activityHtml}</div>
+      <div class="pcard-section"><div class="pcard-section-h">Recent contribution</div>${recentHtml}</div>
+      <div class="pcard-section"><div class="pcard-section-h">Weekly activity${week.streak ? ` · ${week.streak}-day streak` : ''}</div>
+        <div class="pcard-week">${week.days.map(d => `<span class="pcard-day ${d.active ? 'on' : ''} ${d.today ? 'today' : ''}"><i>${d.label}</i><b></b></span>`).join('')}</div></div>
+      ${userClassrooms.length ? `<div class="pcard-section"><div class="pcard-section-h">Spaces · ${userClassrooms.length}</div>
+        <div class="pcard-spaces-list">${userClassrooms.map(c => `<span class="pcard-space pcard-space--ro">${esc(c.name)}</span>`).join('')}</div></div>` : ''}
+      <div class="pcard-section"><div class="pcard-section-h">About</div><div class="pcard-about">${aboutHtml}</div></div>
+    </div>
+    <details class="pcard-customize">
+      <summary class="pcard-customize-h">Customize profile</summary>
+      <div class="pcard-customize-body">
+        <div class="profile-avatar-section">
+          <div class="profile-avatar-wrap">
+            ${avatarUrl ? `<img id="profile-avatar-preview-dup" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar" hidden>` : ''}
+            <label class="profile-avatar-edit-btn" title="Change photo">Change photo
+              <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
+            </label>
           </div>
         </div>
-        <div class="form-group"><label>Tagline / status</label><input name="tagline" type="text" maxlength="80" value="${esc(user.tagline || '')}" placeholder="e.g. Logistics lead · loves spreadsheets" id="profile-tagline-input"></div>
-        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="form-group"><label>Accent color</label><input name="accentColor" type="color" value="${esc(accentHex)}" id="profile-accent-input"></div>
-          <div class="form-group"><label>Cover color</label><input name="coverColor" type="color" value="${esc(coverHex)}" id="profile-cover-input"></div>
+        <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
+        <div class="profile-customize">
+          <div class="profile-cust-preview" id="profile-cust-preview" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+            <span class="profile-cust-preview-avatar">${initials}</span>
+            <div class="profile-cust-preview-text"><strong id="profile-cust-name">${esc(user.displayName || user.username)}</strong>
+            <span id="profile-cust-tag">${esc(tagline) || 'Your tagline appears here'}</span></div>
+          </div>
+          <div class="form-group"><label>Tagline / status</label><input name="tagline" type="text" maxlength="80" value="${esc(user.tagline || '')}" placeholder="e.g. Logistics lead" id="profile-tagline-input"></div>
+          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Accent color</label><input name="accentColor" type="color" value="${esc(accentHex)}" id="profile-accent-input"></div>
+            <div class="form-group"><label>Cover color</label><input name="coverColor" type="color" value="${esc(coverHex)}" id="profile-cover-input"></div>
+          </div>
         </div>
+        <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" required></div>
+        <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}"></div>
+        <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea">${esc(user.bio || '')}</textarea></div>
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Birth date</label><input name="birthDate" type="date" value="${esc(user.birthDate || '')}"></div>
+          <div class="form-group"><label>Gender</label><select name="gender">
+            <option value="" ${!user.gender ? 'selected' : ''}>Not set</option>
+            <option value="female" ${user.gender === 'female' ? 'selected' : ''}>Female</option>
+            <option value="male" ${user.gender === 'male' ? 'selected' : ''}>Male</option>
+            <option value="non_binary" ${user.gender === 'non_binary' ? 'selected' : ''}>Non-binary</option>
+            <option value="prefer_not_to_say" ${user.gender === 'prefer_not_to_say' ? 'selected' : ''}>Prefer not to say</option>
+          </select></div>
+        </div>
+        <div class="form-group"><label>Phone</label><input name="phone" type="tel" value="${esc(user.phone || '')}"></div>
+        <div class="form-group"><label>Address</label><input name="address" type="text" value="${esc(user.address || '')}"></div>
+        ${isAdm ? `<div class="form-group"><label>Department</label><select name="department"><option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>${departmentOptionsHtml(user.department || '')}</select></div>` : `<div class="form-group"><label>Department</label><div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div></div>`}
+        <input name="color" type="hidden" value="#000000">
+        <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide me from the team activity map</strong></span></label>
+        <div class="profile-security-row"><div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from Admin.' : 'Ask an admin for a one-time password.'}</p></div>
+          ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}</div>
       </div>
-      <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" placeholder="e.g. Akram" required></div>
-      <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}" placeholder="you@example.com"></div>
-      <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="3" class="fixed-textarea" placeholder="What do you do? e.g. Project lead at Everlasting">${esc(user.bio || '')}</textarea></div>
-      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Birth date</label><input name="birthDate" type="date" value="${esc(user.birthDate || '')}"></div>
-        <div class="form-group"><label>Gender</label><select name="gender">
-          <option value="" ${!user.gender ? 'selected' : ''}>Not set</option>
-          <option value="female" ${user.gender === 'female' ? 'selected' : ''}>Female</option>
-          <option value="male" ${user.gender === 'male' ? 'selected' : ''}>Male</option>
-          <option value="non_binary" ${user.gender === 'non_binary' ? 'selected' : ''}>Non-binary</option>
-          <option value="prefer_not_to_say" ${user.gender === 'prefer_not_to_say' ? 'selected' : ''}>Prefer not to say</option>
-        </select></div>
-      </div>
-      <div class="form-group"><label>Phone</label><input name="phone" type="tel" value="${esc(user.phone || '')}" placeholder="+971..."></div>
-      <div class="form-group"><label>Address</label><input name="address" type="text" value="${esc(user.address || '')}" placeholder="Optional"></div>
-      ${isAdm ? `<div class="form-group"><label>Department</label><select name="department">
-        <option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>
-        ${departmentOptionsHtml(user.department || '')}
-      </select></div>` : `<div class="form-group"><label>Department</label>
-        <div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div>
-        <p class="text-muted text-sm" style="margin-top:6px">Assigned by an admin. Project tags (e.g. R&amp;D) come from the project, not your profile.</p>
-      </div>`}
-      <input name="color" type="hidden" value="#000000">
-      <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide me from the team activity map</strong><br><span class="text-muted text-sm">You won't appear as a node on the team map.</span></span></label>
-      <div class="profile-security-row">
-        <div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from the Admin panel.' : 'Ask an admin to issue you a one-time password.'}</p></div>
-        ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}
-      </div>
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
-    </form>`);
-  // Avatar preview
+    </details>
+    <div class="form-actions pcard-form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
+  </form></div>`;
+  ov.classList.remove('hidden');
+  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  delete ov.dataset.confirmDialog;
+  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
+  requestAnimationFrame(() => {
+    const fill = ov.querySelector('[data-rank-fill]');
+    if (fill) setTimeout(() => { fill.style.width = fill.dataset.target + '%'; }, 60);
+  });
   const avatarInput = document.getElementById('profile-avatar-input');
-  const avatarPreview = document.getElementById('profile-avatar-preview');
   const avatarB64 = document.getElementById('profile-avatar-b64');
+  const pcardAvatar = ov.querySelector('.pcard-avatar-ring');
   if (avatarInput) {
     avatarInput.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
@@ -7159,24 +7401,24 @@ async function showProfileModal() {
       reader.onload = (ev) => {
         const b64 = ev.target.result;
         avatarB64.value = b64;
-        if (avatarPreview) {
-          avatarPreview.outerHTML = `<img id="profile-avatar-preview" src="${esc(b64)}" class="profile-avatar-img" alt="avatar">`;
+        const ring = pcardAvatar;
+        if (ring) {
+          const old = ring.querySelector('.pcard-avatar, .pcard-avatar-img');
+          if (old) old.outerHTML = `<img class="pcard-avatar-img" src="${esc(b64)}" alt="avatar">`;
         }
       };
       reader.readAsDataURL(file);
     });
   }
-  // Live preview for tagline / accent / cover customization
   const preview = document.getElementById('profile-cust-preview');
   const accentInput = document.getElementById('profile-accent-input');
   const coverInput = document.getElementById('profile-cover-input');
   const tagInput = document.getElementById('profile-tagline-input');
+  const nameInput = ov.querySelector('[name="displayName"]');
   if (accentInput) accentInput.addEventListener('input', () => preview?.style.setProperty('--pc-accent', accentInput.value));
   if (coverInput) coverInput.addEventListener('input', () => preview?.style.setProperty('--pc-cover', coverInput.value));
-  if (tagInput) tagInput.addEventListener('input', () => {
-    const el = document.getElementById('profile-cust-tag');
-    if (el) el.textContent = tagInput.value.trim() || 'Your tagline appears here';
-  });
+  if (tagInput) tagInput.addEventListener('input', () => { const el = document.getElementById('profile-cust-tag'); if (el) el.textContent = tagInput.value.trim() || 'Your tagline appears here'; });
+  if (nameInput) nameInput.addEventListener('input', () => { const el = document.getElementById('profile-cust-name'); if (el) el.textContent = nameInput.value.trim() || user.username; });
 }
 
 function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
@@ -7501,333 +7743,683 @@ function teamMapDeptColor(dept) {
 }
 
 async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
-  const activityByUser = await DB.getTeamActivitySummary({ days: 7 });
+  const [activityByUser, activityDaily] = await Promise.all([
+    DB.getTeamActivitySummary({ days: 7 }),
+    DB.getUserActivityDaily ? DB.getUserActivityDaily(null, { days: 7 }).catch(() => []) : [],
+  ]);
   const vibrant = getThemeMode() === 'normal';
 
   // Respect each user's "hide me from the team map" preference.
   const visibleUsers = (users || []).filter(u => !u.hideFromTeamMap);
 
-  // Store data for D3 initialization
   const mapId = `team-map-${Date.now()}`;
   window._teamActivityData = window._teamActivityData || {};
-  window._teamActivityData[mapId] = { users: visibleUsers, projects, tasks, activityByUser, vibrant };
+  window._teamActivityData[mapId] = { users: visibleUsers, projects, tasks, activityByUser, activityDaily, vibrant };
 
-  // Legend = departments present (people are coloured by department, linked by collaboration).
   const depts = [...new Set(visibleUsers.map(u => u.department || 'general'))];
   const legend = depts.map(d => `<span><i style="background:${teamMapDeptColor(d)}"></i> ${esc(departmentLabel(d))}</span>`).join('');
 
   return `<section class="dash-panel team-activity-map">
-    <div class="dash-panel-head"><h3>Team Activity Map</h3><span class="projects-page-count">Linked by collaboration · coloured by team</span></div>
-    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:380px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
+    <div class="dash-panel-head"><h3>Team Constellation</h3><span class="projects-page-count">A living map of who is working with whom · click a star</span></div>
+    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
     <div class="activity-pent-legend">${legend}</div>
   </section>`;
 }
 
-function initializeTeamActivityD3() {
-  if (!window.d3) return;
-  document.querySelectorAll('[data-map-id]').forEach(el => {
-    const mapId = el.dataset.mapId;
-    const data = window._teamActivityData?.[mapId];
-    if (!data || el.querySelector('svg')) return;
-
-    const { users, activityByUser, vibrant } = data;
-    const maxMin = Math.max(1, ...users.map(u => activityByUser[u.id]?.activeMinutes || 0));
-
-    const width = el.offsetWidth || 800;
-    const height = el.offsetHeight || 380;
-
-    const nodes = users.map(u => ({
-      id: u.id, name: u.displayName || u.username,
-      initials: (u.displayName || u.username || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
-      activity: activityByUser[u.id]?.activeMinutes || 0,
-      online: isUserOnline(u),
-      lastSeen: u.lastSeenAt,
-      user: u
-    }));
-
-    const heat = (min) => Math.max(0.08, min / maxMin);
-    const colorByHeat = (h) => {
-      if (vibrant) {
-        if (h < 0.34) return '#06b6d4';
-        if (h < 0.67) return '#a855f7';
-        return '#f97316';
-      } else {
-        if (h < 0.34) return '#e5e5e5';
-        if (h < 0.67) return '#737373';
-        return '#1a1a1a';
-      }
-    };
-
-    const svg = d3.select(el).append('svg').attr('width', width).attr('height', height)
-      .style('background', 'var(--bg)').style('cursor', 'grab');
-
-    const g = svg.append('g');
-    const zoomBehavior = d3.zoom().on('zoom', (e) => g.attr('transform', e.transform));
-    svg.call(zoomBehavior);
-
-    const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink().distance(80))
-      .force('charge', d3.forceManyBody().strength(-200))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide(40));
-
-    const circles = g.selectAll('.team-node')
-      .data(nodes).enter().append('g').attr('class', 'team-node')
-      .call(d3.drag()
-        .on('start', (e, d) => { simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-        .on('end', (e, d) => { simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
-
-    circles.append('circle').attr('r', 28)
-      .attr('fill', d => colorByHeat(heat(d.activity)))
-      .attr('stroke', vibrant ? '#0f766e' : '#525252').attr('stroke-width', 2)
-      .style('cursor', 'pointer').style('filter', d => d.online ? '' : 'opacity(0.6)')
-      .on('click', (e, d) => { e.stopPropagation(); showUserProfileModal(Number(d.user.id)); });
-
-    circles.append('text').attr('text-anchor', 'middle').attr('dy', '0.35em')
-      .attr('font-size', '10px').attr('font-weight', '800')
-      .attr('fill', d => heat(d.activity) > 0.5 ? '#fff' : '#000')
-      .attr('pointer-events', 'none').text(d => d.initials);
-
-    circles.append('circle').attr('r', 6).attr('fill', '#22c55e')
-      .attr('cx', 18).attr('cy', -18).attr('stroke', 'white').attr('stroke-width', 1.5)
-      .attr('display', d => d.online ? 'block' : 'none');
-
-    circles.append('text').attr('y', 45).attr('text-anchor', 'middle')
-      .attr('font-size', '11px').attr('font-weight', '600')
-      .attr('fill', vibrant ? '#0f766e' : '#525252')
-      .attr('pointer-events', 'none')
-      .text(d => d.name.length > 12 ? d.name.slice(0, 10) + '…' : d.name);
-
-    circles.append('title')
-      .text(d => `${d.name} · ${(d.activity / 60).toFixed(1)}h this week · ${d.online ? 'Online' : (d.lastSeen ? 'Last active ' + timeAgo(d.lastSeen) : 'Offline')}`);
-
-    simulation.on('tick', () => {
-      circles.attr('transform', d => `translate(${d.x},${d.y})`);
-    });
-  });
+// Lightweight realtime side-channel for the map: reactions, live events and
+// co-op challenges. Rides the app's shared Supabase client (same pattern as the
+// games hub / collaborative canvas). Returns null when offline.
+function joinMapChannel(onMsg) {
+  const sb = window.SupabaseDB && window.SupabaseDB._client;
+  if (!sb || !navigator.onLine) return null;
+  const s = (typeof getSession === 'function' ? getSession() : null) || {};
+  const me = {
+    id: s.userId != null ? String(s.userId) : ('guest-' + Math.random().toString(36).slice(2, 7)),
+    name: s.displayName || s.username || 'Someone',
+  };
+  let channel;
+  try {
+    channel = sb.channel('orbi-map:team', { config: { broadcast: { self: false, ack: false }, presence: { key: me.id } } });
+  } catch (_) { return null; }
+  channel.on('broadcast', { event: 'map' }, ({ payload }) => { try { onMsg?.(payload); } catch (_) {} });
+  channel.on('presence', { event: 'sync' }, () => { try { onMsg?.({ type: 'presence', state: channel.presenceState() }); } catch (_) {} });
+  channel.subscribe(async (st) => { if (st === 'SUBSCRIBED') { try { await channel.track({ id: me.id, name: me.name, focus: false }); } catch (_) {} } });
+  return {
+    me,
+    send: (payload) => { try { channel.send({ type: 'broadcast', event: 'map', payload: { ...payload, fromId: me.id, fromName: me.name } }); } catch (_) {} },
+    track: (meta) => { try { channel.track({ id: me.id, name: me.name, ...meta }); } catch (_) {} },
+    presence: () => { try { return channel.presenceState(); } catch (_) { return {}; } },
+    leave: () => { try { channel.untrack(); } catch (_) {} try { channel.unsubscribe(); } catch (_) {} },
+  };
 }
 
 function initializeTeamActivityD3() {
   if (!window.d3) return;
+  const reduce = (() => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; } })();
   document.querySelectorAll('[data-map-id]').forEach(el => {
     const mapId = el.dataset.mapId;
     const data = window._teamActivityData?.[mapId];
     if (!data || el.dataset.d3Ready === 'true') return;
     el.dataset.d3Ready = 'true';
 
-    const { users, projects = [], tasks = [], activityByUser, vibrant } = data;
-    const maxMin = Math.max(1, ...users.map(u => activityByUser[u.id]?.activeMinutes || 0));
-    const departments = [...new Set(users.map(u => u.department || 'general'))];
+    const { users, projects = [], tasks = [], activityByUser, activityDaily = [], vibrant } = data;
     const width = Math.max(720, el.clientWidth || 900);
-    const height = Math.max(460, el.clientHeight || 520);
-    const deptX = (dept) => {
-      const idx = Math.max(0, departments.indexOf(dept || 'general'));
-      return ((idx + 1) / (departments.length + 1)) * width;
+    const height = Math.max(480, el.clientHeight || 520);
+    const departments = [...new Set(users.map(u => u.department || 'general'))];
+    const lite = users.length > 60; // performance guard: skip per-frame FX on large teams
+    const animate = !reduce && !lite;
+
+    /* ── Per-user daily activity → streak + last-active day ── */
+    const dailyByUser = {};
+    activityDaily.forEach(r => { (dailyByUser[Number(r.userId)] = dailyByUser[Number(r.userId)] || {})[r.date] = (r.activeMinutes || 0) + (r.actionCount || 0); });
+    const streakOf = (uid) => {
+      const map = dailyByUser[Number(uid)] || {};
+      let streak = 0;
+      for (let i = 0; i < 7; i++) { const key = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); if ((map[key] || 0) > 0) streak++; else break; }
+      return streak;
     };
+
+    /* ── Links: frequency (shared projects/tasks) + recency (latest shared update) ── */
     const pairKey = (a, b) => [Number(a), Number(b)].sort((x, y) => x - y).join(':');
-    const linkWeights = new Map();
+    const linkMeta = new Map();
+    const parseTs = (t) => { const ms = Date.parse(t || ''); return Number.isFinite(ms) ? ms : 0; };
     projects.forEach(project => {
       const participants = new Set();
       if (project.ownerId != null) participants.add(Number(project.ownerId));
-      tasks.filter(t => Number(t.projectId) === Number(project.id) && t.assigneeId != null).forEach(t => participants.add(Number(t.assigneeId)));
+      const projTasks = tasks.filter(t => Number(t.projectId) === Number(project.id));
+      projTasks.forEach(t => { if (t.assigneeId != null) participants.add(Number(t.assigneeId)); });
       const ids = [...participants].filter(id => users.some(u => Number(u.id) === id));
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          const key = pairKey(ids[i], ids[j]);
-          linkWeights.set(key, (linkWeights.get(key) || 0) + 1);
-        }
+      const lastTs = Math.max(parseTs(project.updatedAt || project.createdAt), ...projTasks.map(t => parseTs(t.updatedAt || t.createdAt)), 0);
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const key = pairKey(ids[i], ids[j]);
+        const m = linkMeta.get(key) || { weight: 0, lastTs: 0 };
+        m.weight += 1; m.lastTs = Math.max(m.lastTs, lastTs);
+        linkMeta.set(key, m);
       }
     });
-    const links = [...linkWeights.entries()].map(([key, weight]) => {
+    const now = Date.now(), WEEK = 7 * 86400000;
+    const links = [...linkMeta.entries()].map(([key, m]) => {
       const [source, target] = key.split(':').map(Number);
-      return { source, target, weight };
+      const age = m.lastTs ? (now - m.lastTs) : WEEK * 3;
+      const recency = Math.max(0.05, Math.min(1, 1 - age / (WEEK * 3))); // 1 = fresh, →0 = stale
+      return { source, target, weight: m.weight, recency, active: age < WEEK };
     });
+
+    /* ── Nodes enriched with contribution/workload/streak/availability ── */
     const nodes = users.map(u => {
       const name = u.displayName || u.username || 'Unknown';
-      const activity = activityByUser[u.id]?.activeMinutes || 0;
-      const projectCount = projects.filter(p => Number(p.ownerId) === Number(u.id)).length;
-      const taskCount = tasks.filter(t => Number(t.assigneeId) === Number(u.id)).length;
+      const stats = userProfileStats(u.id, projects, tasks);
+      const assigned = tasks.filter(t => Number(t.assigneeId) === Number(u.id));
+      const workload = assigned.filter(t => t.status !== 'done').length;
+      const blocked = assigned.filter(t => t.status === 'blocked').length;
+      const doing = assigned.filter(t => t.status === 'doing')[0] || assigned.filter(t => t.status !== 'done')[0] || null;
+      const online = isUserOnline(u);
       return {
-        id: Number(u.id),
-        name,
+        id: Number(u.id), name,
         initials: name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
-        activity,
+        activity: activityByUser[u.id]?.activeMinutes || 0,
         actionCount: activityByUser[u.id]?.actionCount || 0,
-        online: isUserOnline(u),
-        lastSeen: u.lastSeenAt,
-        department: u.department || 'general',
-        projectCount,
-        taskCount,
-        user: u
+        score: stats.score, rank: stats.rank,
+        workload, blocked, currentTask: doing,
+        streak: streakOf(u.id),
+        online, available: online && workload <= 2 && blocked === 0,
+        lastSeen: u.lastSeenAt, department: u.department || 'general',
+        projectCount: stats.founded, taskCount: assigned.length,
+        user: u,
       };
     });
-    const heat = (min) => Math.max(0.08, min / maxMin);
-    const colorByHeat = (h) => {
-      if (vibrant) {
-        if (h < 0.34) return '#06b6d4';
-        if (h < 0.67) return '#8b5cf6';
-        return '#f97316';
-      }
-      if (h < 0.34) return '#e5e5e5';
-      if (h < 0.67) return '#737373';
-      return '#fafafa';
-    };
+    const nodeById = new Map(nodes.map(n => [n.id, n]));
 
+    /* ── Adjacency + recognition metrics ── */
+    const neighbors = new Map();
+    const collabStrength = new Map();
+    links.forEach(l => {
+      const s = l.source, t = l.target;
+      if (!neighbors.has(s)) neighbors.set(s, new Set());
+      if (!neighbors.has(t)) neighbors.set(t, new Set());
+      neighbors.get(s).add(t); neighbors.get(t).add(s);
+      collabStrength.set(s, (collabStrength.get(s) || 0) + l.weight);
+      collabStrength.set(t, (collabStrength.get(t) || 0) + l.weight);
+    });
+    const topContributor = nodes.reduce((a, b) => (b.score > (a?.score ?? -1) ? b : a), null);
+    const bestCollaborator = nodes.reduce((a, b) => ((collabStrength.get(b.id) || 0) > (collabStrength.get(a?.id) || -1) ? b : a), null);
+    const fastestImprover = nodes.reduce((a, b) => (b.actionCount > (a?.actionCount ?? -1) ? b : a), null);
+    const weeklyWinner = nodes.reduce((a, b) => (b.activity > (a?.activity ?? -1) ? b : a), null);
+    const recognition = {};
+    if (topContributor && topContributor.score > 0) recognition[topContributor.id] = 'crown';
+    if (bestCollaborator && (collabStrength.get(bestCollaborator.id) || 0) > 0 && bestCollaborator.id !== topContributor?.id) recognition[bestCollaborator.id] = 'star';
+    if (fastestImprover && fastestImprover.actionCount > 0 && !recognition[fastestImprover.id]) recognition[fastestImprover.id] = 'comet';
+    if (weeklyWinner && weeklyWinner.activity > 0 && !recognition[weeklyWinner.id]) recognition[weeklyWinner.id] = 'aura';
+    nodes.forEach(n => { if (!recognition[n.id] && n.streak >= 5 && n.score < (topContributor?.score || 1)) recognition[n.id] = 'consistent'; });
+
+    /* ── Shell markup: controls, reactions, co-op, popover, focus overlay ── */
+    const REACTIONS_QUICK = ['👏', '🙌', '☕', '🎉', '🎯', '❤️'];
     el.innerHTML = `
+      <div class="team-map-canvas"></div>
       <div class="team-map-floating-controls">
         <button type="button" data-map-tool="fit">Fit</button>
         <button type="button" data-map-tool="reset">Reset</button>
         <button type="button" data-map-filter="all" class="active">All</button>
         <button type="button" data-map-filter="online">Online</button>
         <button type="button" data-map-filter="active">Active</button>
+        <button type="button" data-map-filter="available">Available</button>
+        <button type="button" data-map-filter="blocked">Blocked</button>
+        <select class="team-map-select" data-map-group>
+          <option value="none">Cluster: free</option>
+          <option value="department">By department</option>
+          <option value="workload">By workload</option>
+          <option value="contribution">By contribution</option>
+          <option value="project">By project</option>
+        </select>
       </div>
-      <div class="team-map-tooltip hidden"></div>`;
+      <div class="team-map-coop">
+        <button type="button" data-coop="pulse" title="Everyone confirms a focus session">◎ Team Pulse</button>
+        <button type="button" data-coop="constellation" title="Completed work links the team">✦ Constellation</button>
+        <button type="button" data-coop="relay" title="Send a baton around the team">→ Relay</button>
+        <button type="button" data-coop="swarm" title="Gather everyone in focus mode">❋ Focus Swarm</button>
+      </div>
+      <div class="team-map-reactions">
+        ${REACTIONS_QUICK.map((e) => `<button type="button" data-react-emoji="${e}" title="React">${e}</button>`).join('')}
+        <button type="button" class="team-emoji-trigger" data-emoji-open title="More emojis">😀</button>
+      </div>
+      <div class="team-map-tooltip hidden"></div>
+      <div class="team-map-status" aria-live="polite"></div>`;
     const tooltip = el.querySelector('.team-map-tooltip');
-    const svg = d3.select(el).append('svg')
-      .attr('width', width)
-      .attr('height', height)
+    const statusEl = el.querySelector('.team-map-status');
+    const canvasWrap = el.querySelector('.team-map-canvas');
+
+    let popoverEl = document.getElementById('team-map-popover-portal');
+    if (!popoverEl) {
+      popoverEl = document.createElement('div');
+      popoverEl.id = 'team-map-popover-portal';
+      popoverEl.className = 'team-map-popover team-map-popover--portal hidden';
+      document.body.appendChild(popoverEl);
+    }
+    let focusPortal = document.getElementById('team-map-focus-portal');
+    if (!focusPortal) {
+      focusPortal = document.createElement('div');
+      focusPortal.id = 'team-map-focus-portal';
+      focusPortal.className = 'team-map-focus-portal hidden';
+      document.body.appendChild(focusPortal);
+    }
+    let focusEscHandler = null;
+    const closeFocusPortal = () => {
+      focusPortal.classList.add('hidden');
+      focusPortal.innerHTML = '';
+      if (focusEscHandler) { window.removeEventListener('keydown', focusEscHandler); focusEscHandler = null; }
+      try { window._teamMapChannel?.track({ focus: false }); } catch (_) {}
+    };
+
+    const svg = d3.select(canvasWrap).append('svg')
+      .attr('width', width).attr('height', height)
       .attr('viewBox', `0 0 ${width} ${height}`)
       .attr('class', 'team-map-svg-rich');
     const g = svg.append('g');
-    const zoomBehavior = d3.zoom()
-      .scaleExtent([0.45, 2.4])
-      .on('zoom', (event) => g.attr('transform', event.transform));
+    const linkLayer = g.append('g').attr('class', 'team-map-links');
+    const fxLayer = g.append('g').attr('class', 'team-map-fx');
+    const overlayLayer = g.append('g').attr('class', 'team-map-overlay'); // constellation/relay
+    const nodeLayer = g.append('g').attr('class', 'team-map-nodes');
+    let selectedNodeData = null;
+    const positionPopoverForNode = (d) => {
+      if (!d || popoverEl.classList.contains('hidden')) return;
+      const wrapRect = el.getBoundingClientRect();
+      const t = d3.zoomTransform(svg.node());
+      const sx = wrapRect.left + t.applyX(d.x);
+      const sy = wrapRect.top + t.applyY(d.y);
+      const pw = 248, ph = 220, margin = 12;
+      let left = sx + 20, top = sy - 40;
+      if (left + pw > window.innerWidth - margin) left = sx - pw - 20;
+      if (left < margin) left = margin;
+      if (top + ph > window.innerHeight - margin) top = sy - ph - 20;
+      if (top < margin) top = margin;
+      popoverEl.style.left = `${left}px`;
+      popoverEl.style.top = `${top}px`;
+    };
+    const zoomBehavior = d3.zoom().scaleExtent([0.4, 2.6]).on('zoom', (event) => {
+      g.attr('transform', event.transform);
+      if (selectedNodeData) positionPopoverForNode(selectedNodeData);
+    });
     svg.call(zoomBehavior);
+    svg.on('click', () => { clearSelection(); });
 
-    // Smooth, curved collaboration links (cubic bezier with horizontal
-    // tangents) drawn as paths instead of straight lines.
-    const baseLinkOpacity = d => Math.min(0.55, 0.18 + d.weight * 0.08);
-    const baseLinkWidth = d => Math.min(6, 1.2 + d.weight);
-    const linkSel = g.append('g').attr('class', 'team-map-links')
-      .selectAll('path')
-      .data(links)
-      .enter()
-      .append('path')
-      .attr('fill', 'none')
-      .attr('stroke-linecap', 'round')
+    /* ── Links ── */
+    const baseLinkOpacity = d => Math.min(0.6, (0.12 + d.weight * 0.07)) * (0.4 + d.recency * 0.6);
+    const baseLinkWidth = d => Math.min(6.5, 1 + d.weight * 1.1);
+    const linkSel = linkLayer.selectAll('path').data(links).enter().append('path')
+      .attr('class', d => `team-map-link ${d.active ? 'is-active' : 'is-stale'}`)
+      .attr('fill', 'none').attr('stroke-linecap', 'round')
+      .attr('stroke', d => nodeById.get(d.source)?.blocked && nodeById.get(d.target)?.blocked ? 'var(--danger, #ef4444)' : 'var(--accent)')
       .attr('stroke-width', baseLinkWidth)
+      .attr('stroke-dasharray', d => d.active ? null : '5 7')
       .attr('opacity', baseLinkOpacity);
 
-    // Adjacency for hover highlighting: which node ids each node connects to.
-    const neighbors = new Map();
-    links.forEach(l => {
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
-      const t = typeof l.target === 'object' ? l.target.id : l.target;
-      if (!neighbors.has(s)) neighbors.set(s, new Set());
-      if (!neighbors.has(t)) neighbors.set(t, new Set());
-      neighbors.get(s).add(t);
-      neighbors.get(t).add(s);
-    });
-    let filterMode = 'all';
-    const touchesNode = (l, id) => {
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
-      const t = typeof l.target === 'object' ? l.target.id : l.target;
-      return s === id || t === id;
+    const touchesNode = (l, id) => l.source === id || l.target === id || l.source?.id === id || l.target?.id === id;
+    const linkId = (l) => { const s = l.source.id ?? l.source, t = l.target.id ?? l.target; return pairKey(s, t); };
+
+    /* ── Nodes ── */
+    let selectedId = null;
+    const baseR = d => 22 + Math.min(18, Math.sqrt((d.activity || 0) + 1) * 1.5) + Math.min(8, d.score / 40);
+    nodes.forEach(d => { d._r = baseR(d); });
+
+    const nodeSel = nodeLayer.selectAll('g').data(nodes).enter().append('g')
+      .attr('class', 'team-map-node').style('cursor', 'grab')
+      .call(d3.drag()
+        .on('start', (event, d) => { simulation.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on('end', (_event, d) => { simulation.alphaTarget(0); if (!d._pin) { d.fx = null; d.fy = null; } }));
+
+    // Recognition adornments (behind the main circle).
+    nodeSel.filter(d => recognition[d.id] === 'aura').append('circle').attr('class', 'team-map-aura').attr('r', d => d._r + 12);
+    nodeSel.filter(d => recognition[d.id] === 'consistent').append('circle').attr('class', 'team-map-halo').attr('r', d => d._r + 7);
+    // Long-term collaborator halo (strong mutual links).
+    nodeSel.filter(d => (collabStrength.get(d.id) || 0) >= 4 && recognition[d.id] !== 'aura').append('circle').attr('class', 'team-map-halo soft').attr('r', d => d._r + 6);
+
+    nodeSel.append('circle').attr('class', 'team-map-core')
+      .attr('r', d => d._r)
+      .attr('fill', d => teamMapDeptColor(d.department))
+      .attr('stroke', 'var(--card)').attr('stroke-width', 3)
+      .attr('opacity', d => d.online ? 1 : 0.72)
+      .on('click', (event, d) => { event.stopPropagation(); selectNode(d, event); })
+      .on('mouseenter', (event, d) => hoverNode(d, true))
+      .on('mousemove', (event, d) => moveTooltip(event, d))
+      .on('mouseleave', () => { tooltip.classList.add('hidden'); if (!selectedId) applyFilter(filterMode); });
+
+    // Blocked → rescue beacon ring.
+    nodeSel.filter(d => d.blocked > 0).append('circle').attr('class', 'team-map-beacon').attr('r', d => d._r + 4);
+    // Recognition marks that sit on top.
+    nodeSel.filter(d => recognition[d.id] === 'crown').append('text').attr('class', 'team-map-crown').attr('text-anchor', 'middle').attr('dy', d => -d._r - 6).text('♛');
+    nodeSel.filter(d => recognition[d.id] === 'star').append('text').attr('class', 'team-map-starmark').attr('text-anchor', 'middle').attr('dy', d => -d._r - 6).text('✦');
+    nodeSel.filter(d => recognition[d.id] === 'comet').append('circle').attr('class', 'team-map-comet').attr('r', 4).attr('cx', d => d._r).attr('cy', d => -d._r);
+
+    nodeSel.append('text').attr('text-anchor', 'middle').attr('dy', '0.36em').attr('class', 'team-map-initials').text(d => d.initials);
+    nodeSel.append('circle').attr('class', 'team-map-online-dot').attr('r', 6).attr('display', d => d.online ? null : 'none');
+    nodeSel.append('text').attr('class', 'team-map-name').attr('text-anchor', 'middle').attr('y', d => d._r + 18)
+      .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}…` : d.name);
+
+    /* ── Simulation with dept clustering + activity-based centering ── */
+    const deptAngle = {}; departments.forEach((d, i) => { deptAngle[d] = (i / departments.length) * Math.PI * 2; });
+    const deptAnchor = (d, axis) => {
+      const R = Math.min(width, height) * 0.32;
+      const a = deptAngle[d.department] ?? 0;
+      return axis === 'x' ? width / 2 + Math.cos(a) * R : height / 2 + Math.sin(a) * R;
+    };
+    let groupMode = 'none';
+    const groupTargetX = (d) => {
+      if (groupMode === 'department') return deptAnchor(d, 'x');
+      if (groupMode === 'workload') return 80 + (Math.min(10, d.workload) / 10) * (width - 160);
+      if (groupMode === 'contribution') return 80 + Math.min(1, d.score / Math.max(1, topContributor?.score || 1)) * (width - 160);
+      if (groupMode === 'project') { const p = d.projectCount; return 80 + (Math.min(6, p) / 6) * (width - 160); }
+      return width / 2;
+    };
+    const groupTargetY = (d) => {
+      if (groupMode === 'department') return deptAnchor(d, 'y');
+      // Active/online drift toward centre; inactive drift outward.
+      const pull = d.online ? 0 : (d.id % 2 ? -1 : 1) * height * 0.18;
+      return height / 2 + pull;
     };
 
-    const nodeSel = g.append('g').attr('class', 'team-map-nodes')
-      .selectAll('g')
-      .data(nodes)
-      .enter()
-      .append('g')
-      .attr('class', 'team-map-node')
-      .style('cursor', 'grab')
-      .call(d3.drag()
-        .on('start', (event, d) => { simulation.alphaTarget(0.28).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
-        .on('end', (_event, d) => { simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
-
-    nodeSel.append('circle')
-      .attr('r', d => 24 + Math.min(20, Math.sqrt(d.activity || 1) * 1.6))
-      .attr('fill', d => teamMapDeptColor(d.department))
-      .attr('stroke', 'var(--card)')
-      .attr('stroke-width', 3)
-      .on('click', (_event, d) => showUserProfileModal(Number(d.id)))
-      .on('mouseenter', (_event, d) => {
-        // Spotlight this person and their collaborators; dim everyone else.
-        const near = neighbors.get(d.id) || new Set();
-        nodeSel.transition().duration(140).style('opacity', n => (n.id === d.id || near.has(n.id)) ? 1 : 0.12);
-        linkSel.transition().duration(140)
-          .style('opacity', l => touchesNode(l, d.id) ? 0.9 : 0.03)
-          .attr('stroke-width', l => touchesNode(l, d.id) ? Math.min(7.5, 2.2 + l.weight) : baseLinkWidth(l));
-      })
-      .on('mousemove', (event, d) => {
-        tooltip.classList.remove('hidden');
-        tooltip.style.left = `${event.offsetX + 14}px`;
-        tooltip.style.top = `${event.offsetY + 14}px`;
-        tooltip.innerHTML = `<strong>${esc(d.name)}</strong><span>${departmentLabel(d.department)} - ${(d.activity / 60).toFixed(1)}h this week</span><small>${d.projectCount} owned projects - ${d.taskCount} assigned tasks</small>`;
-      })
-      .on('mouseleave', () => {
-        tooltip.classList.add('hidden');
-        // Restore to whatever the active filter dictates.
-        applyFilter(filterMode);
-      });
-    nodeSel.append('text')
-      .attr('text-anchor', 'middle')
-      .attr('dy', '0.36em')
-      .attr('class', 'team-map-initials')
-      .text(d => d.initials);
-    nodeSel.append('circle')
-      .attr('class', 'team-map-online-dot')
-      .attr('r', 6)
-      .attr('cx', 24)
-      .attr('cy', -24)
-      .attr('display', d => d.online ? null : 'none');
-    nodeSel.append('text')
-      .attr('class', 'team-map-name')
-      .attr('text-anchor', 'middle')
-      .attr('y', 54)
-      .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}...` : d.name);
-
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(d => 120 - Math.min(55, d.weight * 9)).strength(0.08))
-      .force('charge', d3.forceManyBody().strength(-260))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('x', d3.forceX(width / 2).strength(0.03))
-      .force('y', d3.forceY(height / 2).strength(0.05))
-      .force('collide', d3.forceCollide(d => 42 + Math.min(20, Math.sqrt(d.activity || 1) * 1.4)));
+      .velocityDecay(reduce ? 0.6 : 0.42)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(d => Math.max(60, 150 - d.weight * 14 - d.recency * 20)).strength(d => Math.min(0.5, 0.06 + d.weight * 0.03)))
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('x', d3.forceX(groupTargetX).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.02) : 0.14))
+      .force('y', d3.forceY(groupTargetY).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.03) : 0.14))
+      .force('collide', d3.forceCollide(d => d._r + 12));
 
     simulation.on('tick', () => {
       linkSel.attr('d', d => {
         const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
         const mx = (sx + tx) / 2;
-        // Horizontal-tangent S-curve: control points share the midpoint x.
         return `M${sx},${sy} C ${mx},${sy} ${mx},${ty} ${tx},${ty}`;
       });
       nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      updateOverlays();
+      if (selectedNodeData) positionPopoverForNode(selectedNodeData);
     });
 
-    const applyFilter = (mode) => {
+    /* ── Tooltip + hover ── */
+    function moveTooltip(event, d) {
+      tooltip.classList.remove('hidden');
+      tooltip.style.left = `${event.offsetX + 14}px`;
+      tooltip.style.top = `${event.offsetY + 14}px`;
+      tooltip.innerHTML = `<strong>${esc(d.name)}</strong><span>${esc(departmentLabel(d.department))} · ${d.rank.label}${d.rank.level ? ' ' + d.rank.levelRoman : ''}</span><small>${(d.activity / 60).toFixed(1)}h this week · ${d.workload} open${d.blocked ? ' · ' + d.blocked + ' blocked' : ''}</small>`;
+    }
+    function hoverNode(d, on) {
+      if (selectedId) return;
+      if (!on) { applyFilter(filterMode); return; }
+      const near = neighbors.get(d.id) || new Set();
+      nodeSel.classed('is-dim', n => !(n.id === d.id || near.has(n.id)));
+      linkSel.classed('is-hi', l => touchesNode(l, d.id)).classed('is-dim', l => !touchesNode(l, d.id));
+    }
+
+    /* ── Selection → compact profile popover, highlight connected, fade rest ── */
+    function selectNode(d, event) {
+      selectedId = d.id;
+      const near = neighbors.get(d.id) || new Set();
+      nodeSel.classed('is-selected', n => n.id === d.id).classed('is-dim', n => !(n.id === d.id || near.has(n.id)));
+      linkSel.classed('is-hi', l => touchesNode(l, d.id)).classed('is-dim', l => !touchesNode(l, d.id));
+      showPopover(d);
+    }
+    function clearSelection() {
+      selectedId = null;
+      selectedNodeData = null;
+      popoverEl.classList.add('hidden');
+      nodeSel.classed('is-selected', false).classed('is-dim', false);
+      linkSel.classed('is-hi', false).classed('is-dim', false);
+      applyFilter(filterMode);
+    }
+    function showPopover(d) {
+      selectedNodeData = d;
+      const collabs = [...(neighbors.get(d.id) || [])].map(id => nodeById.get(id)).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 4);
+      const avail = d.blocked ? 'Blocked' : d.available ? 'Available' : d.online ? 'Busy' : 'Offline';
+      popoverEl.innerHTML = `
+        <button class="team-pop-x" data-pop-close aria-label="Close">×</button>
+        <div class="team-pop-head">
+          <span class="team-pop-avatar" style="background:${teamMapDeptColor(d.department)}">${esc(d.initials)}</span>
+          <div><b>${esc(d.name)}</b><span>${esc(departmentLabel(d.department))} · ${rankIcon(d.rank.label, 12)}${d.rank.label}${d.rank.level ? ' ' + d.rank.levelRoman : ''}</span></div>
+          <span class="team-pop-avail team-pop-avail--${avail.toLowerCase()}">${avail}</span>
+        </div>
+        <div class="team-pop-stats">
+          <div><b>${d.score}</b><span>XP</span></div>
+          <div><b>${d.workload}</b><span>Open</span></div>
+          <div><b>${d.streak}</b><span>Streak</span></div>
+          <div><b>${(d.activity / 60).toFixed(1)}h</b><span>Week</span></div>
+        </div>
+        <div class="team-pop-row"><span>Current</span> ${d.currentTask ? esc(d.currentTask.title) : 'Available for collaboration'}</div>
+        ${collabs.length ? `<div class="team-pop-row"><span>Works with</span> ${collabs.map(c => esc(c.name.split(' ')[0])).join(', ')}</div>` : ''}
+        <div class="team-pop-actions">
+          <button data-pop-action="profile">Profile</button>
+          <button data-pop-action="focus">Focus</button>
+          ${Number(d.id) === Number(actorId()) ? '' : '<button data-pop-action="message">Message</button><button data-pop-action="assign">Assign</button>'}
+        </div>`;
+      popoverEl.classList.remove('hidden');
+      positionPopoverForNode(d);
+      popoverEl.querySelector('[data-pop-close]').onclick = (e) => { e.stopPropagation(); clearSelection(); };
+      popoverEl.querySelectorAll('[data-pop-action]').forEach(btn => btn.onclick = (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.popAction;
+        if (act === 'profile') showUserProfileModal(d.id);
+        else if (act === 'focus') enterFocus(d);
+        else if (act === 'message') { hideModal?.(); document.querySelector(`[data-action="select-chat-channel"][data-channel-id="dm-${d.id}"]`)?.click(); window.location.hash = '#/chat'; }
+        else if (act === 'assign') showTaskModal(null, 'todo', d.id);
+      });
+    }
+    popoverEl.addEventListener('click', (e) => e.stopPropagation());
+    const onMapResize = () => { if (selectedNodeData) positionPopoverForNode(selectedNodeData); };
+    window.addEventListener('resize', onMapResize);
+
+    /* ── Filters ── */
+    let filterMode = 'all';
+    function applyFilter(mode) {
       filterMode = mode;
       el.querySelectorAll('[data-map-filter]').forEach(btn => btn.classList.toggle('active', btn.dataset.mapFilter === mode));
-      nodeSel.transition().duration(160).style('opacity', d => {
-        if (mode === 'online') return d.online ? 1 : 0.18;
-        if (mode === 'active') return d.activity > 0 ? 1 : 0.18;
-        return 1;
+      nodeSel.classed('is-dim', d => {
+        if (mode === 'online') return !d.online;
+        if (mode === 'active') return d.activity <= 0;
+        if (mode === 'available') return !d.available;
+        if (mode === 'blocked') return d.blocked <= 0;
+        return false;
+      }).classed('is-selected', false);
+      linkSel.classed('is-hi', false).classed('is-dim', d => {
+        const s = nodeById.get(d.source.id ?? d.source), t = nodeById.get(d.target.id ?? d.target);
+        if (mode === 'online') return !(s?.online && t?.online);
+        if (mode === 'active') return !(s?.activity > 0 && t?.activity > 0);
+        if (mode === 'available') return !(s?.available && t?.available);
+        if (mode === 'blocked') return !(s?.blocked && t?.blocked);
+        return false;
       });
-      linkSel.transition().duration(160)
-        .attr('stroke-width', baseLinkWidth)
-        .style('opacity', d => {
-          const s = d.source;
-          const t = d.target;
-          if (mode === 'online') return s.online && t.online ? 0.5 : 0.04;
-          if (mode === 'active') return s.activity > 0 && t.activity > 0 ? 0.5 : 0.04;
-          return baseLinkOpacity(d);
-        });
-    };
+    }
+
+    /* ── Fit / reset ── */
     const reset = () => svg.transition().duration(220).call(zoomBehavior.transform, d3.zoomIdentity);
     const fit = () => {
-      const bounds = g.node().getBBox();
-      const scale = Math.min(1.6, 0.9 / Math.max(bounds.width / width, bounds.height / height));
-      const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
-      const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
-      svg.transition().duration(260).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+      try {
+        const bounds = g.node().getBBox();
+        if (!bounds.width || !bounds.height) return;
+        const scale = Math.min(1.6, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+        const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
+        const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
+        svg.transition().duration(260).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+      } catch (_) {}
     };
+
+    /* ── FX layer: ripples, particles, badges, exchange dots ── */
+    function ripple(x, y, color) {
+      const c = fxLayer.append('circle').attr('cx', x).attr('cy', y).attr('r', 6).attr('class', 'team-map-ripple').attr('stroke', color || 'var(--accent)');
+      c.transition().duration(900).attr('r', 60).attr('opacity', 0).on('end', () => c.remove());
+    }
+    function floatBadge(x, y, text, color) {
+      const t = fxLayer.append('text').attr('x', x).attr('y', y).attr('class', 'team-map-badge').attr('fill', color || 'var(--accent)').text(text);
+      t.transition().duration(1600).attr('y', y - 42).attr('opacity', 0).on('end', () => t.remove());
+    }
+    function exchangeParticle(link) {
+      const s = nodeById.get(link.source.id ?? link.source), t = nodeById.get(link.target.id ?? link.target);
+      if (!s || !t) return;
+      const p = fxLayer.append('circle').attr('r', 4).attr('class', 'team-map-particle');
+      const t0 = performance.now(), dur = 900;
+      (function step(now) {
+        const k = Math.min(1, (now - t0) / dur);
+        p.attr('cx', s.x + (t.x - s.x) * k).attr('cy', s.y + (t.y - s.y) * k);
+        if (k < 1) requestAnimationFrame(step); else p.remove();
+      })(t0);
+    }
+    function emitAtUser(uid, kind, text) {
+      const d = nodeById.get(Number(uid)); if (!d) return;
+      if (kind === 'ripple') ripple(d.x, d.y, 'var(--green,#22c55e)');
+      else if (kind === 'badge') floatBadge(d.x, d.y - d._r, text || '✦', 'var(--accent)');
+    }
+
+    /* ── Ambient: breathing + orbiting status dot ── */
+    let ambientRAF = null;
+    function ambientLoop(ts) {
+      const s = ts / 1000;
+      nodeSel.select('.team-map-core').attr('r', d => d._r + (d.online ? Math.sin(s * 1.4 + d.id) * 1.6 : 0));
+      nodeSel.select('.team-map-online-dot').attr('cx', d => Math.cos(s * 1.6 + d.id) * (d._r + 4)).attr('cy', d => Math.sin(s * 1.6 + d.id) * (d._r + 4));
+      nodeSel.select('.team-map-comet').attr('cx', d => Math.cos(-s * 2 + d.id) * (d._r + 5)).attr('cy', d => Math.sin(-s * 2 + d.id) * (d._r + 5));
+      // Background responds to how many are online.
+      const onlineRatio = nodes.filter(n => n.online).length / Math.max(1, nodes.length);
+      el.style.setProperty('--map-glow', (0.05 + onlineRatio * 0.14).toFixed(3));
+      ambientRAF = requestAnimationFrame(ambientLoop);
+    }
+    if (animate) ambientRAF = requestAnimationFrame(ambientLoop);
+    else nodeSel.select('.team-map-online-dot').attr('cx', d => d._r).attr('cy', d => -d._r);
+
+    /* ── Overlays: constellation goal + relay baton ── */
+    let constellationEdges = [];
+    let relayState = null;
+    function updateOverlays() {
+      const oc = overlayLayer.selectAll('path.team-constellation-edge').data(constellationEdges, d => d.k);
+      oc.enter().append('path').attr('class', 'team-constellation-edge').merge(oc)
+        .attr('d', d => { const s = nodeById.get(d.a), t = nodeById.get(d.b); if (!s || !t) return ''; return `M${s.x},${s.y} L${t.x},${t.y}`; });
+      oc.exit().remove();
+      if (relayState) {
+        const s = nodeById.get(relayState.from), t = nodeById.get(relayState.to);
+        if (s && t) {
+          const k = relayState.k;
+          overlayLayer.selectAll('circle.team-relay-baton').data([0]).join('circle').attr('class', 'team-relay-baton')
+            .attr('r', 8).attr('cx', s.x + (t.x - s.x) * k).attr('cy', s.y + (t.y - s.y) * k);
+        }
+      } else overlayLayer.selectAll('circle.team-relay-baton').remove();
+    }
+
+    /* ── Focus mode: rings of tasks / collaborators / projects ── */
+    function enterFocus(d) {
+      clearSelection();
+      const focusSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.9, 720);
+      const cx = focusSize / 2, cy = focusSize / 2;
+      const scale = focusSize / Math.max(width, height);
+      const openTasks = tasks.filter(t => Number(t.assigneeId) === Number(d.id) && t.status !== 'done').slice(0, 8);
+      const doneTasks = tasks.filter(t => Number(t.assigneeId) === Number(d.id) && t.status === 'done').slice(0, 6);
+      const collabs = [...(neighbors.get(d.id) || [])].map(id => nodeById.get(id)).filter(Boolean).slice(0, 8);
+      const projs = projects.filter(p => Number(p.ownerId) === Number(d.id) || (p.editorIds || []).map(Number).includes(Number(d.id))).slice(0, 8);
+      const ring = (items, radius, cls, label) => items.map((it, i) => {
+        const a = (i / Math.max(1, items.length)) * Math.PI * 2 - Math.PI / 2;
+        const x = cx + Math.cos(a) * radius * scale, y = cy + Math.sin(a) * radius * scale;
+        return { x, y, cls, label: label(it), it };
+      });
+      const taskItems = ring(openTasks, 120, 'task', t => t.title);
+      const collabItems = ring(collabs, 210, 'collab', c => c.name);
+      const projItems = ring(projs, 300, 'proj', p => p.name);
+      focusPortal.classList.remove('hidden');
+      focusPortal.innerHTML = `<div class="team-map-focus-backdrop" data-focus-exit aria-hidden="true"></div>
+        <div class="team-map-focus-panel">
+          <button class="team-focus-exit" data-focus-exit>← Exit focus</button>
+          <svg class="team-focus-svg" viewBox="0 0 ${focusSize} ${focusSize}" width="${focusSize}" height="${focusSize}"></svg>
+        </div>`;
+      const fsvg = d3.select(focusPortal).select('.team-focus-svg');
+      [300, 210, 120].forEach(r => fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', r * scale).attr('class', 'team-focus-ring'));
+      const link = (items) => items.forEach(it => fsvg.append('line').attr('x1', cx).attr('y1', cy).attr('x2', it.x).attr('y2', it.y).attr('class', 'team-focus-link'));
+      link(taskItems); link(collabItems); link(projItems);
+      const draw = (items) => items.forEach(it => {
+        const gg = fsvg.append('g').attr('transform', `translate(${it.x},${it.y})`).attr('class', `team-focus-item team-focus-${it.cls}`);
+        const blocked = it.cls === 'task' && it.it.status === 'blocked';
+        gg.append('circle').attr('r', it.cls === 'proj' ? 20 : 16).attr('class', blocked ? 'is-blocked' : '');
+        gg.append('text').attr('y', it.cls === 'proj' ? 34 : 28).attr('text-anchor', 'middle').text((it.label || '').slice(0, 14));
+      });
+      draw(projItems); draw(collabItems); draw(taskItems);
+      doneTasks.forEach((_, i) => setTimeout(() => {
+        const a = Math.random() * Math.PI * 2, r = (60 + Math.random() * 70) * scale;
+        const dot = fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 3).attr('class', 'team-focus-dissolve');
+        dot.transition().duration(1200).attr('cx', cx + Math.cos(a) * r).attr('cy', cy + Math.sin(a) * r).attr('opacity', 0).on('end', () => dot.remove());
+      }, i * 240));
+      fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 34).attr('class', 'team-focus-center').attr('fill', teamMapDeptColor(d.department));
+      fsvg.append('text').attr('x', cx).attr('y', cy + 5).attr('text-anchor', 'middle').attr('class', 'team-focus-center-label').text(d.initials);
+      focusPortal.querySelectorAll('[data-focus-exit]').forEach(btn => { btn.onclick = () => closeFocusPortal(); });
+      focusEscHandler = (e) => { if (e.key === 'Escape') closeFocusPortal(); };
+      window.addEventListener('keydown', focusEscHandler);
+      try { window._teamMapChannel?.track({ focus: true, focusName: d.name }); } catch (_) {}
+    }
+    window._teamMapHighlightUser = (id) => { const d = nodeById.get(Number(id)); if (d) { selectNode(d); fit(); } };
+
+    /* ── Realtime: reactions, live events, co-op ── */
+    let pulseSet = new Set();
+    const net = joinMapChannel((msg) => {
+      if (!msg) return;
+      if (msg.type === 'reaction') {
+        const legacy = { applause: '👏', highfive: '🙌', coffee: '☕', help: '🆘', party: '🎉', focus: '🎯' };
+        const emoji = msg.emoji || legacy[msg.kind] || '✨';
+        const d = nodeById.get(Number(msg.fromId));
+        if (d) floatBadge(d.x, d.y - d._r, emoji, 'var(--accent)');
+        else { statusEl.textContent = `${msg.fromName || 'Someone'} reacted ${emoji}`; setTimeout(() => { statusEl.textContent = ''; }, 2500); }
+      } else if (msg.type === 'exchange') {
+        const l = links.find(x => pairKey(x.source.id ?? x.source, x.target.id ?? x.target) === msg.link);
+        if (l) exchangeParticle(l);
+      } else if (msg.type === 'event') {
+        emitAtUser(msg.uid, msg.kind || 'ripple', msg.text);
+        if (msg.text) { statusEl.textContent = msg.text; setTimeout(() => { statusEl.textContent = ''; }, 3000); }
+      } else if (msg.type === 'pulse') {
+        pulseSet.add(String(msg.fromId));
+        checkPulse();
+      } else if (msg.type === 'relay') {
+        startRelayAnim(Number(msg.from), Number(msg.to));
+      } else if (msg.type === 'constellation') {
+        constellationEdges = msg.edges || constellationEdges;
+      } else if (msg.type === 'presence') {
+        // Focus Swarm: pull focused users together.
+        const state = msg.state || {};
+        const focused = new Set();
+        Object.values(state).forEach(arr => (arr || []).forEach(p => { if (p.focus) focused.add(String(p.id)); }));
+        nodeSel.classed('is-swarm', d => focused.has(String(d.id)));
+      }
+    });
+    if (net) el.dataset.mapRealtime = '1';
+    window._teamMapChannel?.leave?.();
+    window._teamMapChannel = net;
+
+    function checkPulse() {
+      const onlineIds = nodes.filter(n => n.online).map(n => String(n.id));
+      const done = onlineIds.length && onlineIds.every(id => pulseSet.has(id));
+      statusEl.textContent = `Team Pulse ${pulseSet.size}/${onlineIds.length || nodes.length}`;
+      if (done) {
+        nodeSel.classed('is-pulse', true);
+        setTimeout(() => { nodeSel.classed('is-pulse', false); statusEl.textContent = ''; pulseSet = new Set(); }, 2600);
+        try { window.OrbiFun?.celebrate?.({ big: true }); } catch (_) {}
+      } else setTimeout(() => { if (statusEl.textContent.startsWith('Team Pulse')) statusEl.textContent = ''; }, 3000);
+    }
+    function startRelayAnim(from, to) {
+      relayState = { from, to, k: 0 };
+      const t0 = performance.now(), dur = 1400;
+      (function step(now) {
+        relayState.k = Math.min(1, (now - t0) / dur);
+        if (relayState.k < 1) requestAnimationFrame(step); else relayState = null;
+      })(t0);
+    }
+
+    /* ── Wire controls ── */
     el.querySelector('[data-map-tool="reset"]')?.addEventListener('click', reset);
     el.querySelector('[data-map-tool="fit"]')?.addEventListener('click', fit);
     el.querySelectorAll('[data-map-filter]').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.mapFilter || 'all')));
+    el.querySelector('[data-map-group]')?.addEventListener('change', (e) => {
+      groupMode = e.target.value;
+      simulation
+        .force('x', d3.forceX(groupTargetX).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.02) : 0.14))
+        .force('y', d3.forceY(groupTargetY).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.03) : 0.14))
+        .alpha(0.7).restart();
+    });
+    const sendReaction = (emoji) => {
+      const myId = actorId();
+      const mine = nodeById.get(Number(myId));
+      const rx = mine?.x ?? width / 2;
+      const ry = mine ? mine.y - (mine._r || 22) : height / 2;
+      floatBadge(rx, ry, emoji, 'var(--accent)');
+      try { net?.send({ type: 'reaction', emoji }); } catch (_) {}
+      statusEl.textContent = net ? `You reacted ${emoji}` : `You reacted ${emoji} (offline)`;
+      setTimeout(() => { if (statusEl.textContent.includes('You reacted')) statusEl.textContent = ''; }, 2200);
+    };
+    el.querySelectorAll('[data-react-emoji]').forEach(btn => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      sendReaction((btn.dataset.reactEmoji || btn.textContent || '').trim());
+    }));
+    el.querySelector('[data-emoji-open]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (typeof window.TeamEmojiPicker?.open === 'function') {
+        window.TeamEmojiPicker.open(rect, sendReaction);
+      } else {
+        sendReaction('😀');
+      }
+    });
+    el.querySelectorAll('[data-coop]').forEach(btn => btn.addEventListener('click', () => {
+      const kind = btn.dataset.coop;
+      const myId = String(actorId());
+      if (kind === 'pulse') { pulseSet.add(myId); net?.send({ type: 'pulse' }); checkPulse(); }
+      else if (kind === 'swarm') { const on = btn.classList.toggle('active'); net?.track({ focus: on }); statusEl.textContent = on ? 'Focus Swarm: on' : ''; }
+      else if (kind === 'relay') {
+        // Send a baton from you to a random collaborator (or any node).
+        const me = nodeById.get(Number(myId)) || nodes[0];
+        const near = [...(neighbors.get(me.id) || [])];
+        const toId = near.length ? near[Math.floor(Math.random() * near.length)] : nodes.find(n => n.id !== me.id)?.id;
+        if (toId != null) { startRelayAnim(me.id, toId); net?.send({ type: 'relay', from: me.id, to: toId }); }
+      } else if (kind === 'constellation') {
+        // Build the shared constellation from strongest collaboration links.
+        constellationEdges = links.slice().sort((a, b) => (b.weight + b.recency) - (a.weight + a.recency)).slice(0, Math.min(links.length, nodes.length))
+          .map(l => ({ k: pairKey(l.source.id ?? l.source, l.target.id ?? l.target), a: l.source.id ?? l.source, b: l.target.id ?? l.target }));
+        net?.send({ type: 'constellation', edges: constellationEdges });
+        try { window.OrbiFun?.celebrate?.(); } catch (_) {}
+        statusEl.textContent = 'Team Constellation forming…'; setTimeout(() => { statusEl.textContent = ''; }, 2600);
+      }
+    }));
+
+    // Rescue beacons: clicking a blocked node's beacon offers help.
+    nodeSel.filter(d => d.blocked > 0).select('.team-map-beacon').style('cursor', 'pointer').on('click', (event, d) => {
+      event.stopPropagation();
+      net?.send({ type: 'event', uid: d.id, kind: 'ripple', text: `Help is on the way for ${d.name}` });
+      ripple(d.x, d.y, 'var(--danger,#ef4444)');
+      statusEl.textContent = `You offered to help ${d.name.split(' ')[0]}`; setTimeout(() => { statusEl.textContent = ''; }, 2500);
+    });
+
     setTimeout(fit, 350);
+    // Clean up ambient loop + realtime when the map element leaves the DOM.
+    const cleanup = () => {
+      if (ambientRAF) cancelAnimationFrame(ambientRAF);
+      window.removeEventListener('resize', onMapResize);
+      popoverEl.classList.add('hidden');
+      closeFocusPortal();
+    };
+    const mo = new MutationObserver(() => { if (!document.body.contains(el)) { cleanup(); mo.disconnect(); if (window._teamMapChannel === net) { net?.leave?.(); window._teamMapChannel = null; } } });
+    mo.observe(document.body, { childList: true, subtree: true });
   });
 }
 
@@ -9139,7 +9731,7 @@ const actions = {
   },
   'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
   'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
-  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo'),
+  'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo', b.dataset.assigneeId != null ? Number(b.dataset.assigneeId) : null),
   'import-tasks': (b) => showTaskImportModal('', { projectId: Number(b.dataset.projectId) || state.currentProjectId || null }),
   'copilot-from-import-text': () => {
     const text = document.getElementById('task-import-text')?.value || '';
@@ -9423,6 +10015,34 @@ const actions = {
   },
   'show-user-profile': async (b) => {
     await showUserProfileModal(Number(b.dataset.userId));
+  },
+  // Player-card secondary: jump to the team map and highlight this user's links.
+  'pcard-highlight-collabs': async (b) => {
+    const id = Number(b.dataset.userId);
+    hideModal();
+    if ((window.location.hash.slice(1) || '/projects') !== '/users') {
+      window.location.hash = '#/users';
+      // Wait for the map to build, then highlight.
+      setTimeout(() => { try { window._teamMapHighlightUser?.(id); } catch (_) {} }, 700);
+    } else {
+      try { window._teamMapHighlightUser?.(id); } catch (_) {}
+    }
+  },
+  // Player-card secondary: "View profile" → team view (or own profile if self).
+  'show-user-profile-full': async (b) => {
+    const id = Number(b.dataset.userId);
+    if (id === Number(actorId())) { hideModal(); await showProfileModal(); return; }
+    hideModal();
+    if ((window.location.hash.slice(1) || '/projects') !== '/users') window.location.hash = '#/users';
+  },
+  // Player-card: open (focus) a classroom the user belongs to.
+  'open-classroom': async (b) => {
+    const id = b.dataset.classroomId;
+    state.classroomFilter = id ? String(id) : 'all';
+    hideModal();
+    try { await applyClassroomTheme(state.classroomFilter); } catch (_) {}
+    if ((window.location.hash.slice(1) || '/projects') !== '/projects') window.location.hash = '#/projects';
+    else if (typeof router === 'function') router();
   },
   'show-sync-diagnostics': async () => {
     await showSyncDiagnosticsModal();
@@ -10385,15 +11005,13 @@ function presenceDotHtml(user) {
 
 function rankingExplanationBodyHtml() {
   const tiers = [
-    { l: 'Pawn', r: '0 – 11', tone: 'muted' },
-    { l: 'Knight', r: '12 – 27', tone: 'amber' },
-    { l: 'Bishop', r: '28 – 49', tone: 'green' },
-    { l: 'Rook', r: '50 – 79', tone: 'blue' },
-    { l: 'Queen', r: '80 – 119', tone: 'purple' },
-    { l: 'King', r: '120 – 199', tone: 'purple' },
-    { l: 'Emperor', r: '200 – 349', tone: 'purple' },
-    { l: 'Titan', r: '350 – 499', tone: 'purple' },
-    { l: 'Mythic', r: '500+', tone: 'purple' },
+    { l: 'Pawn', r: '0 – 24', tone: 'muted' },
+    { l: 'Scout', r: '25 – 59', tone: 'amber' },
+    { l: 'Pilot', r: '60 – 109', tone: 'green' },
+    { l: 'Navigator', r: '110 – 179', tone: 'blue' },
+    { l: 'Commander', r: '180 – 299', tone: 'purple' },
+    { l: 'Architect', r: '300 – 459', tone: 'purple' },
+    { l: 'Orbital', r: '460+', tone: 'purple' },
   ];
   const milestones = [
     { l: 'Veteran', r: '50 tasks done', tone: 'blue' },

@@ -148,17 +148,24 @@
     };
   }
 
+  function storageErrorMessage(status, body = {}, fallback = "", text = "") {
+    const detail = body.error || body.message || text || fallback || `Request failed (${status})`;
+    if (body.code === "drive_auth_revoked") {
+      return "Document storage authorization has expired. Reconnect the central Google Drive storage account.";
+    }
+    if (status === 401) return "Storage sign-in expired. Please sign out and back in.";
+    if (status === 403) return "You do not have access to this file.";
+    if (status === 404) return "File not found in storage. It may need to be re-uploaded or migrated.";
+    return detail;
+  }
+
   async function responseError(res, fallback) {
     let body = {};
     let text = "";
     try { body = await res.clone().json(); } catch (_) {
       try { text = (await res.text()).trim(); } catch (_) {}
     }
-    const detail = body.error || body.message || text || fallback || `Request failed (${res.status})`;
-    if (res.status === 401) return new Error("Storage sign-in expired. Please sign out and back in.");
-    if (res.status === 403) return new Error("You do not have access to this file.");
-    if (res.status === 404) return new Error("File not found in storage. It may need to be re-uploaded or migrated.");
-    return new Error(detail);
+    return new Error(storageErrorMessage(res.status, body, fallback, text));
   }
 
   // Upload with progress via XHR. Returns the project_files metadata row.
@@ -178,7 +185,7 @@
       xhr.onload = () => {
         let body = {}; try { body = JSON.parse(xhr.responseText); } catch (_) {}
         if (xhr.status >= 200 && xhr.status < 300) resolve(body.file);
-        else reject(new Error(body.error || `Upload failed (${xhr.status})`));
+        else reject(new Error(storageErrorMessage(xhr.status, body, `Upload failed (${xhr.status})`, xhr.responseText || "")));
       };
       xhr.onerror = () => reject(new Error("Network error during upload."));
       xhr.send(form);

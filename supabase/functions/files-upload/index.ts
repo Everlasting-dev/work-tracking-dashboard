@@ -85,7 +85,13 @@ serve(async (req) => {
     log("upload.ok", { projectId, fileId: row.id, category, size: uploaded.size });
     return json({ file: row }, 201);
   } catch (err) {
-    if (err instanceof DriveAuthRevokedError) return json({ error: "Storage authorization error. Contact an administrator." }, 502);
+    if (err instanceof DriveAuthRevokedError) {
+      log("drive.auth_revoked", { operation: "upload" });
+      return json({
+        code: "drive_auth_revoked",
+        error: "Storage authorization error. Reconnect the central Google Drive storage account.",
+      }, 502);
+    }
     log("upload.error", { err: String(err) });
     return json({ error: "Upload failed." }, 500);
   }

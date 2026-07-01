@@ -19,6 +19,8 @@ release-test*/
 release-themefix/
 modular-dist/
 storybook-static/
+# Local-only React/Vite UI rewrite (test build — never tracked or packaged)
+orbitrack-react/
 .tmp-screenshots/
 backend/fastapi/.venv/
 backend/fastapi/.env

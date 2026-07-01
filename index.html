@@ -19,6 +19,8 @@
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
   <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.3.3">
+  <!-- LOCAL EXPERIMENT: Orbitrack Labs library-showcase island styles (React Flow + cmdk etc.) -->
+  <link rel="stylesheet" href="vendor/orbilabs/orbilabs.css?v=3.3.3">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -242,7 +244,10 @@
   <script src="notification-sounds.js?v=3.3.3"></script>
   <script src="db-bridge.js?v=3.3.3"></script>
   <script src="splash-sphere.js?v=3.3.3"></script>
+  <script src="vendor/orbiemoji/orbiemoji.js?v=3.3.3"></script>
   <script src="app.js?v=3.3.3"></script>
+  <!-- LOCAL EXPERIMENT: TipTap notes editor island (must load before notes.js mounts an editor). Roll back by removing this tag + vendor/orbitiptap + build-src/orbitiptap.js + the OrbiTipTap branch in notes.js. -->
+  <script src="vendor/orbitiptap/orbitiptap.js?v=3.3.3"></script>
   <script src="notes.js?v=3.3.3"></script>
   <script src="chat.js?v=3.3.3"></script>
   <script src="canvas.js?v=3.3.3"></script>
@@ -263,6 +268,8 @@
   <script src="vendor/orbinotes/orbinotes.js?v=3.3.3"></script>
   <!-- Local Copilot (Ollama, proposal-only writes). -->
   <script src="copilot.js?v=3.3.3"></script>
+  <!-- LOCAL EXPERIMENT: Orbitrack Labs island — Motion/AutoAnimate/Howler/TipTap/Phaser/dnd-kit/Sonner/cmdk/React Flow. Self-mounts a launcher (bottom-left) + Ctrl+K palette. Remove this tag + the orbilabs.css link + build-src/orbilabs.jsx to roll back. -->
+  <script src="vendor/orbilabs/orbilabs.js?v=3.3.3"></script>
   <script>
     // Toggle the Copilot drawer with Ctrl+J (Cmd+J on macOS).
     window.addEventListener('keydown', (e) => {
