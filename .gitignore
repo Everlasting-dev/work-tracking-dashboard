@@ -19,8 +19,9 @@ release-test*/
 release-themefix/
 modular-dist/
 storybook-static/
-# Local-only React/Vite UI rewrite (test build — never tracked or packaged)
+# Local-only React/Vite UI rewrites (test builds — never tracked or packaged)
 orbitrack-react/
+orbitrack-ui/
 .tmp-screenshots/
 backend/fastapi/.venv/
 backend/fastapi/.env
@@ -44,3 +45,7 @@ token.json
 drive-migration-report*.json
 supabase-storage-cleanup-report*.json
 supabase/.temp/
+
+# Local-only tools (never shipped)
+project-report.local.js
+*.local.js

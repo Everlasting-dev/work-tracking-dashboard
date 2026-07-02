@@ -6407,7 +6407,7 @@ async function showCommandPalette(initialQuery = '') {
         <button type="button" class="command-item" data-action="command-create-project">
           <span>${ICONS.folder}</span><strong>Create project</strong><em>Ctrl Shift N</em>
         </button>
-        ${window.WTCopilot ? `<button type="button" class="command-item" data-action="command-ai-generate">
+        ${window.WTCopilot && isAdmin() ? `<button type="button" class="command-item" data-action="command-ai-generate">
           <span>${ICONS.sparkles || '✦'}</span><strong>Generate project with AI</strong><em>Copilot</em>
         </button>` : ''}
       </div>
@@ -7916,8 +7916,12 @@ function initializeTeamActivityD3() {
     const REACTIONS_QUICK = ['👏', '🙌', '☕', '🎉', '🎯', '❤️'];
     el.innerHTML = `
       <div class="team-map-canvas"></div>
+      <div class="team-map-zoom">
+        <button type="button" data-map-tool="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+        <button type="button" data-map-tool="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+        <button type="button" data-map-tool="fit" title="Fit everyone in view" aria-label="Fit to view">⤢</button>
+      </div>
       <div class="team-map-floating-controls">
-        <button type="button" data-map-tool="fit">Fit</button>
         <button type="button" data-map-tool="reset">Reset</button>
         <button type="button" data-map-filter="all" class="active">All</button>
         <button type="button" data-map-filter="online">Online</button>
@@ -7995,11 +7999,26 @@ function initializeTeamActivityD3() {
       popoverEl.style.left = `${left}px`;
       popoverEl.style.top = `${top}px`;
     };
-    const zoomBehavior = d3.zoom().scaleExtent([0.4, 2.6]).on('zoom', (event) => {
-      g.attr('transform', event.transform);
-      if (selectedNodeData) positionPopoverForNode(selectedNodeData);
-    });
+    const zoomBehavior = d3.zoom().scaleExtent([0.4, 2.6])
+      // Let d3 handle drag / pinch to pan; wheel is handled manually below so we
+      // can require Ctrl (⌘) and reliably beat Chromium's page-zoom in Electron.
+      .filter((event) => {
+        if (event.type === 'wheel') return false;
+        return !event.button;
+      })
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+        if (selectedNodeData) positionPopoverForNode(selectedNodeData);
+      });
     svg.call(zoomBehavior);
+    // Ctrl/⌘ + wheel zooms the map about the cursor; a plain wheel scrolls the page.
+    svg.node().addEventListener('wheel', (event) => {
+      if (!(event.ctrlKey || event.metaKey)) return;   // no Ctrl → let the page scroll
+      event.preventDefault();
+      const rect = svg.node().getBoundingClientRect();
+      const point = [event.clientX - rect.left, event.clientY - rect.top];
+      zoomBehavior.scaleBy(svg, event.deltaY < 0 ? 1.15 : 1 / 1.15, point);
+    }, { passive: false });
     svg.on('click', () => { clearSelection(); });
 
     /* ── Links ── */
@@ -8124,12 +8143,14 @@ function initializeTeamActivityD3() {
       linkSel.classed('is-hi', l => touchesNode(l, d.id)).classed('is-dim', l => !touchesNode(l, d.id));
       showPopover(d);
     }
+    let popoverDocHandler = null;
     function clearSelection() {
       selectedId = null;
       selectedNodeData = null;
       popoverEl.classList.add('hidden');
       nodeSel.classed('is-selected', false).classed('is-dim', false);
       linkSel.classed('is-hi', false).classed('is-dim', false);
+      if (popoverDocHandler) { document.removeEventListener('pointerdown', popoverDocHandler, true); popoverDocHandler = null; }
       applyFilter(filterMode);
     }
     function showPopover(d) {
@@ -8159,6 +8180,10 @@ function initializeTeamActivityD3() {
         </div>`;
       popoverEl.classList.remove('hidden');
       positionPopoverForNode(d);
+      // Click anywhere outside the card (and outside the map) closes the mini profile.
+      if (popoverDocHandler) document.removeEventListener('pointerdown', popoverDocHandler, true);
+      popoverDocHandler = (ev) => { if (popoverEl.contains(ev.target) || el.contains(ev.target)) return; clearSelection(); };
+      setTimeout(() => document.addEventListener('pointerdown', popoverDocHandler, true), 0);
       popoverEl.querySelector('[data-pop-close]').onclick = (e) => { e.stopPropagation(); clearSelection(); };
       popoverEl.querySelectorAll('[data-pop-action]').forEach(btn => btn.onclick = (e) => {
         e.stopPropagation();
@@ -8168,7 +8193,7 @@ function initializeTeamActivityD3() {
           if (typeof window.TeamEmojiPicker?.open === 'function') window.TeamEmojiPicker.open(r, (emoji) => addBlobReaction(d, emoji));
           else addBlobReaction(d, '⭐');
         }
-        else if (act === 'profile') showUserProfileModal(d.id);
+        else if (act === 'profile') { const id = d.id; clearSelection(); showUserProfileModal(id); }
         else if (act === 'focus') enterFocus(d);
         else if (act === 'message') { hideModal?.(); document.querySelector(`[data-action="select-chat-channel"][data-channel-id="dm-${d.id}"]`)?.click(); window.location.hash = '#/chat'; }
         else if (act === 'assign') showTaskModal(null, 'todo', d.id);
@@ -8436,6 +8461,8 @@ function initializeTeamActivityD3() {
     /* ── Wire controls ── */
     el.querySelector('[data-map-tool="reset"]')?.addEventListener('click', reset);
     el.querySelector('[data-map-tool="fit"]')?.addEventListener('click', fit);
+    el.querySelector('[data-map-tool="zoom-in"]')?.addEventListener('click', () => svg.transition().duration(180).call(zoomBehavior.scaleBy, 1.3));
+    el.querySelector('[data-map-tool="zoom-out"]')?.addEventListener('click', () => svg.transition().duration(180).call(zoomBehavior.scaleBy, 1 / 1.3));
     el.querySelectorAll('[data-map-filter]').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.mapFilter || 'all')));
     el.querySelector('[data-map-group]')?.addEventListener('change', (e) => {
       groupMode = e.target.value;
@@ -10725,7 +10752,12 @@ const actions = {
   'chat-dock-back': () => { window.WTChat?.backToList?.(); },
   'open-chat-channel': (b) => { window.WTChat?.openChannel?.(b.dataset.channelId); },
   'toggle-chat-favorite': async (b) => { await window.WTChat?.toggleFavorite?.(b); },
-  'export-report-pdf': async () => { await exportMonthlyReportPdf(); },
+  'export-report-pdf': async () => {
+    // Comprehensive, all-inclusive project report (admin-only). Falls back to the
+    // legacy monthly summary PDF if the module isn't available.
+    if (window.OrbiProjectReport?.open) window.OrbiProjectReport.open();
+    else await exportMonthlyReportPdf();
+  },
   'generate-ai-report': async () => { await generateAIReport(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
   'test-webhook': async (b) => {

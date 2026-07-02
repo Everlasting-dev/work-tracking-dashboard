@@ -463,7 +463,12 @@
     });
   }
 
+  function isAdminUser() {
+    try { return (window.getSession ? getSession()?.role : null) === 'admin'; } catch (_) { return false; }
+  }
   function open() {
+    // Copilot is an admin-only feature.
+    if (!isAdminUser()) { try { window.showToast?.('Copilot is available to admins only.', 'info'); } catch (_) {} return; }
     ensureDom();
     state_.open = true;
     document.body.classList.add('copilot-open');

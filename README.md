@@ -4,7 +4,7 @@ Orbitrack is a desktop project and task workspace for teams — projects, boards
 
 ## Current release
 
-**v3.3.1** - rebranded to Orbitrack; Notes (Alt+N) and Canvas (Alt+B) shortcuts; canvas export (PNG/PDF/SVG) and templates; team activity map coloured by department with a "hide me" option; a tidier account menu and a single, scrollable release-notes page; plus a fix so the rename keeps your saved session and local data. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
+**v3.4.2** — admin project reports (export a detailed, all-inclusive PDF across one, several, or all of a person's projects — tasks, documents by name/format, contributors, and activity log); team activity map with Ctrl+wheel zoom, a bottom-left zoom/fit cluster, and a tidier member popover; Copilot restricted to admins; the hidden Doodle Dash drawing game (5 rounds + winners); trophies on the player card; plus task-sync and stability fixes. Download it from [GitHub Releases (latest)](https://github.com/Everlasting-dev/work-tracking-dashboard/releases/latest).
 
 1. Download and run the installer (Windows 10/11, x64).
 2. Sign in with your team account.

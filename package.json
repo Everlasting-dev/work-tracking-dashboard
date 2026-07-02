@@ -1,6 +1,6 @@
 {
   "name": "orbitrack-desktop",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "Orbitrack Black Edition — project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
@@ -13,9 +13,6 @@
   "scripts": {
     "start": "electron .",
     "desktop": "electron .",
-    "ui:dev": "npm --prefix orbitrack-ui run dev",
-    "ui:build": "npm --prefix orbitrack-ui run build",
-    "ui:preview": "npm --prefix orbitrack-ui run preview",
     "pack": "electron-builder --dir",
     "build:orbiflow": "esbuild ./build-src/orbiflow.jsx --bundle --format=iife --jsx=automatic --minify --outfile=vendor/orbiflow/orbiflow.js",
     "build:orbifun": "esbuild ./build-src/orbifun.js --bundle --format=iife --minify --outfile=vendor/orbifun/orbifun.js",
@@ -109,6 +106,7 @@
       "icons-cssvg.js",
       "sprites.js",
       "pictionary.js",
+      "reports-projects.js",
       "vendor/**/*",
       "assets/**/*",
       "favicon.svg",

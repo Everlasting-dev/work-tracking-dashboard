@@ -16,6 +16,7 @@
   var CHANNEL = 'orbi-doodle';
   var ROUND_MS = 60000;
   var INTERMISSION_MS = 3000;
+  var MAX_ROUNDS = 5;
   var PALETTE = ['#1f2937', '#ef4444', '#f59e0b', '#22c55e', '#2563eb', '#a855f7', '#ec4899', '#ffffff'];
   var WORDS = [
     'rocket', 'anchor', 'penguin', 'volcano', 'umbrella', 'lighthouse', 'cactus', 'ladder',
@@ -257,6 +258,10 @@
     if (!channel) return;
     try { channel.send({ type: 'broadcast', event: event, payload: payload || {} }); } catch (_) {}
   }
+  // Broadcasts use { self:false }, so the sender never receives its own message.
+  // The host emits all feed lines, so it must echo them locally or the host's own
+  // guesses/results never appear in the chat (the reported "chat doesn't show").
+  function feed(text, kind) { addFeed(text, kind); send('feed', { text: text, kind: kind }); }
   function flattenPresence() {
     var out = [];
     try {
@@ -342,7 +347,7 @@
     myWord = String(drawer.id) === String(myId()) ? hostWord : '';
     send('clear', {});
     send('secret', { to: drawer.id, word: hostWord });
-    send('feed', { text: 'Round ' + G.round + ' — ' + (drawer.name || 'someone') + ' is drawing', kind: 'sys' });
+    feed('Round ' + G.round + ' of ' + MAX_ROUNDS + ' — ' + (drawer.name || 'someone') + ' is drawing', 'sys');
     broadcastState();
   }
   function everyoneGuessed() {
@@ -352,11 +357,31 @@
   function endRound(solved) {
     if (!amHost() || transitioning) return;
     transitioning = true;
-    send('feed', { text: (solved ? 'Round over — ' : 'Time! ') + 'the word was “' + hostWord + '”.', kind: 'sys' });
+    feed((solved ? 'Round over — ' : 'Time! ') + 'the word was “' + hostWord + '”.', 'sys');
     G.phase = 'intermission';
     G.endsAt = 0;
     broadcastState();
-    setTimeout(function () { transitioning = false; if (amHost()) startRound(); }, INTERMISSION_MS);
+    setTimeout(function () {
+      transitioning = false;
+      if (!amHost()) return;
+      if (G.round >= MAX_ROUNDS) gameOver(); else startRound();
+    }, INTERMISSION_MS);
+  }
+  function gameOver() {
+    if (!amHost()) return;
+    G.phase = 'over';
+    G.drawerId = null;
+    G.endsAt = 0;
+    var ranked = players.slice().sort(function (a, b) { return (G.scores[b.id] || 0) - (G.scores[a.id] || 0); });
+    if (ranked[0]) feed('🏆 ' + (ranked[0].name || 'Player') + ' wins with ' + (G.scores[ranked[0].id] || 0) + ' points!', 'good');
+    broadcastState();
+  }
+  function playAgain() {
+    if (!amHost()) return;
+    G.round = 0; G.scores = {}; G.guessed = {}; G.phase = 'waiting'; transitioning = false;
+    hideStatus();
+    broadcastState();
+    startRound();
   }
   function hostHandleGuess(g) {
     if (G.phase !== 'drawing') return;
@@ -367,11 +392,11 @@
       G.guessed[g.id] = true;
       G.scores[g.id] = (G.scores[g.id] || 0) + 50 + secsLeft;
       G.scores[G.drawerId] = (G.scores[G.drawerId] || 0) + 25;
-      send('feed', { text: '✅ ' + (g.name || 'Someone') + ' guessed it!', kind: 'good' });
+      feed('✅ ' + (g.name || 'Someone') + ' guessed it!', 'good');
       broadcastState();
       if (everyoneGuessed()) endRound(true);
     } else {
-      send('feed', { text: (g.name || 'Someone') + ': ' + String(g.text).slice(0, 40), kind: '' });
+      feed((g.name || 'Someone') + ': ' + String(g.text).slice(0, 40), '');
     }
   }
   var lastStateBeat = 0;
@@ -404,6 +429,7 @@
   }
 
   /* ── Rendering ─────────────────────────────────────────────────────────── */
+  var lastPhase = null;
   function startUiLoop() { clearInterval(uiTimer); uiTimer = setInterval(tickUi, 250); tickUi(); }
   function tickUi() {
     if (!isOpen || !root) return;
@@ -413,7 +439,32 @@
       timerEl.textContent = secs + 's';
       timerEl.classList.toggle('low', secs <= 10);
     } else { timerEl.textContent = '—'; timerEl.classList.remove('low'); }
+    // Final standings overlay when the game ends; clear it when a new game starts.
+    if (G.phase === 'over' && lastPhase !== 'over') renderGameOver();
+    else if (G.phase !== 'over' && lastPhase === 'over') hideStatus();
+    lastPhase = G.phase;
     renderControls();
+  }
+  function renderGameOver() {
+    var el = root && root.querySelector('[data-status]');
+    if (!el) return;
+    var ranked = players.slice().sort(function (a, b) { return (G.scores[b.id] || 0) - (G.scores[a.id] || 0); });
+    var medals = ['🥇', '🥈', '🥉'];
+    var rows = ranked.map(function (p, i) {
+      return '<div style="display:flex;gap:8px;align-items:center;font-size:14px;margin:3px 0;min-width:240px">'
+        + '<span style="width:22px;text-align:center">' + (medals[i] || (i + 1) + '.') + '</span>'
+        + '<b style="flex:1;text-align:left;font-weight:650">' + esc(p.name || 'Player') + '</b>'
+        + '<span style="font-weight:800;color:#4f46e5">' + (G.scores[p.id] || 0) + '</span></div>';
+    }).join('') || '<div class="note">No players.</div>';
+    el.hidden = false;
+    el.innerHTML = '<h3>Game over 🎉</h3>'
+      + (ranked[0] ? '<p style="margin:0 0 8px">Winner: <b>' + esc(ranked[0].name || 'Player') + '</b></p>' : '')
+      + '<div>' + rows + '</div>'
+      + (amHost()
+        ? '<button data-dd-again style="margin-top:12px;border:none;background:#6366f1;color:#fff;border-radius:10px;padding:9px 18px;font-weight:750;cursor:pointer">Play again</button>'
+        : '<p class="note" style="margin-top:10px">Waiting for the host to start a new game…</p>');
+    var again = el.querySelector('[data-dd-again]');
+    if (again) again.onclick = playAgain;
   }
   function renderControls() {
     var drawer = amDrawer(), active = G.phase === 'drawing';
@@ -426,7 +477,9 @@
     gi.placeholder = drawer ? 'You are drawing…' : (G.guessed && G.guessed[myId()]) ? 'You guessed it! 🎉' : 'Type your guess…';
 
     var wordEl = root.querySelector('[data-word]');
-    if (G.phase !== 'drawing') {
+    if (G.phase === 'over') {
+      wordEl.innerHTML = 'Game over<small>See the final standings</small>';
+    } else if (G.phase !== 'drawing') {
       wordEl.innerHTML = players.length < 2
         ? 'Waiting for teammates…<small>Anyone who types <b>monkeybanana</b> joins this room</small>'
         : (G.phase === 'intermission' ? 'Next round starting…<small>Get ready</small>' : 'Starting…<small>&nbsp;</small>');
@@ -468,6 +521,8 @@
     build();
     if (isOpen) return;
     isOpen = true;
+    // Finding the hidden game earns a trophy (Secret Keeper).
+    try { window.OrbiTrophies && window.OrbiTrophies.award && window.OrbiTrophies.award('arcade-enter'); } catch (_) {}
     backdrop.style.display = 'block'; root.style.display = 'flex';
     requestAnimationFrame(function () {
       backdrop.classList.add('is-open'); root.classList.add('is-open');
