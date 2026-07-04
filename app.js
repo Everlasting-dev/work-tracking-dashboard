@@ -59,7 +59,7 @@ function setupSpellcheckObserver() {
       }
     }
   });
-  ['modal-overlay', 'content', 'chat-dock-root'].forEach(id => {
+  ['modal-overlay', 'content'].forEach(id => {
     const el = document.getElementById(id);
     if (el) _spellcheckObserver.observe(el, { childList: true, subtree: true });
   });
@@ -107,11 +107,11 @@ let _splashReady = false;
 function hideSplash() {
   const el = document.getElementById('splash');
   if (!el || el.classList.contains('fade-out')) return;
-  window.SplashSphere?.stop?.();
   const minMs = 3200;
   const wait = Math.max(0, minMs - (Date.now() - _splashShownAt));
   setTimeout(() => {
     el.classList.add('fade-out');
+    window.SplashSphere?.stop?.();
     setTimeout(() => {
       el.remove();
       document.documentElement.classList.remove('splash-lock');
@@ -508,108 +508,6 @@ function isProjectOwner(project) { const s = getSession(); return !!s && !!proje
 function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
-/* ──── Orbitrack Copilot write bridge ────────────────────────────────────
-   The Copilot is read-only EXCEPT for this one authorized action: turning an
-   AI project proposal into a real project + tasks. It is only ever invoked
-   from the "Create project" button on a proposal card the user explicitly
-   approves — it never updates or deletes existing data. */
-async function copilotCreateProjectWithTasks(spec, opts = {}) {
-  if (!spec || !spec.name) throw new Error('No project to create.');
-  const uid = actorId();
-
-  const STATUS_MAP = {
-    'done': 'done', 'landed': 'done', 'complete': 'done', 'completed': 'done', 'finished': 'done',
-    'in progress': 'doing', 'in-progress': 'doing', 'inprogress': 'doing', 'doing': 'doing',
-    'burning': 'doing', 'review': 'doing', 'in review': 'doing', 'active': 'doing', 'started': 'doing',
-    'blocked': 'doing', 'on hold': 'doing', 'waiting': 'doing',
-    'not started': 'todo', 'notstarted': 'todo', 'todo': 'todo', 'to do': 'todo',
-    'docked': 'todo', 'backlog': 'todo', 'planned': 'todo', 'new': 'todo'
-  };
-  const PRIO = new Set(['low', 'medium', 'high']);
-  const normStatus = (s) => STATUS_MAP[String(s || '').toLowerCase().trim()] || 'todo';
-  const normPrio = (p) => { const v = String(p || '').toLowerCase().trim(); return PRIO.has(v) ? v : 'medium'; };
-  const isBlocked = (s) => /block|on hold|waiting/i.test(String(s || ''));
-  const validDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '').trim()) ? String(d).trim() : '';
-
-  const projectId = await DB.createProject({
-    name: String(spec.name).slice(0, 120),
-    notes: String(spec.description || '').slice(0, 2000),
-    priority: normPrio(spec.priority),
-    ownerId: uid || undefined,
-    classroomId: opts.classroomId != null && opts.classroomId !== '' ? Number(opts.classroomId) : undefined,
-    status: 'active',
-    actorUserId: uid
-  });
-
-  const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
-  const titleToId = new Map();
-  const created = [];
-
-  for (const t of tasks) {
-    const title = String(t?.title || t?.name || '').trim();
-    if (!title) continue;
-    const tags = Array.isArray(t.tags)
-      ? t.tags.map(x => String(x).trim()).filter(Boolean)
-      : (t.tags ? String(t.tags).split(',').map(x => x.trim()).filter(Boolean) : []);
-    if (isBlocked(t.status) && !tags.some(x => /^blocked$/i.test(x))) tags.unshift('Blocked');
-    const effortRaw = t.effort ?? t.effortEstimate ?? t['effort estimate'];
-    const customFields = [];
-    if (tags.length) customFields.push({ label: 'Tags', value: tags.join(', '), type: 'text', showInProject: true });
-    if (effortRaw != null && String(effortRaw).trim()) {
-      const eff = /^\d+(\.\d+)?$/.test(String(effortRaw).trim())
-        ? `${effortRaw} day${Number(effortRaw) === 1 ? '' : 's'}`
-        : String(effortRaw).trim();
-      customFields.push({ label: 'Effort', value: eff, type: 'text', showInProject: false });
-    }
-    const taskId = await DB.createTask({
-      projectId,
-      title: title.slice(0, 200),
-      status: normStatus(t.status),
-      priority: normPrio(t.priority),
-      dueDate: validDate(t.dueDate ?? t['due date']),
-      notes: String(t.note || t.notes || t.description || '').slice(0, 1000),
-      customFields,
-      assigneeId: uid || undefined,
-      actorUserId: uid
-    });
-    titleToId.set(title.toLowerCase(), taskId);
-    created.push({ taskId, deps: t.dependencies || t.deps || [] });
-  }
-
-  // Wire dependencies once every task has an id (task is "blocked by" its deps).
-  for (const { taskId, deps } of created) {
-    const blockerIds = (Array.isArray(deps) ? deps : [])
-      .map(d => {
-        const dt = typeof d === 'string' ? d : (d?.['task title'] || d?.title || d?.name || '');
-        return titleToId.get(String(dt).toLowerCase().trim());
-      })
-      .filter(id => id && id !== taskId);
-    if (blockerIds.length) {
-      try { await DB.setTaskBlockedBy(taskId, blockerIds, uid); } catch (_) {}
-    }
-  }
-
-  window.OrbiObs?.track('project_created', { source: 'ai', tasks: created.length });
-  return { id: projectId, name: spec.name, taskCount: created.length };
-}
-window.copilotCreateProjectWithTasks = copilotCreateProjectWithTasks;
-
-// Classrooms the current user may create projects in (admins see all). Used by
-// the Copilot to let the user pick a classroom before creating a project.
-async function copilotGetClassrooms() {
-  try {
-    const all = DB.getClassrooms ? await DB.getClassrooms() : [];
-    const allowed = await userClassroomIds(); // null = admin → all classrooms
-    const myId = Number(actorId());
-    const list = ((allowed === null)
-      ? all
-      : all.filter(c => allowed.map(Number).includes(Number(c.id))))
-      .filter(c => !c.isPersonal || Number(c.ownerId) === myId);
-    return list.map(c => ({ id: c.id, name: c.name }));
-  } catch (_) { return []; }
-}
-window.copilotGetClassrooms = copilotGetClassrooms;
-
 /* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
 
 const WORKSPACE_CACHE_MS = 120000;
@@ -757,7 +655,6 @@ function loadPersistedWorkspaceCache() {
 
 function resetClientState() {
   bustWorkspaceCache();
-  window.WTChat?.reset?.();
   stopPresenceHeartbeat();
   state.notesSearch = '';
   state.lastMainRoute = '/projects';
@@ -822,14 +719,6 @@ async function getUsersCached(force = false) {
   _usersCache = await DB.getUsers();
   _usersCacheAt = now;
   return _usersCache;
-}
-
-async function getWebhooksCached(force = false) {
-  const now = Date.now();
-  if (!force && _webhooksCache && now - _webhooksCacheAt < WEBHOOKS_CACHE_MS) return _webhooksCache;
-  _webhooksCache = await DB.getWebhooks();
-  _webhooksCacheAt = now;
-  return _webhooksCache;
 }
 
 async function fetchWorkspaceData() {
@@ -913,120 +802,17 @@ function projectProgressFromTaskList(taskList) {
   return Math.round(taskList.reduce((sum, t) => sum + (scores[t.status] || 0), 0) / taskList.length);
 }
 
-/* ──── Discord webhook helper ──── */
-
-function trimWebhookUrl(url) {
-  return String(url || '').trim();
-}
-
-function discordWebhookUsername(session) {
-  const raw = session?.displayName || session?.username || 'Orbitrack';
-  const safe = raw.replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 64);
-  return safe ? `${safe} (Orbitrack)` : 'Orbitrack';
-}
-
-function buildDiscordWebhookBody({ content, username, threadName }) {
-  const text = String(content || 'Notification from Orbitrack').trim().slice(0, 2000) || ' ';
-  const body = { content: text };
-  if (username) {
-    const u = String(username).replace(/[^\w\s.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
-    if (u) body.username = u;
-  }
-  if (threadName) body.thread_name = String(threadName).slice(0, 100);
-  if (/@|<@|&\d+/.test(text)) {
-    body.allowed_mentions = { parse: ['users', 'roles'] };
-  }
-  return body;
-}
-
-async function postToDiscordWebhook(url, payload) {
-  const cleanUrl = trimWebhookUrl(url);
-  if (!cleanUrl) return { ok: false, reason: 'no-url' };
-  const bodies = [
-    buildDiscordWebhookBody(payload),
-    buildDiscordWebhookBody({ ...payload, threadName: 'Orbitrack' })
-  ];
-  const seen = new Set();
-  const uniqueBodies = bodies.filter(b => {
-    const key = JSON.stringify(b);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  let last = { ok: false, reason: 'failed' };
-  for (const body of uniqueBodies) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const res = await fetch(cleanUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: ctrl.signal
-      });
-      clearTimeout(t);
-      if (res.ok) return { ok: true };
-      let detail = '';
-      try { detail = (await res.text()).slice(0, 200); } catch (_) {}
-      last = { ok: false, reason: `http-${res.status}`, detail };
-      if (res.status !== 400) break;
-    } catch (err) {
-      last = { ok: false, reason: err.name === 'AbortError' ? 'timeout' : 'network' };
-      break;
-    }
-  }
-  return last;
-}
-
-function discordFailToast(result) {
-  if (result.detail) {
-    try {
-      const j = JSON.parse(result.detail);
-      if (j.message) return `Discord: ${j.message}`;
-    } catch (_) {}
-    return `Discord error (${result.reason}): ${result.detail}`;
-  }
-  return `Failed: ${result.reason}`;
-}
-
-async function fireDiscordEvent({ projectId = null, content, username = null }) {
-  let hook = null;
-  if (projectId != null) hook = await DB.getProjectWebhook(projectId);
-  if (!hook) hook = await DB.getGeneralWebhook();
-  if (!hook?.url) return { ok: false, reason: 'no-hook' };
-  const session = getSession();
-  return postToDiscordWebhook(hook.url, {
-    username: username || discordWebhookUsername(session),
-    content
-  });
-}
-
-async function mirrorBacklogActivity(content) {
-  const hook = await DB.getGeneralWebhook();
-  if (!hook?.url) return { ok: false, reason: 'no-hook' };
-  const session = getSession();
-  return postToDiscordWebhook(hook.url, {
-    username: discordWebhookUsername(session),
-    content
-  });
-}
-
-async function recordProjectActivity({ userId, projectId = null, action, entityType, entityId = null, details = '', discordLine = null }) {
+async function recordProjectActivity({ userId, projectId = null, action, entityType, entityId = null, details = '' }) {
   const uid = userId || actorId();
   if (uid && action) {
     await DB.logActivity({ userId: uid, projectId, action, entityType, entityId, details }).catch(() => {});
     refreshActivityViews().catch(() => {});
   }
-  if (discordLine) {
-    const line = discordLine.startsWith('[Backlog]') ? discordLine : `[Backlog] ${discordLine}`;
-    await mirrorBacklogActivity(line).catch(() => {});
-  }
 }
 
 /* ──── In-app notification helper ──── */
 
-async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null, discordContent = null }) {
+async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null }) {
   if (userId) {
     await DB.createNotification({ userId, type, message, projectId, entityType, entityId, actorUserId });
   }
@@ -1039,9 +825,6 @@ async function notifyUser({ userId, type, message, projectId = null, entityType 
       entityId,
       details: message.slice(0, 200)
     }).catch(() => {});
-  }
-  if (discordContent) {
-    await fireDiscordEvent({ projectId, content: discordContent });
   }
   refreshNotificationBadge().catch(() => {});
 }
@@ -1182,6 +965,32 @@ function workspaceScopeBarHtml() {
 
 function normalizeSearchText(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+// Debounced re-render for in-view search inputs. Coalesces bursts of keystrokes
+// into a single re-render after the user pauses, so the <input> is not destroyed
+// mid-typing (which caused character reordering/drops and lag). Reads the live
+// value at fire time and restores the caret after the view rebuilds.
+let _searchRenderTimer = null;
+let _searchRenderPending = null;
+function _debounceSearchRender(kind, inputId, setState, renderFn) {
+  _searchRenderPending = { kind, inputId, setState, renderFn };
+  clearTimeout(_searchRenderTimer);
+  _searchRenderTimer = setTimeout(async () => {
+    const job = _searchRenderPending;
+    _searchRenderPending = null;
+    if (!job) return;
+    const live = document.getElementById(job.inputId);
+    const value = live ? (live.value || '') : '';
+    const caret = live ? (live.selectionStart ?? value.length) : value.length;
+    job.setState(value);
+    await job.renderFn();
+    const next = document.getElementById(job.inputId);
+    if (next) {
+      next.focus();
+      try { next.setSelectionRange(caret, caret); } catch (_) {}
+    }
+  }, 160);
 }
 
 function projectMatchesSearch(project, owner, query) {
@@ -1348,11 +1157,6 @@ const state = {
   lastMainRoute: '/projects',
   userMenuOpen: false,
   notifOpen: false,
-  chatChannel: null,
-  chatDockOpen: false,
-  chatDockView: 'list',
-  chatDockSearch: '',
-  chatUnreadChannels: null,
   notesSearch: '',
   reportMonth: formatMonthInput(),
   _libraryBlobUrls: [],
@@ -1716,7 +1520,7 @@ async function showApp() {
         await DB.createPersonalNote({
           userId: s.userId,
           title: 'Welcome to Orbitrack 👋',
-          content: `Hi ${first}! A few things to get you going:\n\n• Create a project from the Projects page, then add tasks.\n• Open the Brainstorm canvas (Alt+B) to sketch ideas — drag a note onto it.\n• Jot quick notes here any time (Alt+N).\n• Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
+          content: `Hi ${first}! A few things to get you going:\n\n• Create a project from the Projects page, then add tasks.\n• Jot quick notes here any time (Alt+N).\n• Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
         }).catch(() => {});
       }
     }
@@ -1725,9 +1529,6 @@ async function showApp() {
   prewarmWorkspaceCache();
   startSidebarClock();
   startPresenceHeartbeat();
-  const dockRoot = document.getElementById('chat-dock-root');
-  if (dockRoot) { dockRoot.style.display = ''; window.WTChat?.renderDock?.(); }
-  window.WTChat?.startUnreadPolling?.();
   if (isCloudMode() && window.RealtimeSync) {
     RealtimeSync.init(s.userId).catch(() => {});
   }
@@ -2382,7 +2183,6 @@ async function renderProjects() {
         })() : ''}
       </div>
       <div class="projects-page-actions">
-        <a class="btn btn-ghost" href="#/canvas">${ICONS.edit || ICONS.plus} Brainstorm</a>
         <button class="btn btn-ghost" data-action="add-task">${ICONS.plus} Task</button>
         <button class="btn btn-primary" data-action="add-project">${ICONS.plus} New Project</button>
       </div>
@@ -3188,13 +2988,10 @@ async function onProjectCompleted(project, actorUserId) {
   if (!memberIds.length) memberIds = users.map(u => u.id);
 
   const message = `${project.name} was completed by ${creditLabel}. Ranks updated!`;
-  const discordMsg = `**${project.name}** was completed by ${creditLabel}! Their contributor ranks just went up.`;
   for (const mid of memberIds) {
     if (mid === actorUserId) continue;
     await notifyUser({ userId: mid, type: 'project_completed', message, projectId: project.id, entityType: 'project', entityId: project.id, actorUserId }).catch(() => {});
   }
-  // Mirror to Discord once.
-  fireDiscordEvent({ projectId: project.id, content: discordMsg }).catch(() => {});
 
   showProjectCelebration(project, creditLabel);
 }
@@ -3517,7 +3314,6 @@ function hideDocumentPanel() {
     el.classList.remove('active', 'is-open');
   });
   closeDocumentPanelAnimated();
-  try { window.WTChat?.renderDock?.(); } catch (_) {}
 }
 
 function openDocumentPanelAnimated() {
@@ -4474,10 +4270,9 @@ async function renderAdmin() {
   const content = document.getElementById('content');
   const s = getSession();
   await ensureDepartmentCfg();
-  const [{ users, projects }, hasMk, projectHooksAll, departments, bugReports, classrooms] = await Promise.all([
+  const [{ users, projects }, hasMk, departments, bugReports, classrooms] = await Promise.all([
     getWorkspaceData(),
     DB.hasMasterKey(),
-    getWebhooksCached(),
     DB.getDepartments(),
     DB.getBugReports ? DB.getBugReports({ limit: 25 }) : [],
     DB.getClassrooms ? DB.getClassrooms() : []
@@ -4486,8 +4281,6 @@ async function renderAdmin() {
   if (DB.getUserClassroomIds) {
     await Promise.all(users.map(async u => { userRoomMap[u.id] = await DB.getUserClassroomIds(u.id).catch(() => []); }));
   }
-  const generalHook = projectHooksAll.find(h => h.scope === 'general');
-  const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const BUG_STATUS = [
     { v: 'open', l: 'Open' },
@@ -4635,8 +4428,7 @@ async function renderAdminTabbed() {
     ['bugs', `Bugs${openBugCount ? ` (${openBugCount})` : ''}`],
     ['users', `Users (${users.length})`],
     ['workspace', 'Workspace'],
-    ['data', 'Data & Integrations'],
-    ['library', 'Library']
+    ['data', 'Data & Integrations']
   ];
   const tabsHtml = `<div class="tab-bar admin-tab-bar">
     ${tabs.map(([key, label]) => `<button type="button" class="tab-btn ${active === key ? 'active' : ''}" data-action="admin-tab" data-tab="${key}">${label}</button>`).join('')}
@@ -4777,10 +4569,6 @@ async function renderAdminTabbed() {
       <button class="btn btn-ghost" data-action="open-sync-diagnostics">${ICONS.refresh} Sync diagnostics</button>
       <button class="btn btn-ghost" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     </div></section>
-    <section class="section-card"><div class="section-header"><h2>Integrations</h2></div><div class="section-body admin-action-stack">
-      <p class="text-muted text-sm">Discord/chat integrations are paused while chat is being rebuilt.</p>
-      <a href="#/settings" class="btn btn-ghost">Open integration settings</a>
-    </div></section>
     <section class="section-card admin-wide"><div class="section-header"><h2>Hidden Documents</h2><span class="projects-page-count">${hiddenDocuments.length}</span></div>
       <div class="section-body admin-hidden-doc-list">
         ${hiddenDocuments.length ? hiddenDocuments.slice(0, 30).map(doc => `<div class="admin-hidden-doc-row">
@@ -4791,15 +4579,7 @@ async function renderAdminTabbed() {
       </div>
     </section>
   </div>`;
-  const libraryHtml = `
-  <div class="admin-tab-grid admin-tab-grid--library">
-    <section class="section-card">
-      <div class="section-header"><h2>UI Library Showcase</h2></div>
-      <p class="text-secondary text-sm" style="margin:-6px 0 14px">Live demos of the front-end libraries evaluated for Orbitrack (local experiment).</p>
-      <div id="admin-library-mount" class="admin-library-mount"></div>
-    </section>
-  </div>`;
-  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : active === 'library' ? libraryHtml : overviewHtml;
+  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : overviewHtml;
   content.innerHTML = `
     <div class="view-header admin-suite-header">
       <div><h1>Admin</h1><p class="view-subtitle">Oversight, people, workspace templates, bugs, and data tools.</p></div>
@@ -4810,29 +4590,18 @@ async function renderAdminTabbed() {
     </div>
     ${tabsHtml}
     ${body}`;
-  // Mount the UI-library showcase island into the Library tab (mirrors how the
-  // React Flow / canvas islands mount into their rendered containers).
-  if (active === 'library') {
-    const mountEl = document.getElementById('admin-library-mount');
-    if (mountEl && window.OrbiLabs?.mountShowcase) {
-      try { window.OrbiLabs.mountShowcase(mountEl); } catch (e) { console.warn('[admin] library showcase mount failed', e); }
-    }
-  }
 }
 
 async function renderSettings() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
   await ensureDepartmentCfg();
-  const [{ users, projects }, departments, classrooms, projectHooksAll, workflowTemplates] = await Promise.all([
+  const [{ users, projects }, departments, classrooms, workflowTemplates] = await Promise.all([
     getWorkspaceData(),
     DB.getDepartments(),
     DB.getClassrooms ? DB.getClassrooms() : Promise.resolve([]),
-    getWebhooksCached(),
     DB.getWorkflowTemplates ? DB.getWorkflowTemplates().catch(() => []) : Promise.resolve([]),
   ]);
-  const generalHook  = projectHooksAll.find(h => h.scope === 'general');
-  const hookByProject = Object.fromEntries(projectHooksAll.filter(h => h.scope === 'project').map(h => [h.projectId, h]));
 
   const templatesSection = `
     <section class="section-card" style="margin-bottom:24px">
@@ -4994,46 +4763,6 @@ async function renderSettings() {
       </div>
     </section>
     ${templatesSection}
-    <section class="section-card" style="margin-bottom:24px">
-      <div class="section-header"><h2>${ICONS.chat} Discord Integrations</h2></div>
-      <div class="section-body" style="padding:20px">
-        <p class="text-secondary text-sm" style="margin-bottom:14px">
-          Each channel is bound to a <strong>Discord webhook URL</strong>. The app posts chat messages and event notifications to that URL.
-          To create one in Discord: <em>Server Settings → Integrations → Webhooks → New Webhook → Copy URL</em>.
-        </p>
-        <div class="integrations-grid">
-          <div class="integration-card">
-            <h3>${ICONS.chat} #general channel</h3>
-            <form data-form="webhook-general">
-              <div class="webhook-input">
-                <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(generalHook?.url || '')}">
-                <button type="submit" class="btn btn-sm btn-primary">Save</button>
-              </div>
-              <div class="webhook-input">
-                <input type="url" name="channelUrl" placeholder="Optional: Discord channel URL" value="${esc(generalHook?.channelUrl || '')}">
-              </div>
-              ${generalHook ? `<span class="integration-meta">Saved ${timeAgo(generalHook.updatedAt || generalHook.createdAt)} · <button type="button" class="btn-link" data-action="test-webhook" data-scope="general">Send test ping</button></span>` : ''}
-            </form>
-          </div>
-          ${projects.map(p => {
-            const h = hookByProject[p.id];
-            return `<div class="integration-card">
-              <h3>${ICONS.folder} ${esc(p.name)}</h3>
-              <form data-form="webhook-project" data-project-id="${p.id}">
-                <div class="webhook-input">
-                  <input type="url" name="url" placeholder="https://discord.com/api/webhooks/..." value="${esc(h?.url || '')}">
-                  <button type="submit" class="btn btn-sm btn-primary">Save</button>
-                </div>
-                <div class="webhook-input">
-                  <input type="url" name="channelUrl" placeholder="Optional: Discord channel URL" value="${esc(h?.channelUrl || '')}">
-                </div>
-                ${h ? `<span class="integration-meta">Saved ${timeAgo(h.updatedAt || h.createdAt)} · <button type="button" class="btn-link" data-action="test-webhook" data-scope="project" data-project-id="${p.id}">Send test ping</button> · <button type="button" class="btn-link btn-danger-text" data-action="delete-webhook" data-id="${h.id}">Remove</button></span>` : ''}
-              </form>
-            </div>`;
-          }).join('')}
-        </div>
-      </div>
-    </section>
     <section class="section-card">
       <div class="section-header"><h2>Data Management</h2></div>
       <div class="section-body" style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
@@ -5127,8 +4856,6 @@ async function renderAdminDashboard() {
   const tasksDone7 = tasks.filter(t => t.status === 'done' && within7(t.completedAt || t.updatedAt)).length;
   const newTasks7 = tasks.filter(t => within7(t.createdAt)).length;
   const newProjects7 = projects.filter(p => within7(p.createdAt)).length;
-  let roomCount = 0;
-  try { roomCount = (await window.WTCanvas?.listRooms?.())?.length || 0; } catch (_) {}
   let quickNote = null;
   try {
     const myNotes = (await DB.getPersonalNotes?.(getSession()?.userId)) || [];
@@ -5146,14 +4873,6 @@ async function renderAdminDashboard() {
       ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
     </div>
     <div class="dash-tools-row">
-      <a href="#/canvas" class="dash-tool-card dash-tool-card--canvas">
-        <div class="dash-tool-icon dash-tool-icon--canvas">${ICONS.sparkles}</div>
-        <div class="dash-tool-body">
-          <strong>Brainstorm canvas</strong>
-          <span class="dash-tool-sub">${roomCount ? `${roomCount} board${roomCount === 1 ? '' : 's'} · ` : ''}Sketch ideas, then turn them into a project</span>
-        </div>
-        <span class="dash-tool-cta">Open →</span>
-      </a>
       <div class="dash-tool-card dash-tool-card--metrics">
         <div class="dash-tool-icon dash-tool-icon--metrics">${ICONS.checkCircle}</div>
         <div class="dash-tool-body">
@@ -5862,7 +5581,6 @@ function showModal(title, body, opts = {}) {
   ov.dataset.confirmCancel = opts.confirmCancel ? 'true' : '';
   ov.dataset.cancelMsg = opts.cancelMsg || '';
   delete ov.dataset.confirmDialog;
-  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
   enableSpellcheckOn(ov);
   const inp = ov.querySelector('input:not([type=hidden]),textarea,select');
   if (inp) setTimeout(() => inp.focus(), 50);
@@ -6260,7 +5978,6 @@ async function showTaskImportModal(text = '', opts = {}) {
       </div>
       <div class="task-import-tools">
         <span class="text-muted text-sm">Review the detected tasks before creating them.</span>
-        ${window.WTCopilot?.proposeFromText ? `<button type="button" class="btn btn-sm btn-ghost" data-action="copilot-from-import-text">Open in Copilot</button>` : ''}
       </div>
       <div id="task-import-preview" class="task-import-preview"></div>
       <details class="quick-task-details" open>
@@ -6407,9 +6124,6 @@ async function showCommandPalette(initialQuery = '') {
         <button type="button" class="command-item" data-action="command-create-project">
           <span>${ICONS.folder}</span><strong>Create project</strong><em>Ctrl Shift N</em>
         </button>
-        ${window.WTCopilot && isAdmin() ? `<button type="button" class="command-item" data-action="command-ai-generate">
-          <span>${ICONS.sparkles || '✦'}</span><strong>Generate project with AI</strong><em>Copilot</em>
-        </button>` : ''}
       </div>
       ${routeMatches.length ? `<div class="command-group">
         <div class="command-group-label">Navigate</div>
@@ -6805,7 +6519,7 @@ async function showUserProfileModal(userId) {
 
   const actionsRight = isSelf
     ? `<button type="button" class="pcard-btn pcard-btn--primary" data-action="edit-my-profile">Edit profile</button>`
-    : `<button type="button" class="pcard-btn pcard-btn--primary" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Message</button>`;
+    : '';
 
   const body = `
     <div class="pcard" style="--dept:${esc(accent)}">
@@ -6814,7 +6528,6 @@ async function showUserProfileModal(userId) {
       <div class="pcard-id">
         <div class="pcard-avatar-ring ${online ? 'is-online' : ''}">
           ${avatar}
-          <div class="pcard-rive" data-rive-src="assets/rive/player-card.riv"></div>
           <span class="pcard-orbit"></span>
         </div>
         <div class="pcard-id-meta">
@@ -6860,18 +6573,6 @@ async function showUserProfileModal(userId) {
         </div>
       </div>
 
-      <div class="pcard-section">
-        ${(() => {
-          try { window.OrbiTrophies && window.OrbiTrophies.hydrate && window.OrbiTrophies.hydrate(user); } catch (_) {}
-          const ts = (window.OrbiTrophies && window.OrbiTrophies.forUser) ? window.OrbiTrophies.forUser(user) : [];
-          const total = (window.OrbiTrophies && window.OrbiTrophies.CATALOGUE) ? window.OrbiTrophies.CATALOGUE.length : 0;
-          const trophyIco = (window.CSSVG && window.CSSVG.get) ? window.CSSVG.get('award', { size: 15, hover: true }) : '';
-          const head = `<div class="pcard-section-h">${trophyIco}Trophies${ts.length ? ` · ${ts.length}${total ? '/' + total : ''}` : ''}</div>`;
-          if (!ts.length) return head + `<div class="pcard-trophies-empty">${isSelf ? 'No trophies yet — complete tasks and explore the app to earn them.' : 'No trophies yet.'}</div>`;
-          return head + `<div class="pcard-trophies">${ts.map(t => `<span class="pcard-trophy pcard-trophy--${esc(t.category)}" title="${esc(t.title)} — ${esc(t.desc)}"><i>${t.icon}</i><b>${esc(t.title)}</b></span>`).join('')}</div>`;
-        })()}
-      </div>
-
       ${userClassrooms.length ? `<div class="pcard-section pcard-spaces">
         <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces · ${userClassrooms.length}<span class="pcard-caret">▸</span></button>
         <div class="pcard-spaces-list" data-spaces hidden>
@@ -6891,7 +6592,6 @@ async function showUserProfileModal(userId) {
         <div class="pcard-menu">
           <button type="button" class="pcard-btn pcard-btn--icon" data-pcard-toggle="menu" aria-label="More">⋯</button>
           <div class="pcard-menu-list" data-menu hidden>
-            ${isSelf ? '' : `<button type="button" data-action="select-chat-channel" data-channel-id="dm-${user.id}">Send message</button>`}
             <button type="button" data-action="pcard-highlight-collabs" data-user-id="${user.id}">Highlight on map</button>
             ${isSelf ? `<button type="button" data-action="user-view-profile">Open my profile</button>` : ''}
           </div>
@@ -6904,14 +6604,6 @@ async function showUserProfileModal(userId) {
   ov.classList.remove('hidden');
   ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
-  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
-  try { window.CSSVG?.hydrate?.(ov); } catch (_) {}
-  try {
-    const riveHost = ov.querySelector('.pcard-rive');
-    if (riveHost && window.OrbiRive?.mount) {
-      window.OrbiRive.mount(riveHost, { src: riveHost.dataset.riveSrc, stateMachine: 'State Machine 1', onError: () => {} });
-    }
-  } catch (_) {}
 
   // Animate the rank bar + wire the small in-card toggles (spaces / overflow menu).
   requestAnimationFrame(() => {
@@ -7068,7 +6760,7 @@ async function showEditUserModal(uid) {
   const isSelf = u.id === s.userId;
   showModal('Edit User', `
     <form data-form="edit-user" data-user-id="${u.id}">
-      <p class="text-muted text-sm" style="margin-bottom:12px">Rename the account, change the display name, email, role, or Discord ID.${isSelf ? ' <strong>This is your own account.</strong>' : ''}</p>
+      <p class="text-muted text-sm" style="margin-bottom:12px">Rename the account, change the display name, email, or role.${isSelf ? ' <strong>This is your own account.</strong>' : ''}</p>
       <div class="form-group"><label>Username</label><input name="username" type="text" value="${esc(u.username)}" required autocomplete="off"></div>
       <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(u.displayName || '')}" required></div>
       <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(u.email || '')}" placeholder="user@example.com"></div>
@@ -7076,12 +6768,7 @@ async function showEditUserModal(uid) {
         <option value="" ${!u.department ? 'selected' : ''}>Unassigned</option>
         ${departmentOptionsHtml(u.department || '')}
       </select></div>
-      <div class="form-group"><label>Color</label><input name="color" type="color" value="${esc(u.color || userColor(u))}"><p class="text-muted text-sm" style="margin-top:4px">Used for avatars, task chips, and chat bubbles.</p></div>
-      <div class="form-group">
-        <label>Discord User ID</label>
-        <input name="discordId" type="text" value="${esc(u.discordId || '')}" placeholder="e.g. 123456789012345678" pattern="[0-9]*">
-        <p class="text-muted text-sm" style="margin-top:4px">Used to <code>@mention</code> this user in Discord notifications. In Discord, enable Developer Mode then right-click the user → Copy User ID.</p>
-      </div>
+      <div class="form-group"><label>Color</label><input name="color" type="color" value="${esc(u.color || userColor(u))}"><p class="text-muted text-sm" style="margin-top:4px">Used for avatars and task chips.</p></div>
       <div class="form-group"><label>Role</label>
         <select name="role" ${isSelf ? 'disabled' : ''}>
           <option value="user" ${u.role === 'user' ? 'selected' : ''}>Member</option>
@@ -7113,7 +6800,6 @@ async function showEditUserModalBlack(uid) {
   showModal('Edit User', `
     <form data-form="edit-user" data-user-id="${u.id}" class="user-edit-form">
       <input name="color" type="hidden" value="#000000">
-      <input name="discordId" type="hidden" value="${esc(u.discordId || '')}">
       <div class="user-edit-shell">
         <section class="user-edit-hero">
           <div class="user-edit-avatar" id="user-edit-avatar-preview">${avatar}</div>
@@ -7404,7 +7090,6 @@ async function showProfileModal() {
   ov.classList.remove('hidden');
   ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
-  window.OrbiFun?.enterModal(ov.querySelector('.modal'));
   requestAnimationFrame(() => {
     const fill = ov.querySelector('[data-rank-fill]');
     if (fill) setTimeout(() => { fill.style.width = fill.dataset.target + '%'; }, 60);
@@ -7516,8 +7201,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.3.1', date: '2026-06-25', minor: true },
   { version: '3.3.0', date: '2026-06-25', highlights: [
     'Renamed to Orbitrack.',
-    'Keyboard shortcuts: Alt+N opens Notes, Alt+B opens the Brainstorm canvas.',
-    'Canvas: export your board to PNG or PDF, and start from a template.',
+    'Keyboard shortcut: Alt+N opens Notes.',
     'Team activity map: cleaner organic layout, colour-coded by department, plus a "hide me from the map" option in your profile.',
     'Tidier account menu and a cleaner, scrollable release-notes page.',
   ], adminNotes: [
@@ -7534,7 +7218,6 @@ const SUPPORT_CHANGELOG = [
     'One-time-password accounts with a forced first-login password change.',
     'Private personal spaces, hidden from others until you invite a collaborator.',
     'Profile customization — avatar, tagline, and accent/cover colours.',
-    'Brainstorm canvas collaboration: public, or private with the people you choose.',
     'A searchable in-app user guide.',
   ], adminNotes: [
     'Create users with a one-time password and assign their classrooms at creation.',
@@ -7544,7 +7227,6 @@ const SUPPORT_CHANGELOG = [
   { version: '3.1.10', date: '2026-06-24', minor: true },
   { version: '3.1.6', date: '2026-06-21', highlights: [
     'Notes rebuilt into a reliable searchable notebook with formatting and autosave.',
-    'Brainstorm canvas: drag notes onto the board, Figma-style fullscreen, and tick-box "Blocked by" task dependencies on the Map.',
   ] },
   { version: '3.1.5', date: '2026-06-21', minor: true },
   { version: '3.1.4', date: '2026-06-20', minor: true },
@@ -7558,7 +7240,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.0.8', date: '2026-06-17', minor: true },
   { version: '3.0.7', date: '2026-06-12', minor: true },
   { version: '3.0.0', date: '2026-06-07', highlights: [
-    'Interactive team activity map, rich-text notes, PDF reports, and direct messaging.',
+    'Interactive team activity map, rich-text notes, and PDF reports.',
   ] },
 ];
 
@@ -7605,13 +7287,12 @@ async function renderSupportPage() {
           <div class="support-actions">
             <button type="button" class="btn btn-primary" data-action="check-updates">${ICONS.refresh} Check for updates</button>
             ${isAdm ? '<a href="#/activity" class="btn btn-ghost">Project activity log</a>' : ''}
-            ${isAdm ? `<button type="button" class="btn btn-ghost btn-danger-text" data-action="clear-general-chat">${ICONS.trash} Clear General chat</button>` : ''}
           </div>
         </section>
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
-          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace — projects, boards, a brainstorm canvas, notes, documents, and lightweight chat in one app.</p>
-          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, D3 · Quill · jsPDF · SortableJS · tldraw, and Electron. Made by Everlasting.</p>
+          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace — projects, boards, notes, and documents in one app.</p>
+          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, D3 · Quill · jsPDF · SortableJS, and Electron. Made by Everlasting.</p>
         </section>
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>Release notes</h3></div>
@@ -7626,8 +7307,8 @@ const GUIDE_SECTIONS = [
     id: 'start', icon: 'sparkles', title: 'Getting started',
     entries: [
       { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password — pick something only you know.' },
-      { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar, Brainstorm canvas, Notifications and Support from the left rail. Your sync status shows live at the bottom.' },
-      { t: 'Light & dark', d: 'Use the theme toggle to switch between light and the Black Edition dark theme. Your choice is remembered on this device.' }
+      { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar, Notifications and Support from the left rail. Your sync status shows live at the bottom.' },
+      { t: 'Light & dark', d: 'Use the theme toggle to switch between the light and dark themes. Your choice is remembered on this device.' }
     ]
   },
   {
@@ -7645,14 +7326,6 @@ const GUIDE_SECTIONS = [
       { t: 'What is a classroom?', d: 'A classroom is a shared workspace grouping related projects. An admin decides which classrooms you can access.' },
       { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else — until you add them as a collaborator.' },
       { t: 'Sharing personal work', d: 'Add someone as an editor on a personal-space project to let just that person in. Remove them to make it private again.' }
-    ]
-  },
-  {
-    id: 'canvas', icon: 'edit', title: 'Brainstorm canvas',
-    entries: [
-      { t: 'Create a canvas', d: 'Brainstorm → New canvas. Give it a name and an optional purpose. Mark it Private if only you should see it.' },
-      { t: 'Owner controls', d: 'As the canvas owner, open Settings to rename it, edit its purpose, switch private/shared, or Lock it to block anyone else from entering.' },
-      { t: 'Turn it into a project', d: 'Use "Make this a project" to hand your sketched ideas to the AI Copilot and spin up a real project with tasks.' }
     ]
   },
   {
@@ -7711,7 +7384,7 @@ async function renderGuidePage() {
         </div>
       </div>
       <div class="guide-search-wrap">
-        <input type="search" id="guide-search" class="guide-search" placeholder="Search the guide… (e.g. password, canvas, classroom)" autocomplete="off">
+        <input type="search" id="guide-search" class="guide-search" placeholder="Search the guide… (e.g. password, tasks, classroom)" autocomplete="off">
       </div>
       <div class="guide-body" id="guide-body">${sectionsHtml}</div>
       <p class="guide-empty text-muted hidden" id="guide-empty">No matches. Try another word.</p>
@@ -8075,10 +7748,6 @@ function initializeTeamActivityD3() {
     nodeSel.append('text').attr('class', 'team-map-name').attr('text-anchor', 'middle').attr('y', d => d._r + 18)
       .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}…` : d.name);
 
-    // Persistent emoji "stickers" teammates leave on each blob (synced, removable).
-    nodeSel.append('g').attr('class', 'team-map-reactions-layer');
-    nodeSel.each(function (d) { renderNodeReactions(d, d3.select(this).select('.team-map-reactions-layer')); });
-
     /* ── Simulation with dept clustering + activity-based centering ── */
     const deptAngle = {}; departments.forEach((d, i) => { deptAngle[d] = (i / departments.length) * Math.PI * 2; });
     const deptAnchor = (d, axis) => {
@@ -8173,10 +7842,9 @@ function initializeTeamActivityD3() {
         <div class="team-pop-row"><span>Current</span> ${d.currentTask ? esc(d.currentTask.title) : 'Available for collaboration'}</div>
         ${collabs.length ? `<div class="team-pop-row"><span>Works with</span> ${collabs.map(c => esc(c.name.split(' ')[0])).join(', ')}</div>` : ''}
         <div class="team-pop-actions">
-          <button data-pop-action="react" title="Leave an emoji sticker on this blob">😊 Sticker</button>
           <button data-pop-action="profile">Profile</button>
           <button data-pop-action="focus">Focus</button>
-          ${Number(d.id) === Number(actorId()) ? '' : '<button data-pop-action="message">Message</button><button data-pop-action="assign">Assign</button>'}
+          ${Number(d.id) === Number(actorId()) ? '' : '<button data-pop-action="assign">Assign</button>'}
         </div>`;
       popoverEl.classList.remove('hidden');
       positionPopoverForNode(d);
@@ -8188,68 +7856,14 @@ function initializeTeamActivityD3() {
       popoverEl.querySelectorAll('[data-pop-action]').forEach(btn => btn.onclick = (e) => {
         e.stopPropagation();
         const act = btn.dataset.popAction;
-        if (act === 'react') {
-          const r = btn.getBoundingClientRect();
-          if (typeof window.TeamEmojiPicker?.open === 'function') window.TeamEmojiPicker.open(r, (emoji) => addBlobReaction(d, emoji));
-          else addBlobReaction(d, '⭐');
-        }
-        else if (act === 'profile') { const id = d.id; clearSelection(); showUserProfileModal(id); }
+        if (act === 'profile') { const id = d.id; clearSelection(); showUserProfileModal(id); }
         else if (act === 'focus') enterFocus(d);
-        else if (act === 'message') { hideModal?.(); document.querySelector(`[data-action="select-chat-channel"][data-channel-id="dm-${d.id}"]`)?.click(); window.location.hash = '#/chat'; }
         else if (act === 'assign') showTaskModal(null, 'todo', d.id);
       });
     }
     popoverEl.addEventListener('click', (e) => e.stopPropagation());
     const onMapResize = () => { if (selectedNodeData) positionPopoverForNode(selectedNodeData); };
     window.addEventListener('resize', onMapResize);
-
-    /* ── Persistent blob emoji stickers (stored on the target's profile) ── */
-    function blobReactionsOf(d) { return Array.isArray(d.user?.blobReactions) ? d.user.blobReactions : []; }
-    function canRemoveReaction(r) { return Number(r.by) === Number(actorId()); }
-    function renderNodeReactions(d, layerSel) {
-      if (!layerSel || layerSel.empty()) return;
-      layerSel.selectAll('*').remove();
-      const rx = blobReactionsOf(d);
-      const n = Math.min(rx.length, 8);
-      if (!n) return;
-      const R = d._r + 15;
-      const spread = Math.min(Math.PI * 1.35, 0.42 * n);
-      rx.slice(0, 8).forEach((r, i) => {
-        const a = -Math.PI / 2 + (n > 1 ? (spread * (i / (n - 1)) - spread / 2) : 0);
-        const gg = layerSel.append('g').attr('class', 'team-map-reaction')
-          .attr('transform', `translate(${Math.cos(a) * R},${Math.sin(a) * R})`).style('cursor', 'pointer');
-        gg.append('circle').attr('class', 'team-map-reaction-bg').attr('r', 10);
-        gg.append('text').attr('text-anchor', 'middle').attr('dy', '0.34em').text(r.emoji);
-        gg.append('title').text(`${r.emoji} · from ${r.byName || 'someone'}${canRemoveReaction(r) ? ' · click to remove' : ''}`);
-        gg.on('click', (event) => { event.stopPropagation(); tryRemoveReaction(d, r); });
-      });
-    }
-    function renderNodeReactionsFor(d) {
-      nodeSel.filter(n => n.id === d.id).each(function (nd) { renderNodeReactions(nd, d3.select(this).select('.team-map-reactions-layer')); });
-    }
-    function persistReactions(d) {
-      try { window.DB?.updateUser?.(Number(d.id), { blobReactions: blobReactionsOf(d) }, Number(actorId())); } catch (_) {}
-    }
-    function addBlobReaction(d, emoji) {
-      emoji = (emoji || '').trim();
-      if (!emoji || !d) return;
-      const me = Number(actorId());
-      const byName = getSession()?.displayName || getSession()?.username || 'Someone';
-      const at = new Date().toISOString();
-      d.user.blobReactions = blobReactionsOf(d).concat([{ emoji, by: me, byName, at }]);
-      persistReactions(d);
-      renderNodeReactionsFor(d);
-      try { net?.send({ type: 'blob-reaction', targetId: d.id, emoji, by: me, byName, at }); } catch (_) {}
-      statusEl.textContent = `Added ${emoji} to ${d.name.split(' ')[0]}`;
-      setTimeout(() => { if (statusEl.textContent.startsWith('Added ')) statusEl.textContent = ''; }, 2000);
-    }
-    function tryRemoveReaction(d, r) {
-      if (!canRemoveReaction(r)) { statusEl.textContent = 'Only whoever added that emoji can remove it'; setTimeout(() => { statusEl.textContent = ''; }, 2200); return; }
-      d.user.blobReactions = blobReactionsOf(d).filter(x => !(x.emoji === r.emoji && String(x.by) === String(r.by) && x.at === r.at));
-      persistReactions(d);
-      renderNodeReactionsFor(d);
-      try { net?.send({ type: 'blob-reaction-remove', targetId: d.id, emoji: r.emoji, by: r.by, at: r.at }); } catch (_) {}
-    }
 
     /* ── Filters ── */
     let filterMode = 'all';
@@ -8404,16 +8018,6 @@ function initializeTeamActivityD3() {
         const d = nodeById.get(Number(msg.fromId));
         if (d) floatBadge(d.x, d.y - d._r, emoji, 'var(--accent)');
         else { statusEl.textContent = `${msg.fromName || 'Someone'} reacted ${emoji}`; setTimeout(() => { statusEl.textContent = ''; }, 2500); }
-      } else if (msg.type === 'blob-reaction') {
-        const d = nodeById.get(Number(msg.targetId));
-        if (d && !blobReactionsOf(d).some(x => String(x.by) === String(msg.by) && x.emoji === msg.emoji && x.at === new Date(msg.at || 0).toISOString())) {
-          d.user.blobReactions = blobReactionsOf(d).concat([{ emoji: msg.emoji, by: msg.by, byName: msg.byName, at: new Date(msg.at || Date.now()).toISOString() }]);
-          renderNodeReactionsFor(d);
-          if (typeof floatBadge === 'function') floatBadge(d.x, d.y - d._r, msg.emoji, 'var(--accent)');
-        }
-      } else if (msg.type === 'blob-reaction-remove') {
-        const d = nodeById.get(Number(msg.targetId));
-        if (d) { d.user.blobReactions = blobReactionsOf(d).filter(x => !(x.emoji === msg.emoji && String(x.by) === String(msg.by))); renderNodeReactionsFor(d); }
       } else if (msg.type === 'exchange') {
         const l = links.find(x => pairKey(x.source.id ?? x.source, x.target.id ?? x.target) === msg.link);
         if (l) exchangeParticle(l);
@@ -8446,7 +8050,6 @@ function initializeTeamActivityD3() {
       if (done) {
         nodeSel.classed('is-pulse', true);
         setTimeout(() => { nodeSel.classed('is-pulse', false); statusEl.textContent = ''; pulseSet = new Set(); }, 2600);
-        try { window.OrbiFun?.celebrate?.({ big: true }); } catch (_) {}
       } else setTimeout(() => { if (statusEl.textContent.startsWith('Team Pulse')) statusEl.textContent = ''; }, 3000);
     }
     function startRelayAnim(from, to) {
@@ -8512,7 +8115,6 @@ function initializeTeamActivityD3() {
         constellationEdges = links.slice().sort((a, b) => (b.weight + b.recency) - (a.weight + a.recency)).slice(0, Math.min(links.length, nodes.length))
           .map(l => ({ k: pairKey(l.source.id ?? l.source, l.target.id ?? l.target), a: l.source.id ?? l.source, b: l.target.id ?? l.target }));
         net?.send({ type: 'constellation', edges: constellationEdges });
-        try { window.OrbiFun?.celebrate?.(); } catch (_) {}
         statusEl.textContent = 'Team Constellation forming…'; setTimeout(() => { statusEl.textContent = ''; }, 2600);
       }
     }));
@@ -8837,20 +8439,20 @@ async function renderAboutPage() {
 
   const releases = [
     { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
-    { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'Canvas owner controls and public/private collaboration', 'PDF previews fixed in the desktop app; themed Copilot, calmer toasts, and Escape/outside-click dismissal'] },
+    { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'PDF previews fixed in the desktop app; themed dialogs, calmer toasts, and Escape/outside-click dismissal'] },
     { version: '3.1.12', date: 'June 2026', features: ['Project detail pages now respect the selected light/dark theme', 'Professional typography scale applied to project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Oversized task text and spacing reduced for a cleaner project workspace'] },
-    { version: '3.1.11', date: 'June 2026', features: ['Document storage authorization health check with user notification when invalid', 'Diagnostics tab for storage auth, sync queue, visible errors, copy report, and send-to-admin', 'Mobile version cache refresh and small-screen diagnostics/canvas polish', 'Brainstorm canvas uses a stable read-only mobile fallback instead of loading the heavy live editor'] },
+    { version: '3.1.11', date: 'June 2026', features: ['Document storage authorization health check with user notification when invalid', 'Diagnostics tab for storage auth, sync queue, visible errors, copy report, and send-to-admin', 'Mobile version cache refresh and small-screen diagnostics polish'] },
     { version: '3.1.10', date: 'June 2026', features: ['Document storage sign-in fixed so users can open Drive-backed files reliably', 'Legacy Supabase documents remain available during Drive migration', 'Theme toggle added to login/recovery screens', 'Dark-mode contrast improved for login, cloud sync, and startup database-check messages', 'Projects sticky header clearance and dark frosted styling polished'] },
-    { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme', 'Brainstorm canvas fullscreen redesigned as a clean top bar that no longer covers the drawing tools'] },
-    { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map', 'Brainstorm canvas mobile mode is now read-only with lighter controls and safer note handling', 'Canvas theme colors now follow the app theme more closely', 'Fullscreen canvas controls no longer cover the drawing palette'] },
-    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed — always loads and is typeable (bold/italic/underline/lists)', 'Brainstorm canvas: fixed self-closing boards + Figma-style fullscreen toggle', 'Brainstorm canvas: drag notes from the panel onto the canvas as stickies', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
+    { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme'] },
+    { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map'] },
+    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed — always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
     { version: '3.1.5', date: 'June 2026', features: ['Notebook-style Notes with titles, search, Quill formatting, autosave, and fallback editor', 'Quick task creation with multiline paste, advanced details on demand, and note/meeting-text task import', 'Momentum task header, focus filters, cleaner task cards, and stronger project brief/focus layout', 'Local vendor bundles for SortableJS, jsPDF, D3, Floating UI, and Quill'] },
-    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt — always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Brainstorm canvas: leave-board fix + live teammate avatars', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: brainstorm, weekly activity, quick notes'] },
+    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt — always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
     { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
     { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app — files now load from Google Drive'] },
     { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) — existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
     { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
-    { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports', 'Production build excludes the local AI Copilot'] },
+    { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
     { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
     { version: '2.2.21', date: 'May 2026', features: ['Fixed self-DM routing bug', 'Enhanced message delivery tracking'] },
@@ -8917,11 +8519,6 @@ async function renderAboutPage() {
             <div class="feature-icon">👥</div>
             <strong>Team Activity Map</strong>
             <p>Interactive D3.js visualization showing team member activity, online status, and engagement levels.</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">💬</div>
-            <strong>Real-time Chat</strong>
-            <p>Team channels and direct messaging with Discord webhook integration for notifications.</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">🔔</div>
@@ -8991,7 +8588,6 @@ function showAboutModal() {
         <div class="about-feature-row"><span class="about-feature-icon">📝</span><div><strong>Task Details</strong><span> — Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>Files</strong><span> — Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Calendar</strong><span> — Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">💬</span><div><strong>Chat</strong><span> — Team channels with Discord webhook integration.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
         <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
       </div>
@@ -9323,7 +8919,6 @@ async function handleFormSubmit(e) {
         const data = { ...baseData, title };
         const newId = await DB.createTask(data);
         createdCount++;
-        window.OrbiTrophies?.award('task-created', { title: data.title });
         await recordProjectActivity({
           userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
           details: data.title,
@@ -9366,7 +8961,6 @@ async function handleFormSubmit(e) {
         };
         const newId = await DB.createTask(data);
         createdCount++;
-        window.OrbiTrophies?.award('task-created', { title: data.title });
         await recordProjectActivity({
           userId: uid, projectId, action: 'created', entityType: 'task', entityId: newId,
           details: data.title,
@@ -9476,42 +9070,6 @@ async function handleFormSubmit(e) {
         const discordMsg = `**${actor?.displayName || 'Someone'}** reassigned **${task.title}** to ${assignee?.discordId ? `<@${assignee.discordId}>` : (assignee?.displayName || 'a teammate')} in *${project.name}*.`;
         await notifyUser({ userId: newAssigneeId, type: 'assignment', message: msg, projectId: project.id, entityType: 'task', entityId: taskId, actorUserId: uid, discordContent: discordMsg });
       }
-    } else if (type === 'webhook-general') {
-      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
-      const url = fd.get('url')?.trim();
-      const channelUrl = fd.get('channelUrl')?.trim() || '';
-      if (url && !/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) { showToast('That doesn\'t look like a Discord webhook URL', 'warning'); return; }
-      if (!url) {
-        const existing = await DB.getGeneralWebhook();
-        if (existing) await DB.deleteWebhook(existing.id);
-        _webhooksCache = null;
-        showToast('General webhook cleared', 'info');
-      } else {
-        await DB.saveGeneralWebhook({ url: trimWebhookUrl(url), channelUrl });
-        _webhooksCache = null;
-        showToast('General webhook saved', 'success');
-      }
-    } else if (type === 'webhook-project') {
-      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
-      const pid = Number(form.dataset.projectId);
-      const url = fd.get('url')?.trim();
-      const channelUrl = fd.get('channelUrl')?.trim() || '';
-      const project = await DB.getProject(pid);
-      if (!project) return;
-      if (url && !/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) { showToast('That doesn\'t look like a Discord webhook URL', 'warning'); return; }
-      if (!url) {
-        const existing = await DB.getProjectWebhook(pid);
-        if (existing) await DB.deleteWebhook(existing.id);
-        _webhooksCache = null;
-        showToast('Project webhook cleared', 'info');
-      } else {
-        await DB.saveProjectWebhook(pid, { url: trimWebhookUrl(url), channelUrl, name: project.name });
-        _webhooksCache = null;
-        showToast(`Webhook saved for ${project.name}`, 'success');
-      }
-    } else if (type === 'chat-send') {
-      await window.WTChat?.handleSend?.(form, fd, uid);
-      return;
     } else if (type === 'milestone') {
       const data = { projectId: Number(form.dataset.projectId), title: fd.get('title')?.trim(), dueDate: fd.get('dueDate') || '', weight: Number(fd.get('weight')) || 1, actorUserId: uid };
       if (!data.title) return;
@@ -9556,15 +9114,6 @@ async function handleFormSubmit(e) {
       await router(); // refresh the admin user list behind the modal
       showCredentialModal(username, password, { title: 'User created — share these' });
       return;
-    } else if (type === 'canvas-room-settings') {
-      const roomId = form.dataset.roomId;
-      await window.WTCanvas?.saveRoomSettings?.(roomId, {
-        name: fd.get('name')?.toString().trim(),
-        purpose: fd.get('purpose')?.toString().trim() || '',
-        isPrivate: !!fd.get('isPrivate'),
-        participantIds: fd.getAll('participantIds').map(Number).filter(Boolean)
-      });
-      return;
     } else if (type === 'add-calendar-event') {
       const dayKey = form.dataset.day;
       const title = fd.get('title')?.trim();
@@ -9591,7 +9140,6 @@ async function handleFormSubmit(e) {
       const displayName = fd.get('displayName')?.trim();
       const email = fd.get('email')?.trim() || '';
       const department = fd.get('department') || '';
-      const discordId = (fd.get('discordId') || '').toString().trim();
       const color = (fd.get('color') || '').toString().trim();
       const birthDate = fd.get('birthDate') || '';
       const gender = fd.get('gender') || '';
@@ -9602,10 +9150,9 @@ async function handleFormSubmit(e) {
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
       if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2–32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
-      if (discordId && !/^\d{6,30}$/.test(discordId)) { showToast('Discord ID must be a numeric snowflake (e.g. 123456789012345678)', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
-      const changes = { username, displayName, email, department, discordId, color, birthDate, gender, phone, address, hoursLoggedTotal };
+      const changes = { username, displayName, email, department, color, birthDate, gender, phone, address, hoursLoggedTotal };
       if (!isSelf && role) changes.role = role;
       try {
         await DB.updateUser(targetId, changes, s.userId);
@@ -9761,7 +9308,6 @@ const actions = {
   'open-command-palette': async () => { await showCommandPalette(); },
   'command-create-project': async () => { hideModal(); await showProjectModal(); },
   'command-create-task': async () => { hideModal(); await showTaskModal(state.currentProjectId || null); },
-  'command-ai-generate': () => { hideModal(); window.WTCopilot?.open?.(); },
   'command-route': (b) => {
     hideModal();
     const route = b.dataset.route || '/projects';
@@ -9850,12 +9396,6 @@ const actions = {
   'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo', b.dataset.assigneeId != null ? Number(b.dataset.assigneeId) : null),
   'import-tasks': (b) => showTaskImportModal('', { projectId: Number(b.dataset.projectId) || state.currentProjectId || null }),
-  'copilot-from-import-text': () => {
-    const text = document.getElementById('task-import-text')?.value || '';
-    hideModal();
-    if (text.trim()) window.WTCopilot?.proposeFromText?.(text);
-    else window.WTCopilot?.open?.();
-  },
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
   'edit-project': (b) => showProjectModal(resolveProjectIdFromAction(b)),
@@ -9916,11 +9456,6 @@ const actions = {
     // Celebrate only the big moment: this task was the last one to finish.
     if (nextStatus === 'done') {
       window.OrbiObs?.track('task_completed');
-      window.OrbiTrophies?.award('task-done', { taskId: t.id });
-      if (projectTasks.length > 1 && projectTasks.filter(x => x.id !== t.id && x.status !== 'done').length === 0) {
-        window.OrbiFun?.celebrate({ big: true });
-        window.OrbiTrophies?.award('project-done', { projectId: p?.id });
-      }
     }
     await router();
   },
@@ -9964,7 +9499,6 @@ const actions = {
       discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} completed milestone "${ms.title}" in "${p.name}".`
     });
     showToast('Milestone completed', 'success');
-    window.OrbiFun?.celebrate({ big: true });
     bustWorkspaceCache(); await router();
   },
   'delete-update': async (b) => {
@@ -9993,7 +9527,6 @@ const actions = {
     if (!project) return;
     if (state.projectPanelOpen) await renderDocumentPanel(projectId, canEdit(project));
     else closeDocumentPanelAnimated();
-    try { await window.WTChat?.renderDock?.(); } catch (_) {}
   },
   'project-panel-tab': async (b) => {
     state.projectPanelTab = b.dataset.tab || 'overview';
@@ -10343,21 +9876,6 @@ const actions = {
     state.collapsedTaskGroups[pid] = collapsed;
   },
   'show-about': () => { closeUserMenu(); window.location.hash = '#/support'; },
-  'clear-general-chat': async () => {
-    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
-    if (!await showConfirmDialog({
-      title: 'Clear General chat?',
-      message: 'This permanently deletes every message in the General channel for everyone. This cannot be undone.',
-      confirmLabel: 'Clear chat',
-      tone: 'danger'
-    })) return;
-    try {
-      await window.SupabaseDB?.clearGeneralChat?.();
-      await DB.clearGeneralChat?.();
-      window.WTChat?.renderDock?.();
-      showToast('General chat cleared', 'success');
-    } catch (e) { showToast(`Could not clear chat: ${e?.message || e}`, 'error'); }
-  },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
     const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
@@ -10742,16 +10260,7 @@ const actions = {
     if (window.location.hash !== href) window.location.hash = href;
     else await applyRoute();
   },
-  'select-chat-channel': async (b) => {
-    hideModal();
-    window.WTChat?.openDock?.(b.dataset.channelId);
-  },
   'dismiss-celebration': () => { dismissCelebration(); },
-  'toggle-chat-dock': () => { window.WTChat?.toggleDock?.(); },
-  'close-chat-dock': () => { window.WTChat?.closeDock?.(); },
-  'chat-dock-back': () => { window.WTChat?.backToList?.(); },
-  'open-chat-channel': (b) => { window.WTChat?.openChannel?.(b.dataset.channelId); },
-  'toggle-chat-favorite': async (b) => { await window.WTChat?.toggleFavorite?.(b); },
   'export-report-pdf': async () => {
     // Comprehensive, all-inclusive project report (admin-only). Falls back to the
     // legacy monthly summary PDF if the module isn't available.
@@ -10760,35 +10269,6 @@ const actions = {
   },
   'generate-ai-report': async () => { await generateAIReport(); },
   'configure-chat': () => { closeNotifPanel(); window.location.hash = '#/admin'; },
-  'test-webhook': async (b) => {
-    const scope = b.dataset.scope;
-    const pid = b.dataset.projectId ? Number(b.dataset.projectId) : null;
-    let hook = null;
-    if (scope === 'general') hook = await DB.getGeneralWebhook();
-    else if (scope === 'project' && pid) hook = await DB.getProjectWebhook(pid);
-    if (!hook?.url) { showToast('No webhook to test', 'warning'); return; }
-    const session = getSession();
-    const who = session?.displayName || session?.username || 'Orbitrack';
-    const result = await postToDiscordWebhook(hook.url, {
-      content: `Test ping from ${who} — Orbitrack is connected.`
-    });
-    showToast(result.ok ? 'Test message sent' : discordFailToast(result), result.ok ? 'success' : 'error');
-  },
-  'delete-webhook': async (b) => {
-    if (!isAdmin()) return;
-    if (!await showConfirmDialog({
-      title: 'Remove webhook?',
-      message: 'Remove this Discord webhook?',
-      confirmLabel: 'Remove webhook',
-      tone: 'danger'
-    })) return;
-    await DB.deleteWebhook(Number(b.dataset.id));
-    _webhooksCache = null;
-    _webhooksCacheAt = 0;
-    showToast('Webhook removed', 'info');
-    bustWorkspaceCache();
-    await router();
-  }
 };
 
 window.WTTasks = {
@@ -11257,9 +10737,6 @@ async function router() {
   const hash = window.location.hash.slice(1) || '/projects';
   if (hash === '/recovery') return;
   // A background sync pull or a teammate's realtime change re-invokes router().
-  // If a brainstorm canvas room is currently open, re-rendering would tear it
-  // down and kick the user back to the room list — so preserve it.
-  if (hash === '/canvas' && window.WTCanvas?.isRoomOpen?.()) { updateNav(hash); return; }
   installMainScrollManager();
   const previousRoute = state._activeRoute;
   if (previousRoute) saveRouteScroll(previousRoute);
@@ -11299,8 +10776,6 @@ async function router() {
   }
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/users') await renderUsers();
-  else if (hash === '/chat') await window.WTChat?.renderRoute?.();
-  else if (hash === '/canvas') await window.WTCanvas?.renderRoute?.();
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/diagnostics') await renderDiagnosticsPage();
   else if (hash === '/activity') await renderActivityPage();
@@ -11490,8 +10965,6 @@ function setupRealtimeHandlers() {
   window._wtRealtimeHandlersBound = true;
 
   window.addEventListener('wt-realtime-status', () => {
-    window.WTChat?.startUnreadPolling?.();
-    if (state.chatDockOpen) window.WTChat?.startDockPolling?.();
     renderSyncStatusIndicator();
   });
 
@@ -11514,9 +10987,6 @@ function setupRealtimeHandlers() {
     refreshActivityViews().catch(() => {});
   });
 
-  window.addEventListener('wt-realtime-chat', (e) => {
-    window.WTChat?.handleRealtimeEvent?.(e);
-  });
   window.addEventListener('wt-realtime-access-request', (e) => {
     const row = e.detail?.row;
     if (!row || e.detail?.eventType !== 'INSERT') return;
@@ -11557,13 +11027,6 @@ function setupRealtimeHandlers() {
     }
   });
 
-  // When SupabaseDB resolves a stale local user ID to a canonical Supabase ID,
-  // update any open DM channel that still references the stale ID so the next
-  // send uses the correct channel and doesn't hit "User X not found".
-  window.addEventListener('wt-user-id-resolved', (e) => {
-    const { staleId, canonicalId } = e.detail || {};
-    window.WTChat?.handleUserIdResolved?.(staleId, canonicalId);
-  });
   window.addEventListener('wt-realtime-user', () => {
     bustWorkspaceCache();
     if (wtAppBootstrapped) router().catch(() => {});
@@ -11589,9 +11052,7 @@ function onSyncPulled() {
   if (!wtAppBootstrapped) return;
   bustWorkspaceCache();
   refreshNotificationBadge().catch(() => {});
-  window.WTChat?.refreshUnreadState?.().catch(() => {});
   refreshActivityViews().catch(() => {});
-  if (state.chatDockOpen && state.chatDockView === 'convo') window.WTChat?.refreshPane?.().catch(() => {});
   router().catch(() => {});
 }
 
@@ -11661,15 +11122,10 @@ async function init() {
         else showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
         return;
       }
-      // Alt+N → Notes, Alt+B → Brainstorm canvas (avoid the taken Ctrl combos).
+      // Alt+N → Notes (avoid the taken Ctrl combos).
       if (e.altKey && !e.ctrlKey && !e.metaKey && !typingTarget && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         window.WTNotes?.toggle?.();
-        return;
-      }
-      if (e.altKey && !e.ctrlKey && !e.metaKey && !typingTarget && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        window.location.hash = '#/canvas';
         return;
       }
       if (!typingTarget && e.key === '/' && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
@@ -11687,39 +11143,23 @@ async function init() {
         actions['open-project-card'](card);
         return;
       }
-      const ta = e.target.closest('form[data-form="chat-send"] textarea, .chat-compose textarea');
-      if (ta && e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const form = ta.closest('form');
-        if (form) form.requestSubmit();
-      }
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
     window.WTNotes?.bindEvents?.();
     document.getElementById('project-panel-backdrop')?.addEventListener('click', hideDocumentPanel);
     document.getElementById('ranking-panel-backdrop')?.addEventListener('click', hideRankingPanel);
-    document.getElementById('chat-dock-root')?.addEventListener('submit', handleFormSubmit);
-    document.getElementById('content').addEventListener('input', async (e) => {
+    document.getElementById('content').addEventListener('input', (e) => {
       const target = e.target;
+      // Search inputs live inside a view that is fully re-rendered (content.innerHTML).
+      // Re-rendering on every keystroke destroyed & recreated the <input> mid-typing,
+      // which under fast input reordered/dropped characters ("project" -> "ectojepr")
+      // and made typing laggy. Debounce so we re-render only after the user pauses,
+      // reading the live input value at fire time and restoring the caret once.
       if (target?.dataset?.projectFilterInput === 'search') {
-        const caret = target.selectionStart ?? String(target.value || '').length;
-        state.projectSearch = target.value || '';
-        await renderProjects();
-        const next = document.getElementById('project-search');
-        if (next) {
-          next.focus();
-          try { next.setSelectionRange(caret, caret); } catch (_) {}
-        }
+        _debounceSearchRender('project', 'project-search', (v) => { state.projectSearch = v; }, renderProjects);
       } else if (target?.dataset?.taskFilterInput === 'search') {
-        const caret = target.selectionStart ?? String(target.value || '').length;
-        state.globalTaskSearch = target.value || '';
-        await renderTasks();
-        const next = document.getElementById('global-task-search');
-        if (next) {
-          next.focus();
-          try { next.setSelectionRange(caret, caret); } catch (_) {}
-        }
+        _debounceSearchRender('task', 'global-task-search', (v) => { state.globalTaskSearch = v; }, renderTasks);
       }
     });
     document.getElementById('content').addEventListener('change', async (e) => {
@@ -11758,7 +11198,6 @@ async function init() {
         else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
         else if (state.rankingPanelOpen) hideRankingPanel();
         else if (state.projectPanelOpen) hideDocumentPanel();
-        else if (state.chatDockOpen) window.WTChat?.closeDock?.();
         else requestModalClose();
       } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
         && !document.getElementById('file-preview-overlay')?.classList.contains('hidden')) {
@@ -11783,12 +11222,6 @@ async function init() {
     document.getElementById('file-preview-overlay')?.addEventListener('click', (e) => {
       if (e.target.id === 'file-preview-overlay') closeFilePreview();
     });
-    // Click anywhere outside the open chat dock closes it.
-    document.addEventListener('pointerdown', (e) => {
-      if (!state.chatDockOpen) return;
-      const root = document.getElementById('chat-dock-root');
-      if (root && !root.contains(e.target)) window.WTChat?.closeDock?.();
-    }, true);
     document.getElementById('library-file-input').addEventListener('change', async (e) => {
       const inp = e.target;
       const pid = Number(inp.dataset.projectId);

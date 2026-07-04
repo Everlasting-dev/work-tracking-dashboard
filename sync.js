@@ -445,6 +445,31 @@ const SyncEngine = (() => {
     await table.bulkPut(valid).catch(() => {});
   }
 
+  // Merge roster rows (fetched WITHOUT avatar_base64 to save egress) into local
+  // users, preserving each user's cached avatar unless a fresh blob was fetched
+  // this cycle (avatarMap holds only the avatars that actually changed).
+  async function _bulkPutUsers(table, rosterRows, avatarMap) {
+    if (!table || !Array.isArray(rosterRows) || !rosterRows.length) return;
+    const valid = rosterRows.filter(r => r?.id != null);
+    if (!valid.length) return;
+    const existingById = {};
+    try {
+      const existing = await table.bulkGet(valid.map(r => r.id));
+      (existing || []).forEach(u => { if (u) existingById[u.id] = u; });
+    } catch (_) {}
+    const merged = valid.map(r => {
+      const prev = existingById[r.id];
+      let avatarBase64;
+      if (avatarMap && Object.prototype.hasOwnProperty.call(avatarMap, r.id)) {
+        avatarBase64 = avatarMap[r.id] || '';
+      } else {
+        avatarBase64 = prev ? (prev.avatarBase64 || '') : '';
+      }
+      return { ...r, avatarBase64 };
+    });
+    await table.bulkPut(merged).catch(() => {});
+  }
+
   // Cloud is source of truth for membership rows. bulkPut alone leaves revoked
   // assignments in IndexedDB (e.g. user still sees old classrooms after admin restricts access).
   async function _replaceCollection(table, rows) {
@@ -580,9 +605,9 @@ const SyncEngine = (() => {
         users, projects, tasks, departments, classrooms,
         milestones, updates, notifications, accessRequests, bugReports, userClassrooms,
         attachments, workflowTemplates, favorites, personalNotes,
-        directMessages, chatActivity, discordMessages, calendarEvents
+        chatActivity, calendarEvents
       ] = await Promise.allSettled([
-        sb.getUsers(),
+        sb.getUsersLite ? sb.getUsersLite() : sb.getUsers(),
         sb.getProjects(),
         sb.getTasks(),
         sb.getDepartments(),
@@ -632,41 +657,10 @@ const SyncEngine = (() => {
           return sb.getPersonalNotes(session.userId);
         })(),
         (async () => {
-          if (!myId) return [];
-          const { data, error } = await sb._sb().from('wt_direct_messages').select('*')
-            .or(`from_user_id.eq.${myId},to_user_id.eq.${myId}`)
-            .order('created_at', { ascending: false }).limit(300);
-          if (error) throw error;
-          return (data || []).map(r => ({
-            id: r.id,
-            fromUserId: r.from_user_id,
-            toUserId: r.to_user_id,
-            content: r.content || '',
-            createdAt: r.created_at,
-            updatedAt: r.updated_at || r.created_at
-          }));
-        })(),
-        (async () => {
           const { data, error } = await sb._sb().from('wt_activity_log').select('*')
             .order('created_at', { ascending: false }).limit(1000);
           if (error) throw error;
           return (data || []).map(r => sb._mapActivity(r));
-        })(),
-        (async () => {
-          const { data, error } = await sb._sb().from('wt_discord_messages').select('*')
-            .order('created_at', { ascending: false }).limit(300);
-          if (error) throw error;
-          return (data || []).map(r => ({
-            id: r.id,
-            channelId: r.channel_id,
-            discordMessageId: r.discord_message_id,
-            discordAuthorId: r.author_id,
-            discordAuthorName: r.author_username,
-            discordDisplayName: r.author_display_name || r.author_username,
-            discordAvatar: r.author_avatar || '',
-            content: r.content || '',
-            createdAt: r.created_at
-          }));
         })(),
         (async () => {
           const now = new Date();
@@ -697,7 +691,27 @@ const SyncEngine = (() => {
       if (!ldb) return;
 
       if (users.status         === 'fulfilled') {
-        await _bulkPut(ldb.users, users.value);
+        // Fetch avatar blobs ONLY for users whose avatar changed since we last
+        // cached it (compared via avatar_updated_at). Steady state = 0 avatar
+        // egress; previously ~250 KB/user was re-shipped on every pull.
+        let avatarMap = null;
+        if (Array.isArray(users.value) && sb.getUserAvatarsByIds) {
+          try {
+            const localUsers = await ldb.users.toArray();
+            const localById = {};
+            localUsers.forEach(u => { if (u) localById[u.id] = u; });
+            const needAvatar = users.value.filter(r => {
+              const stamp = r.avatarUpdatedAt || null;
+              if (!stamp) return false;                  // never had an avatar
+              const prev = localById[r.id];
+              if (!prev) return true;                    // first time this client sees them
+              if (!prev.avatarBase64) return true;       // stamp set but no cached blob
+              return prev.avatarUpdatedAt !== stamp;      // avatar changed (or was cleared)
+            }).map(r => r.id);
+            if (needAvatar.length) avatarMap = await sb.getUserAvatarsByIds(needAvatar);
+          } catch (_) { avatarMap = null; }
+        }
+        await _bulkPutUsers(ldb.users, users.value, avatarMap);
         await _reconcileUsers(ldb, users.value);
       }
       if (projects.status      === 'fulfilled') await _bulkPut(ldb.projects,              _normalizeProjects(projects.value));
@@ -717,9 +731,7 @@ const SyncEngine = (() => {
       if (workflowTemplates.status === 'fulfilled' && ldb.workflowTemplates) await _bulkPut(ldb.workflowTemplates, _normalizeTemplates(workflowTemplates.value));
       if (favorites.status     === 'fulfilled' && ldb.userFavorites) await _bulkPut(ldb.userFavorites, favorites.value);
       if (personalNotes.status === 'fulfilled' && ldb.personalNotes) await _bulkPutPersonalNotes(ldb.personalNotes, personalNotes.value);
-      if (directMessages.status === 'fulfilled' && ldb.directMessages) await _bulkPut(ldb.directMessages, directMessages.value);
       if (chatActivity.status === 'fulfilled' && ldb.activityLog) await _bulkPut(ldb.activityLog, chatActivity.value);
-      if (discordMessages.status === 'fulfilled' && ldb.discordMessages) await _bulkPut(ldb.discordMessages, discordMessages.value);
       if (calendarEvents.status === 'fulfilled' && ldb.calendarEvents) await _bulkPut(ldb.calendarEvents, calendarEvents.value);
 
       const criticalFailures = [
@@ -858,14 +870,18 @@ const SyncEngine = (() => {
   function _startBackgroundPull() {
     clearInterval(_pullTimer);
     clearInterval(_safetyTimer);
+    // A backgrounded/hidden tab has no reason to keep polling — skip pulls while
+    // hidden and instead pull once when the tab becomes visible again. This cuts
+    // egress from idle background tabs that used to poll around the clock.
+    const _hidden = () => (typeof document !== 'undefined' && document.visibilityState === 'hidden');
     _pullTimer = setInterval(() => {
-      if (!_client || !navigator.onLine || _pullRunning) return;
+      if (!_client || !navigator.onLine || _pullRunning || _hidden()) return;
       const rtConnected = window.RealtimeSync?.isConnected?.();
       if (rtConnected) return;
       pull().catch(() => {});
     }, 60000);
     _safetyTimer = setInterval(() => {
-      if (!_client || !navigator.onLine || _pullRunning) return;
+      if (!_client || !navigator.onLine || _pullRunning || _hidden()) return;
       pull().catch(() => {});
     }, 300000);
   }
@@ -946,6 +962,15 @@ const SyncEngine = (() => {
 
     window.addEventListener('online',  _onOnline);
     window.addEventListener('offline', _onOffline);
+    // Pull once when the tab returns to the foreground (background tabs skip the
+    // periodic pull, so refresh on re-focus to stay current without polling).
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (!_client || !navigator.onLine || _pullRunning) return;
+        pull().catch(() => {});
+      });
+    }
 
     // Initial pull + flush. Callers may choose to await init() before deciding
     // that a cloud-backed local cache is truly empty.

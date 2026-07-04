@@ -82,7 +82,6 @@ function renderShell({ signedIn = true, notes = [], filtered = [], activeNote = 
   const panel = document.getElementById('notes-panel');
   if (!panel) return;
   const hasNotes = notes.length > 0;
-  const canvasOpen = !!window.WTCanvas?.isRoomOpen?.();
   const emptyMessage = signedIn
     ? (query ? 'No notes match your search.' : 'Create a note to start collecting ideas, tasks, and tiny sparks.')
     : 'Sign in to use notes.';
@@ -120,7 +119,6 @@ function renderShell({ signedIn = true, notes = [], filtered = [], activeNote = 
             <input class="notes-title-input" data-notes-title value="${esc(activeNote.title || '')}" placeholder="${esc(deriveNoteTitle(activeNote))}" maxlength="140" autocomplete="off">
             <div class="notes-editor-actions">
               <span class="notes-save-status" id="notes-save-status">Saved</span>
-              ${canvasOpen ? `<button type="button" class="btn btn-sm btn-ghost" data-notes-action="send-canvas" data-note-id="${activeNote.id}">Add to canvas</button>` : ''}
               <button type="button" class="btn btn-sm btn-ghost" data-notes-action="import-tasks" data-note-id="${activeNote.id}">Import tasks</button>
               <button type="button" class="btn-icon notes-delete-btn" data-notes-action="delete" data-note-id="${activeNote.id}" title="Delete note" aria-label="Delete note">×</button>
             </div>
@@ -271,9 +269,7 @@ function openNotesPanel(focusNoteId = null) {
   panel.classList.remove('hidden');
   backdrop?.classList.remove('hidden');
   renderNotesPanel(focusNoteId);
-  window.dispatchEvent(new CustomEvent('wt-notes-panel-toggle', { detail: { open: true } }));
-  window.WTChat?.renderDock?.().catch(() => {});
-}
+  window.dispatchEvent(new CustomEvent('wt-notes-panel-toggle', { detail: { open: true } }));}
 
 function closeNotesPanel() {
   _notesPanelOpen = false;
@@ -281,9 +277,7 @@ function closeNotesPanel() {
   document.body.classList.remove('notes-panel-open');
   document.getElementById('notes-panel')?.classList.add('hidden');
   document.getElementById('notes-backdrop')?.classList.add('hidden');
-  window.dispatchEvent(new CustomEvent('wt-notes-panel-toggle', { detail: { open: false } }));
-  window.WTChat?.renderDock?.().catch(() => {});
-}
+  window.dispatchEvent(new CustomEvent('wt-notes-panel-toggle', { detail: { open: false } }));}
 
 function scheduleNoteSave(id, patchOrContent) {
   const noteId = Number(id);
@@ -356,8 +350,6 @@ async function importActiveNoteTasks(noteId) {
   }
   if (window.WTTasks?.importFromText) {
     window.WTTasks.importFromText(text, { source: 'note', noteId: id, title: deriveNoteTitle(note) });
-  } else if (window.WTCopilot?.proposeFromText) {
-    window.WTCopilot.proposeFromText(text);
   } else {
     showToast?.('Task import is not available yet', 'warning');
   }
@@ -381,20 +373,6 @@ async function notePayload(noteId) {
     text: text.slice(0, 2000),
     updatedAt: note.updatedAt || note.createdAt || ''
   };
-}
-
-async function sendActiveNoteToCanvas(noteId) {
-  const payload = await notePayload(noteId);
-  if (!payload || !(payload.text || payload.title || '').trim()) {
-    showToast?.('This note has no text to add yet', 'warning');
-    return;
-  }
-  if (!window.WTCanvas?.addNoteFromPayload?.(payload)) {
-    showToast?.('Open a canvas first, then add this note', 'warning');
-    return;
-  }
-  showToast?.('Note added to canvas', 'success');
-  if (window.matchMedia?.('(max-width: 760px)').matches) closeNotesPanel();
 }
 
 function bindEvents() {
@@ -434,8 +412,6 @@ function bindEvents() {
       await deleteNote(actionEl.dataset.noteId);
     } else if (action === 'import-tasks') {
       await importActiveNoteTasks(actionEl.dataset.noteId);
-    } else if (action === 'send-canvas') {
-      await sendActiveNoteToCanvas(actionEl.dataset.noteId);
     }
   });
   document.addEventListener('input', (e) => {

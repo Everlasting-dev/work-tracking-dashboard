@@ -525,7 +525,7 @@ const SupabaseDB = {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
       department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
-      bio: r.bio || '', avatarBase64: r.avatar_base64 || '',
+      bio: r.bio || '', avatarBase64: r.avatar_base64 || '', avatarUpdatedAt: r.avatar_updated_at || null,
       birthDate: r.birth_date || '', gender: r.gender || '', phone: r.phone || '',
       address: r.address || '', hoursLoggedTotal: Number(r.hours_logged_total || 0),
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null,
@@ -1454,6 +1454,36 @@ const SupabaseDB = {
     return users;
   },
 
+  // Roster columns WITHOUT avatar_base64. avatar_base64 averages ~250 KB per
+  // user and was the dominant sync-pull egress cost (re-shipped on every pull).
+  // The lite roster is cheap; avatars are fetched separately only when their
+  // avatar_updated_at marker changes (see getUserAvatarsByIds + the sync pull).
+  _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map',
+
+  async getUsersLite() {
+    if (this._isOffline()) return this.getUsers();
+    const { data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS).order('id');
+    if (error) throw error;
+    return (data || []).map(r => {
+      const u = this._mapUser(r);
+      // No avatar in this payload — signal the caller to preserve the cached one.
+      delete u.avatarBase64;
+      return u;
+    });
+  },
+
+  // Fetch avatar blobs for just the given user ids (only those whose avatar
+  // actually changed since the client last cached it). Returns { id: base64 }.
+  async getUserAvatarsByIds(ids) {
+    const list = Array.from(new Set((ids || []).map(Number).filter(Boolean)));
+    if (!list.length || this._isOffline()) return {};
+    const { data, error } = await this._sb().from('wt_users').select('id,avatar_base64').in('id', list);
+    if (error) throw error;
+    const map = {};
+    (data || []).forEach(r => { map[r.id] = r.avatar_base64 || ''; });
+    return map;
+  },
+
   async updateUser(id, changes, actorUserId = null) {
     const patch = {};
     if (changes.displayName != null) patch.display_name = changes.displayName;
@@ -1463,7 +1493,12 @@ const SupabaseDB = {
     if (changes.discordId != null) patch.discord_id = changes.discordId;
     if (changes.color != null) patch.color = changes.color;
     if (changes.bio != null) patch.bio = changes.bio || '';
-    if (changes.avatarBase64 != null) patch.avatar_base64 = changes.avatarBase64 || '';
+    if (changes.avatarBase64 != null) {
+      patch.avatar_base64 = changes.avatarBase64 || '';
+      // Bump the change marker so other clients only re-download avatars that
+      // actually changed (keeps the sync pull from re-shipping avatar blobs).
+      patch.avatar_updated_at = new Date().toISOString();
+    }
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
     if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
     if (changes.birthDate != null) patch.birth_date = changes.birthDate || null;
@@ -1490,6 +1525,7 @@ const SupabaseDB = {
       delete patch.color;
       delete patch.bio;
       delete patch.avatar_base64;
+      delete patch.avatar_updated_at;
       delete patch.tagline;
       delete patch.accent_color;
       delete patch.cover_color;

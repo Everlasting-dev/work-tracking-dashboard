@@ -19,11 +19,6 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
   }
 });
 
-contextBridge.exposeInMainWorld('orbitrackAI', {
-  status: () => ipcRenderer.invoke('ai:status'),
-  chat: (payload) => ipcRenderer.invoke('ai:chat', payload)
-});
-
 // Inject app version into window for the app to read
 ipcRenderer.invoke('app:get-version').then(version => {
   window.WT_APP_VERSION = version;
