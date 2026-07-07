@@ -7,7 +7,7 @@ window.WT_CONFIG = window.WT_CONFIG || {
   // Keep production on v2 until the staging v3 build passes validation.
   // For a staging v3 test build, set this to 'v3' and point the URL/key at staging.
   supabaseSchemaVersion: 'v2',
-  supabaseUrl: 'https://ewexbdilrhmlpbalmpfj.supabase.co',
-  supabaseAnonKey: 'sb_publishable_QvcfeV3hQjFaIigiP-nYpg_D_oPU1wW',
+  supabaseUrl: 'https://ubheoxzwzfhzccotulmt.supabase.co',
+  supabaseAnonKey: 'sb_publishable_JtyUKd1nBgO7LLAJ45aiuw_Sd2EUOgd',
   storageProvider: 'google_drive',
 };

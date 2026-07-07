@@ -8,13 +8,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3.4.3">
+  <link rel="stylesheet" href="styles.css?v=3.4.4">
   <!-- React Flow (xyflow) island styles for the project task map -->
-  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.4.3">
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.4.4">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
-  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.4.3">
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.4.4">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -34,7 +34,7 @@
       <p class="splash-edition">Orbitrack Lite</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status" id="splash-status">Loading local database…</p>
-      <p class="splash-version" id="splash-app-version">v3.4.3</p>
+      <p class="splash-version" id="splash-app-version">v3.4.4</p>
     </div>
   </div>
 
@@ -218,43 +218,43 @@
   <input type="file" id="import-input" accept=".json" hidden>
   <input type="file" id="library-file-input" hidden multiple accept="image/*,.pdf,.doc,.docx,.txt,application/pdf">
 
-  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.4.3';</script>
-  <script src="config.js?v=3.4.3"></script>
+  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.4.4';</script>
+  <script src="config.js?v=3.4.4"></script>
   <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
-  <script src="vendor/orbiobs/orbiobs.js?v=3.4.3"></script>
+  <script src="vendor/orbiobs/orbiobs.js?v=3.4.4"></script>
   <script>
     window.OrbiObs && window.OrbiObs.init();
     window.addEventListener('error', (e) => window.OrbiObs && window.OrbiObs.captureError(e.error || e.message));
     window.addEventListener('unhandledrejection', (e) => window.OrbiObs && window.OrbiObs.captureError(e.reason));
   </script>
-  <script src="vendor/dexie.min.js?v=3.4.3"></script>
-  <script src="vendor/supabase.min.js?v=3.4.3"></script>
-  <script src="db.js?v=3.4.3"></script>
-  <script src="db-supabase.js?v=3.4.3"></script>
-  <script src="sync.js?v=3.4.3"></script>
-  <script src="sync-v3.js?v=3.4.3"></script>
-  <script src="realtime-sync.js?v=3.4.3"></script>
-  <script src="notification-sounds.js?v=3.4.3"></script>
-  <script src="db-bridge.js?v=3.4.3"></script>
-  <script src="splash-sphere.js?v=3.4.3"></script>
-  <script src="vendor/orbiemoji/orbiemoji.js?v=3.4.3"></script>
+  <script src="vendor/dexie.min.js?v=3.4.4"></script>
+  <script src="vendor/supabase.min.js?v=3.4.4"></script>
+  <script src="db.js?v=3.4.4"></script>
+  <script src="db-supabase.js?v=3.4.4"></script>
+  <script src="sync.js?v=3.4.4"></script>
+  <script src="sync-v3.js?v=3.4.4"></script>
+  <script src="realtime-sync.js?v=3.4.4"></script>
+  <script src="notification-sounds.js?v=3.4.4"></script>
+  <script src="db-bridge.js?v=3.4.4"></script>
+  <script src="splash-sphere.js?v=3.4.4"></script>
+  <script src="vendor/orbiemoji/orbiemoji.js?v=3.4.4"></script>
   <!-- Admin-only comprehensive project report generator (window.OrbiProjectReport) — used by the Reports tab. -->
-  <script src="reports-projects.js?v=3.4.3"></script>
-  <script src="app.js?v=3.4.3"></script>
+  <script src="reports-projects.js?v=3.4.4"></script>
+  <script src="app.js?v=3.4.4"></script>
   <!-- LOCAL EXPERIMENT: TipTap notes editor island (must load before notes.js mounts an editor). Roll back by removing this tag + vendor/orbitiptap + build-src/orbitiptap.js + the OrbiTipTap branch in notes.js. -->
-  <script src="vendor/orbitiptap/orbitiptap.js?v=3.4.3"></script>
-  <script src="notes.js?v=3.4.3"></script>
-  <script src="reports.js?v=3.4.3"></script>
+  <script src="vendor/orbitiptap/orbitiptap.js?v=3.4.4"></script>
+  <script src="notes.js?v=3.4.4"></script>
+  <script src="reports.js?v=3.4.4"></script>
   <!-- Hybrid Google Drive storage client (inert unless WT_CONFIG.storageProvider==='google_drive') -->
-  <script src="storage-drive.js?v=3.4.3"></script>
+  <script src="storage-drive.js?v=3.4.4"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
-  <script src="ui.js?v=3.4.3"></script>
-  <script src="bootstrap.js?v=3.4.3"></script>
-  <script src="desktop/updates.js?v=3.4.3"></script>
+  <script src="ui.js?v=3.4.4"></script>
+  <script src="bootstrap.js?v=3.4.4"></script>
+  <script src="desktop/updates.js?v=3.4.4"></script>
   <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
-  <script src="vendor/orbiflow/orbiflow.js?v=3.4.3"></script>
+  <script src="vendor/orbiflow/orbiflow.js?v=3.4.4"></script>
   <!-- Quill notes editor island -->
-  <script src="vendor/orbinotes/orbinotes.js?v=3.4.3"></script>
+  <script src="vendor/orbinotes/orbinotes.js?v=3.4.4"></script>
 </body>
 </html>
 
