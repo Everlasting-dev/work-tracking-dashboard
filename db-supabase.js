@@ -2092,9 +2092,8 @@ const SupabaseDB = {
   },
 
   async createWorkflowTemplate(data) {
-    const id = data.id ?? await this._nextTableId('wt_workflow_templates');
+    // DB owns the id (identity sequence) — never send an explicit id (collision-safe).
     const { data: row, error } = await this._sb().from('wt_workflow_templates').insert({
-      id,
       name: (data.name || '').trim() || 'Untitled template',
       description: (data.description || '').trim(),
       steps: JSON.stringify(data.steps || []),
@@ -2142,9 +2141,9 @@ const SupabaseDB = {
 
   async createMilestone(data) {
     const actorUserId = data.actorUserId;
-    const id = await this._nextTableId('wt_milestones');
+    // DB owns the id (identity sequence) — never send an explicit id (collision-safe).
     const { data: row, error } = await this._sb().from('wt_milestones').insert({
-      id, project_id: data.projectId, title: data.title || '', due_date: data.dueDate || '',
+      project_id: data.projectId, title: data.title || '', due_date: data.dueDate || '',
       status: data.status || 'pending', weight: data.weight || 1
     }).select().single();
     if (error) throw error;
@@ -2223,9 +2222,9 @@ const SupabaseDB = {
       });
       return id;
     }
-    const id = data.id ?? await this._nextTableId('wt_updates');
+    // DB owns the id (identity sequence) — never send an explicit id (collision-safe).
     const { data: row, error } = await this._sb().from('wt_updates').insert({
-      id, project_id: data.projectId, user_id: actorUserId || null, content: data.content || ''
+      project_id: data.projectId, user_id: actorUserId || null, content: data.content || ''
     }).select().single();
     if (error) throw error;
     await this._sb().from('wt_projects').update({ updated_at: new Date().toISOString() }).eq('id', data.projectId);

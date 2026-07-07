@@ -987,10 +987,14 @@ function _debounceSearchRender(kind, inputId, setState, renderFn) {
     await job.renderFn();
     const next = document.getElementById(job.inputId);
     if (next) {
+      // If the user kept typing during the async render, the freshly-rendered input
+      // carries the stale (fire-time) value — re-sync to the latest typed value and
+      // put the caret at the end so no keystrokes are lost or reordered.
+      if (next.value !== value) { next.value = value; }
       next.focus();
-      try { next.setSelectionRange(caret, caret); } catch (_) {}
+      try { next.setSelectionRange(next.value.length, next.value.length); } catch (_) {}
     }
-  }, 160);
+  }, 260);
 }
 
 function projectMatchesSearch(project, owner, query) {
@@ -7044,10 +7048,14 @@ async function showProfileModal() {
       <div class="pcard-customize-body">
         <div class="profile-avatar-section">
           <div class="profile-avatar-wrap">
-            ${avatarUrl ? `<img id="profile-avatar-preview-dup" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar" hidden>` : ''}
-            <label class="profile-avatar-edit-btn" title="Change photo">Change photo
-              <input type="file" id="profile-avatar-input" accept="image/*" style="display:none">
-            </label>
+            ${avatarUrl
+              ? `<img id="profile-avatar-preview-dup" src="${esc(avatarUrl)}" class="profile-avatar-img" alt="avatar">`
+              : `<div id="profile-avatar-preview-dup" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`}
+          </div>
+          <div class="profile-avatar-actions">
+            <label class="btn btn-ghost btn-sm profile-photo-btn">Change photo<input type="file" id="profile-avatar-input" accept="image/*" style="display:none"></label>
+            <button type="button" class="btn btn-ghost btn-sm ${avatarUrl ? '' : 'hidden'}" id="profile-avatar-remove">Remove</button>
+            <p class="text-muted text-sm profile-photo-hint">JPG or PNG, up to 2 MB.</p>
           </div>
         </div>
         <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
@@ -7097,24 +7105,33 @@ async function showProfileModal() {
   const avatarInput = document.getElementById('profile-avatar-input');
   const avatarB64 = document.getElementById('profile-avatar-b64');
   const pcardAvatar = ov.querySelector('.pcard-avatar-ring');
+  const setAvatarPreview = (b64) => {
+    if (avatarB64) avatarB64.value = b64 || '';
+    // header ring preview
+    if (pcardAvatar) {
+      const old = pcardAvatar.querySelector('.pcard-avatar, .pcard-avatar-img');
+      if (old) old.outerHTML = b64
+        ? `<img class="pcard-avatar-img" src="${esc(b64)}" alt="avatar">`
+        : `<div class="pcard-avatar" ${userColorStyle(user)}>${initials}</div>`;
+    }
+    // customize-section preview
+    const dup = document.getElementById('profile-avatar-preview-dup');
+    if (dup) dup.outerHTML = b64
+      ? `<img id="profile-avatar-preview-dup" src="${esc(b64)}" class="profile-avatar-img" alt="avatar">`
+      : `<div id="profile-avatar-preview-dup" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
+    document.getElementById('profile-avatar-remove')?.classList.toggle('hidden', !b64);
+  };
   if (avatarInput) {
     avatarInput.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
       if (file.size > 2 * 1024 * 1024) { showToast('Image too large (max 2 MB)', 'warning'); return; }
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        const b64 = ev.target.result;
-        avatarB64.value = b64;
-        const ring = pcardAvatar;
-        if (ring) {
-          const old = ring.querySelector('.pcard-avatar, .pcard-avatar-img');
-          if (old) old.outerHTML = `<img class="pcard-avatar-img" src="${esc(b64)}" alt="avatar">`;
-        }
-      };
+      reader.onload = (ev) => setAvatarPreview(ev.target.result);
       reader.readAsDataURL(file);
     });
   }
+  document.getElementById('profile-avatar-remove')?.addEventListener('click', () => setAvatarPreview(''));
   const preview = document.getElementById('profile-cust-preview');
   const accentInput = document.getElementById('profile-accent-input');
   const coverInput = document.getElementById('profile-cover-input');

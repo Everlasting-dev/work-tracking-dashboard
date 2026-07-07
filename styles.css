@@ -5768,13 +5768,10 @@ body.theme-black .doc-panel-del:hover { background: rgba(248,113,113,0.2); color
   display: flex; align-items: center; justify-content: center;
   border: 3px solid var(--border);
 }
-.profile-avatar-edit-btn {
-  position: absolute; bottom: 0; right: 0;
-  width: 24px; height: 24px; border-radius: 50%;
-  background: var(--accent); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; border: 2px solid var(--card);
-}
+.profile-avatar-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.profile-photo-btn { cursor: pointer; }
+.profile-photo-hint { margin: 2px 0 0; }
+#profile-avatar-remove.hidden { display: none; }
 .profile-identity { display: flex; flex-direction: column; gap: 6px; }
 .profile-username { font-size: 0.88rem; font-weight: 700; color: var(--text); }
 .fixed-textarea { resize: none; min-height: 86px; }
