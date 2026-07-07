@@ -525,7 +525,7 @@ const SupabaseDB = {
       id: r.id, username: r.username, displayName: r.display_name, email: r.email || '',
       passwordHash: r.password_hash, salt: r.salt, role: r.role, createdAt: r.created_at,
       department: r.department || '', discordId: r.discord_id || '', color: r.color || '',
-      bio: r.bio || '', avatarBase64: r.avatar_base64 || '', avatarUpdatedAt: r.avatar_updated_at || null,
+      bio: r.bio || '', avatarBase64: r.avatar_base64 || '', avatarDriveId: r.avatar_drive_id || null, avatarUpdatedAt: r.avatar_updated_at || null,
       birthDate: r.birth_date || '', gender: r.gender || '', phone: r.phone || '',
       address: r.address || '', hoursLoggedTotal: Number(r.hours_logged_total || 0),
       lastSeenAt: r.last_seen_at || null, lastSeenIp: r.last_seen_ip || null,
@@ -1458,7 +1458,7 @@ const SupabaseDB = {
   // user and was the dominant sync-pull egress cost (re-shipped on every pull).
   // The lite roster is cheap; avatars are fetched separately only when their
   // avatar_updated_at marker changes (see getUserAvatarsByIds + the sync pull).
-  _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map',
+  _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_drive_id,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map',
 
   async getUsersLite() {
     if (this._isOffline()) return this.getUsers();
@@ -1499,6 +1499,13 @@ const SupabaseDB = {
       // actually changed (keeps the sync pull from re-shipping avatar blobs).
       patch.avatar_updated_at = new Date().toISOString();
     }
+    if (changes.avatarDriveId !== undefined) {
+      // Profile pictures now live on Google Drive (rendered via a public thumbnail
+      // URL). A Drive avatar supersedes any legacy inline base64.
+      patch.avatar_drive_id = changes.avatarDriveId || null;
+      patch.avatar_base64 = '';
+      patch.avatar_updated_at = new Date().toISOString();
+    }
     if (changes.lastSeenAt != null) patch.last_seen_at = changes.lastSeenAt;
     if (changes.lastSeenIp != null) patch.last_seen_ip = changes.lastSeenIp;
     if (changes.birthDate != null) patch.birth_date = changes.birthDate || null;
@@ -1525,6 +1532,7 @@ const SupabaseDB = {
       delete patch.color;
       delete patch.bio;
       delete patch.avatar_base64;
+      delete patch.avatar_drive_id;
       delete patch.avatar_updated_at;
       delete patch.tagline;
       delete patch.accent_color;

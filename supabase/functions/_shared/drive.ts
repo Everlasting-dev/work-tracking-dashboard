@@ -82,6 +82,23 @@ async function api(path: string, init: RequestInit = {}): Promise<Response> {
 }
 
 // ── Folders ─────────────────────────────────────────────────────────────────
+export async function findFolderId(name: string, parentId: string): Promise<string | null> {
+  const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and mimeType='${FOLDER_MIME}' and trashed=false`;
+  const res = await api(`/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
+  const j = await res.json();
+  return j.files?.[0]?.id || null;
+}
+
+// Share a file with "anyone with the link" (reader) so its public thumbnail URL
+// (drive.google.com/thumbnail?id=...) works in an <img>. Used for avatars only.
+export async function makePublic(fileId: string): Promise<void> {
+  await api(`/files/${encodeURIComponent(fileId)}/permissions?fields=id`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "reader", type: "anyone" }),
+  });
+}
+
 export async function createFolder(name: string, parentId: string): Promise<string> {
   const res = await api(`/files?fields=id`, {
     method: "POST",

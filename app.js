@@ -449,7 +449,8 @@ function sessionPayload(u) {
     department: u.department || '',
     color: u.color || '',
     bio: u.bio || '',
-    avatarBase64: u.avatarBase64 || ''
+    avatarBase64: u.avatarBase64 || '',
+    avatarDriveId: u.avatarDriveId || null
   };
 }
 function getActiveSession() {
@@ -553,6 +554,7 @@ function mapRestUser(row) {
     color: row.color || '',
     bio: row.bio || '',
     avatarBase64: row.avatar_base64 || '',
+    avatarDriveId: row.avatar_drive_id || null,
     lastSeenAt: row.last_seen_at || null,
     lastSeenIp: row.last_seen_ip || null,
     createdAt: row.created_at || new Date().toISOString()
@@ -965,6 +967,15 @@ function workspaceScopeBarHtml() {
 
 function normalizeSearchText(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+// Profile-picture <img src>. Drive avatars render via a public Drive thumbnail
+// URL (no auth, browser-cached); legacy avatars are inline base64. Empty string
+// means "no photo" → callers fall back to initials.
+function avatarSrc(u) {
+  if (!u) return '';
+  if (u.avatarDriveId) return `https://drive.google.com/thumbnail?id=${encodeURIComponent(u.avatarDriveId)}&sz=w240`;
+  return u.avatarBase64 || '';
 }
 
 // Debounced re-render for in-view search inputs. Coalesces bursts of keystrokes
@@ -1992,8 +2003,8 @@ function updateSidebarUser() {
   const init = display.charAt(0).toUpperCase();
   const isAdm = s.role === 'admin';
   const themeMode = getThemeMode();
-  const avatarHtml = s.avatarBase64
-    ? `<img src="${esc(s.avatarBase64)}" class="user-avatar-img sidebar-footer-avatar-img" alt="${esc(display)}">`
+  const avatarHtml = avatarSrc(s)
+    ? `<img src="${esc(avatarSrc(s))}" class="user-avatar-img sidebar-footer-avatar-img" alt="${esc(display)}">`
     : `<div class="user-avatar sidebar-footer-avatar ${isAdm ? 'user-avatar-admin' : ''}" ${userColorStyle(s)}>${init}</div>`;
   const footerUser = document.getElementById('sidebar-footer-user');
   if (footerUser) {
@@ -2246,8 +2257,8 @@ async function renderProjects() {
       const memberAvatars = editorIds.slice(0, 4).map(eid => {
         const eu = uMap[eid]; if (!eu) return '';
         const init = (eu.displayName || eu.username).charAt(0).toUpperCase();
-        return eu.avatarBase64
-          ? `<img class="project-card-v2-member-avatar project-card-v2-user-click" src="${esc(eu.avatarBase64)}" title="${esc(eu.displayName || eu.username)}" data-action="show-user-profile" data-user-id="${eu.id}">`
+        return avatarSrc(eu)
+          ? `<img class="project-card-v2-member-avatar project-card-v2-user-click" src="${esc(avatarSrc(eu))}" title="${esc(eu.displayName || eu.username)}" data-action="show-user-profile" data-user-id="${eu.id}">`
           : `<span class="project-card-v2-member-avatar project-card-v2-user-click" ${userColorStyle(eu)} title="${esc(eu.displayName || eu.username)}" data-action="show-user-profile" data-user-id="${eu.id}">${init}</span>`;
       }).join('');
       return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
@@ -2494,8 +2505,8 @@ function renderLinearTaskListHtml(tasks, uMap, editable, projectId, attachments 
   const renderAssignee = (user) => {
     const label = user ? (user.displayName || user.username || 'Assignee') : 'No assignee';
     const initial = user ? label.charAt(0).toUpperCase() : '?';
-    const inner = user?.avatarBase64
-      ? `<img src="${esc(user.avatarBase64)}" alt="${esc(label)}">`
+    const inner = avatarSrc(user)
+      ? `<img src="${esc(avatarSrc(user))}" alt="${esc(label)}">`
       : esc(initial);
     return `<span class="linear-task-assignee ${user ? '' : 'is-empty'}" ${user ? userColorStyle(user) : ''} title="${esc(label)}">${inner}</span>`;
   };
@@ -2566,7 +2577,7 @@ function renderProjectInspectorHtml(project, tasks = [], milestones = [], users 
     ? `<div class="project-inspector-avatar-row">${members.slice(0, 5).map(user => {
         const label = user.displayName || user.username || 'Member';
         const initial = label.charAt(0).toUpperCase();
-        return `<button type="button" class="project-inspector-avatar" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(label)}">${user.avatarBase64 ? `<img src="${esc(user.avatarBase64)}" alt="${esc(label)}">` : esc(initial)}</button>`;
+        return `<button type="button" class="project-inspector-avatar" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(label)}">${avatarSrc(user) ? `<img src="${esc(avatarSrc(user))}" alt="${esc(label)}">` : esc(initial)}</button>`;
       }).join('')}${members.length > 5 ? `<span class="project-inspector-more">+${members.length - 5}</span>` : ''}</div>`
     : '<span class="project-inspector-muted">Add members</span>';
 
@@ -3192,8 +3203,8 @@ async function renderProjectDetail(projectId) {
   const focusAssignee = focusTask ? users.find(u => Number(u.id) === Number(focusTask.assigneeId)) : null;
   const ownerName = owner ? (owner.displayName || owner.username || 'Unknown') : 'Unknown';
   const ownerInitial = ownerName.trim().charAt(0).toUpperCase() || '?';
-  const ownerAvatarHtml = owner?.avatarBase64
-    ? `<img src="${esc(owner.avatarBase64)}" alt="${esc(ownerName)}">`
+  const ownerAvatarHtml = avatarSrc(owner)
+    ? `<img src="${esc(avatarSrc(owner))}" alt="${esc(ownerName)}">`
     : esc(ownerInitial);
   const taskTotal = allProjectTasks.length;
   const remainingCount = Math.max(0, taskTotal - doneCount);
@@ -4354,8 +4365,8 @@ async function renderAdmin() {
     <div class="admin-user-board">
       ${users.map(u => {
         const init = (u.displayName || u.username).charAt(0).toUpperCase();
-        const avatarHtml = u.avatarBase64
-          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" title="View profile" alt="${esc(init)}">`
+        const avatarHtml = avatarSrc(u)
+          ? `<img src="${esc(avatarSrc(u))}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" title="View profile" alt="${esc(init)}">`
           : `<div class="admin-ucard-avatar admin-ucard-avatar-clickable" ${userColorStyle(u)} data-action="show-user-profile" data-user-id="${u.id}" title="View profile">${init}</div>`;
         return `<div class="admin-ucard">
           <div class="admin-ucard-header">
@@ -4518,8 +4529,8 @@ async function renderAdminTabbed() {
     <div class="admin-user-board admin-user-board--tab">
       ${users.map(u => {
         const init = (u.displayName || u.username || '?').charAt(0).toUpperCase();
-        const avatarHtml = u.avatarBase64
-          ? `<img src="${esc(u.avatarBase64)}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" alt="${esc(init)}">`
+        const avatarHtml = avatarSrc(u)
+          ? `<img src="${esc(avatarSrc(u))}" class="admin-ucard-avatar-img admin-ucard-avatar-clickable" data-action="show-user-profile" data-user-id="${u.id}" alt="${esc(init)}">`
           : `<div class="admin-ucard-avatar admin-ucard-avatar-clickable" ${userColorStyle(u)} data-action="show-user-profile" data-user-id="${u.id}">${init}</div>`;
         return `<div class="admin-ucard">
           <div class="admin-ucard-header">${avatarHtml}<div class="admin-ucard-meta">
@@ -6316,8 +6327,8 @@ async function showAssignTaskModal(taskId) {
 function assigneeChipHtml(user) {
   if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
-  const avatarInner = user.avatarBase64
-    ? `<img src="${esc(user.avatarBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
+  const avatarInner = avatarSrc(user)
+    ? `<img src="${esc(avatarSrc(user))}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
     : initials;
   return `<span class="assignee-chip" ${userColorStyle(user)} data-action="show-user-profile" data-user-id="${user.id}" title="${esc(user.displayName || user.username)}"><span class="assignee-avatar">${avatarInner}</span>${esc((user.displayName || user.username).split(' ')[0])}</span>`;
 }
@@ -6463,8 +6474,8 @@ async function showUserProfileModal(userId) {
   const online = typeof isUserOnline === 'function' ? isUserOnline(user) : false;
   const workload = tasks.filter(t => Number(t.assigneeId) === Number(user.id) && t.status !== 'done').length;
 
-  const avatar = user.avatarBase64
-    ? `<img src="${esc(user.avatarBase64)}" class="pcard-avatar-img" alt="${esc(initials)}">`
+  const avatar = avatarSrc(user)
+    ? `<img src="${esc(avatarSrc(user))}" class="pcard-avatar-img" alt="${esc(initials)}">`
     : `<div class="pcard-avatar" ${userColorStyle(user)}>${initials}</div>`;
 
   // Async data (classrooms, per-user activity, recent contribution).
@@ -6797,8 +6808,8 @@ async function showEditUserModalBlack(uid) {
   const ownedCount = (workspace.projects || []).filter(p => Number(p.ownerId) === Number(u.id)).length;
   const assignedCount = (workspace.tasks || []).filter(t => Number(t.assigneeId) === Number(u.id)).length;
   const doneCount = (workspace.tasks || []).filter(t => Number(t.assigneeId) === Number(u.id) && t.status === 'done').length;
-  const avatar = u.avatarBase64
-    ? `<img src="${esc(u.avatarBase64)}" class="user-edit-avatar-img" alt="${esc(initials)}">`
+  const avatar = avatarSrc(u)
+    ? `<img src="${esc(avatarSrc(u))}" class="user-edit-avatar-img" alt="${esc(initials)}">`
     : `<div class="user-edit-avatar-initials">${esc(initials)}</div>`;
 
   showModal('Edit User', `
@@ -6917,7 +6928,7 @@ async function showEditUserModalBlack(uid) {
     const nextInitial = nextName.charAt(0).toUpperCase();
     if (namePreview) namePreview.textContent = nextName;
     if (usernamePreview) usernamePreview.textContent = `@${nextUsername}`;
-    if (avatarPreview && !u.avatarBase64) avatarPreview.innerHTML = `<div class="user-edit-avatar-initials">${esc(nextInitial)}</div>`;
+    if (avatarPreview && !avatarSrc(u)) avatarPreview.innerHTML = `<div class="user-edit-avatar-initials">${esc(nextInitial)}</div>`;
     const role = form?.querySelector('input[name="role"]:checked')?.value || u.role || 'user';
     if (rolePreview) {
       rolePreview.innerHTML = role === 'admin'
@@ -6975,7 +6986,7 @@ async function showProfileModal() {
   const accentHex = isHex(user.accentColor) ? user.accentColor : (isHex(user.color) ? user.color : '#4f46e5');
   const coverHex = isHex(user.coverColor) ? user.coverColor : accentHex;
   const accent = user.accentColor || user.color || userColor(user);
-  const avatarUrl = user.avatarBase64 || '';
+  const avatarUrl = avatarSrc(user) || '';
   const online = typeof isUserOnline === 'function' ? isUserOnline(user) : false;
   const workload = tasks.filter(t => Number(t.assigneeId) === Number(user.id) && t.status !== 'done').length;
 
@@ -7058,7 +7069,8 @@ async function showProfileModal() {
             <p class="text-muted text-sm profile-photo-hint">JPG or PNG, up to 2 MB.</p>
           </div>
         </div>
-        <input type="hidden" name="avatarBase64" id="profile-avatar-b64" value="${esc(avatarUrl)}">
+        <input type="hidden" name="avatarDriveId" id="profile-avatar-drive-id" value="${esc(user.avatarDriveId || '')}">
+        <input type="hidden" name="avatarChanged" id="profile-avatar-changed" value="">
         <div class="profile-customize">
           <div class="profile-cust-preview" id="profile-cust-preview" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
             <span class="profile-cust-preview-avatar">${initials}</span>
@@ -7103,35 +7115,50 @@ async function showProfileModal() {
     if (fill) setTimeout(() => { fill.style.width = fill.dataset.target + '%'; }, 60);
   });
   const avatarInput = document.getElementById('profile-avatar-input');
-  const avatarB64 = document.getElementById('profile-avatar-b64');
+  const driveIdInput = document.getElementById('profile-avatar-drive-id');
+  const changedInput = document.getElementById('profile-avatar-changed');
   const pcardAvatar = ov.querySelector('.pcard-avatar-ring');
-  const setAvatarPreview = (b64) => {
-    if (avatarB64) avatarB64.value = b64 || '';
-    // header ring preview
+  const setAvatarPreview = (src) => {
     if (pcardAvatar) {
       const old = pcardAvatar.querySelector('.pcard-avatar, .pcard-avatar-img');
-      if (old) old.outerHTML = b64
-        ? `<img class="pcard-avatar-img" src="${esc(b64)}" alt="avatar">`
+      if (old) old.outerHTML = src
+        ? `<img class="pcard-avatar-img" src="${esc(src)}" alt="avatar">`
         : `<div class="pcard-avatar" ${userColorStyle(user)}>${initials}</div>`;
     }
-    // customize-section preview
     const dup = document.getElementById('profile-avatar-preview-dup');
-    if (dup) dup.outerHTML = b64
-      ? `<img id="profile-avatar-preview-dup" src="${esc(b64)}" class="profile-avatar-img" alt="avatar">`
+    if (dup) dup.outerHTML = src
+      ? `<img id="profile-avatar-preview-dup" src="${esc(src)}" class="profile-avatar-img" alt="avatar">`
       : `<div id="profile-avatar-preview-dup" class="profile-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
-    document.getElementById('profile-avatar-remove')?.classList.toggle('hidden', !b64);
+    document.getElementById('profile-avatar-remove')?.classList.toggle('hidden', !src);
   };
   if (avatarInput) {
+    // Profile pictures go to Google Drive (not inline base64). Upload on select,
+    // stash the returned Drive id in the hidden field, and mark it changed so the
+    // save only touches the avatar when the user actually picked/removed a photo.
     avatarInput.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      if (file.size > 2 * 1024 * 1024) { showToast('Image too large (max 2 MB)', 'warning'); return; }
-      const reader = new FileReader();
-      reader.onload = (ev) => setAvatarPreview(ev.target.result);
-      reader.readAsDataURL(file);
+      if (file.size > 3 * 1024 * 1024) { showToast('Image too large (max 3 MB)', 'warning'); return; }
+      if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready — try again in a moment.', 'error'); return; }
+      const localUrl = URL.createObjectURL(file);
+      setAvatarPreview(localUrl);
+      showToast('Uploading photo…');
+      try {
+        const driveId = await window.DriveStorage.uploadAvatar(file);
+        if (driveIdInput) driveIdInput.value = driveId;
+        if (changedInput) changedInput.value = '1';
+        showToast('Photo ready — click Save profile to apply.', 'success');
+      } catch (err) {
+        setAvatarPreview(avatarUrl);
+        showToast(err?.message || 'Photo upload failed.', 'error');
+      }
     });
   }
-  document.getElementById('profile-avatar-remove')?.addEventListener('click', () => setAvatarPreview(''));
+  document.getElementById('profile-avatar-remove')?.addEventListener('click', () => {
+    if (driveIdInput) driveIdInput.value = '';
+    if (changedInput) changedInput.value = '1';
+    setAvatarPreview('');
+  });
   const preview = document.getElementById('profile-cust-preview');
   const accentInput = document.getElementById('profile-accent-input');
   const coverInput = document.getElementById('profile-cover-input');
@@ -9190,7 +9217,8 @@ async function handleFormSubmit(e) {
       const department = fd.get('department') || '';
       const bio = fd.get('bio')?.trim() || '';
       const color = fd.get('color') || '';
-      const avatarBase64 = fd.get('avatarBase64') || '';
+      const avatarChanged = fd.get('avatarChanged') === '1';
+      const avatarDriveId = (fd.get('avatarDriveId') || '').toString();
       const birthDate = fd.get('birthDate') || '';
       const gender = fd.get('gender') || '';
       const phone = (fd.get('phone') || '').toString().trim();
@@ -9200,7 +9228,10 @@ async function handleFormSubmit(e) {
       const coverColor = (fd.get('coverColor') || '').toString().trim();
       const hideFromTeamMap = !!fd.get('hideFromTeamMap');
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, bio, avatarBase64, birthDate, gender, phone, address, tagline, accentColor, coverColor, hideFromTeamMap, ...(color && { color }) };
+      const profileData = { displayName, email, bio, birthDate, gender, phone, address, tagline, accentColor, coverColor, hideFromTeamMap, ...(color && { color }) };
+      // Only touch the avatar when the user actually picked/removed a photo, so a
+      // normal profile save never wipes an existing (Drive or legacy) picture.
+      if (avatarChanged) profileData.avatarDriveId = avatarDriveId;
       if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
@@ -10709,8 +10740,8 @@ async function renderUsers() {
 
   const cards = enriched.map(({ u, stats }, i) => {
     const initials = (u.displayName || u.username || '?').charAt(0).toUpperCase();
-    const avatarInner = u.avatarBase64
-      ? `<img src="${esc(u.avatarBase64)}" alt="${esc(initials)}">`
+    const avatarInner = avatarSrc(u)
+      ? `<img src="${esc(avatarSrc(u))}" alt="${esc(initials)}">`
       : initials;
     return `<div class="user-card" data-action="show-user-profile" data-user-id="${u.id}" role="button" tabindex="0" title="View ${esc(u.displayName || u.username)}'s profile">
       <div class="user-card-rank-num">#${i + 1}</div>

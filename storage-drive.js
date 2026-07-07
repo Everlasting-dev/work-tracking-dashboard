@@ -192,6 +192,23 @@
     });
   }
 
+  // Upload a profile picture to the central Drive "avatars" folder. Returns the
+  // Drive file id — store on wt_users.avatar_drive_id and render it via the public
+  // thumbnail URL. Requires the Drive auth session like every other call here.
+  async function uploadAvatar(file) {
+    const jwt = await token();
+    const form = new FormData();
+    form.append("file", file, file.name || "avatar.png");
+    const res = await fetch(`${fnBase()}/avatar-upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}`, apikey: anonKey() },
+      body: form,
+    });
+    let body = {}; try { body = await res.json(); } catch (_) {}
+    if (!res.ok) throw new Error(storageErrorMessage(res.status, body, `Avatar upload failed (${res.status})`, ""));
+    return body.driveFileId;
+  }
+
   // Fetch file content through the backend and return an object URL (caller must
   // URL.revokeObjectURL when done). `download` toggles inline vs attachment.
   async function objectUrl(fileRecordId, { download = false, thumb = false, size } = {}) {
@@ -233,5 +250,5 @@
     return data || null;
   }
 
-  window.DriveStorage = { enabled, ensureAuthSession, recoverSession, checkAuthStatus, upload, objectUrl, remove, list, getOne };
+  window.DriveStorage = { enabled, ensureAuthSession, recoverSession, checkAuthStatus, upload, uploadAvatar, objectUrl, remove, list, getOne };
 })();
