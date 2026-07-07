@@ -1661,9 +1661,12 @@ const SupabaseDB = {
         try { hiddenFromIds.push(await this._resolveSupabaseUserId(hid)); } catch (_) {}
       }
     }
-    const id = data.id ?? await this._nextTableId('wt_projects');
+    // The DB owns the project id (identity sequence). We deliberately do NOT reuse
+    // data.id (the client's local id): two clients allocating the same local id
+    // collided in the cloud and the old merge-on-duplicate path collapsed distinct
+    // projects into one (tasks bleeding across users). The sync engine remaps local→remote.
     const payload = {
-      id, name: data.name || '', notes: data.notes || '', type: data.type || 'project',
+      name: data.name || '', notes: data.notes || '', type: data.type || 'project',
       status: data.status || 'active', priority: data.priority || 'medium',
       owner_id: ownerId,
       classroom_id: classroomId,
@@ -1690,13 +1693,6 @@ const SupabaseDB = {
     if (this._isFkError(error, 'classroom_id')) {
       payload.classroom_id = null;
       ({ data: row, error } = await this._sb().from('wt_projects').insert(payload).select().single());
-    }
-    if (error?.code === '23505') {
-      const { data: existing } = await this._sb().from('wt_projects').select('*').eq('id', id).maybeSingle();
-      if (existing) {
-        this._shadowUpsert('projects', this._mapProject(existing));
-        return existing.id;
-      }
     }
     if (error) throw error;
     this._shadowUpsert('projects', this._mapProject(row));
@@ -1930,20 +1926,13 @@ const SupabaseDB = {
       custom_fields: JSON.stringify(data.customFields || []),
       sort_order: data.sortOrder != null ? Number(data.sortOrder) : Math.floor(Date.now() / 1000)
     };
-    // The DB owns the task id. We deliberately do NOT reuse data.id (the local
-    // id): it can collide with a task another client already created in the cloud,
-    // which is what caused the "duplicate key wt_tasks_pkey" failures. Allocate
-    // max+1 and, on the rare concurrent collision, recompute and retry so two
-    // clients never wedge on the same id. The sync engine remaps local→remote.
-    let row = null, lastErr = null;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const id = await this._nextTableId('wt_tasks');
-      const res = await this._sb().from('wt_tasks').insert({ id, ...base }).select().single();
-      if (!res.error) { row = res.data; break; }
-      lastErr = res.error;
-      if (!/duplicate key|_pkey|already exists/i.test(String(res.error.message || ''))) throw res.error;
-    }
-    if (!row) throw lastErr || new Error('createTask: could not allocate a unique id');
+    // The DB owns the task id (identity sequence). We deliberately do NOT send an
+    // explicit id: reusing the client's local id (or a max+1 guess) collided across
+    // clients — two people's tasks wedging on the same pkey. Letting Postgres assign
+    // the id from the sequence guarantees global uniqueness; the sync engine remaps
+    // the local id → this remote id.
+    const { data: row, error: taskErr } = await this._sb().from('wt_tasks').insert(base).select().single();
+    if (taskErr) throw taskErr;
     const updatedAt = new Date().toISOString();
     await this._sb().from('wt_projects').update({ updated_at: updatedAt }).eq('id', projectId);
     this._shadowUpsert('tasks', this._mapTask(row));
