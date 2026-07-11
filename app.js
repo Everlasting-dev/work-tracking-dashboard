@@ -673,6 +673,23 @@ function resetClientState() {
   state.globalTaskSearch = '';
 }
 
+async function performLogout({ reason = '' } = {}) {
+  const s = getSession();
+  if (s) {
+    const details = reason ? `${s.username || s.displayName || 'user'} (${reason})` : (s.username || s.displayName || '');
+    await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details }).catch(() => {});
+  }
+  window.RealtimeSync?.stop?.();
+  localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
+  resetClientState();
+  clearSession({ trusted: true });
+  if (isV3Mode()) window.SyncEngineV3?.signOut?.().catch(() => {});
+  else window.SupabaseDB?.signOutSupabase?.().catch(() => {});
+  wtAppBootstrapped = false;
+  window.location.hash = '';
+  await applyRoute();
+}
+
 function bustWorkspaceCache() {
   _workspaceCache = null;
   _workspaceCacheAt = 0;
@@ -1179,7 +1196,8 @@ const state = {
   _activeRoute: '',
   _scrollPositions: {},
   _scrollManagerInstalled: false,
-  adminTab: 'overview'
+  adminTab: 'overview',
+  adminBugTab: 'open'
 };
 
 let wtAppBootstrapped = false;
@@ -4280,6 +4298,19 @@ async function renderTasks() {
     ${viewBody}`;
 }
 
+async function getBugReportsForAdmin(limit = 80, { includeScreenshots = false } = {}) {
+  const local = DB.getBugReports ? DB.getBugReports({ limit }).catch(() => []) : Promise.resolve([]);
+  if (!isAdmin() || !isCloudMode() || isOffline() || !window.SupabaseDB?.getBugReports) {
+    return local;
+  }
+  try {
+    return await window.SupabaseDB.getBugReports({ limit, includeScreenshots });
+  } catch (err) {
+    console.warn('[bug-reports] screenshot fetch fell back to local metadata:', err);
+    return local;
+  }
+}
+
 async function renderAdmin() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
   const content = document.getElementById('content');
@@ -4289,7 +4320,7 @@ async function renderAdmin() {
     getWorkspaceData(),
     DB.hasMasterKey(),
     DB.getDepartments(),
-    DB.getBugReports ? DB.getBugReports({ limit: 25 }) : [],
+    getBugReportsForAdmin(25, { includeScreenshots: true }),
     DB.getClassrooms ? DB.getClassrooms() : []
   ]);
   const userRoomMap = {};
@@ -4418,7 +4449,7 @@ async function renderAdminTabbed() {
   await ensureDepartmentCfg();
   const [workspace, bugReports, departments, classrooms, workflowTemplates, activityLog, hasMk] = await Promise.all([
     getWorkspaceData(),
-    DB.getBugReports ? DB.getBugReports({ limit: 80 }).catch(() => []) : [],
+    getBugReportsForAdmin(80, { includeScreenshots: active === 'bugs' }),
     DB.getDepartments ? DB.getDepartments().catch(() => []) : [],
     DB.getClassrooms ? DB.getClassrooms().catch(() => []) : [],
     DB.getWorkflowTemplates ? DB.getWorkflowTemplates().catch(() => []) : [],
@@ -4432,7 +4463,12 @@ async function renderAdminTabbed() {
     const rows = await DB.getAttachments(p.id, { includeHidden: true }).catch(() => []);
     return rows.filter(a => a.isHidden || a.deletedAt).map(a => ({ ...a, projectName: p.name }));
   }))).flat().sort((a, b) => (b.deletedAt || b.createdAt || '').localeCompare(a.deletedAt || a.createdAt || ''));
-  const openBugCount = bugReports.filter(r => !['fixed', 'closed', 'wont_fix'].includes(r.status || 'open')).length;
+  const resolvedBugStatuses = new Set(['fixed', 'closed', 'wont_fix']);
+  const openBugReports = bugReports.filter(r => !resolvedBugStatuses.has(r.status || 'open'));
+  const fixedBugReports = bugReports.filter(r => resolvedBugStatuses.has(r.status || 'open'));
+  const activeBugTab = state.adminBugTab === 'fixed' ? 'fixed' : 'open';
+  const visibleBugReports = activeBugTab === 'fixed' ? fixedBugReports : openBugReports;
+  const openBugCount = openBugReports.length;
   const doneCount = tasks.filter(t => t.status === 'done').length;
   const editsToday = activityLog.filter(a => {
     const d = new Date(a.createdAt || 0);
@@ -4500,13 +4536,18 @@ async function renderAdminTabbed() {
       <section class="dash-panel"><div class="dash-panel-head"><h3>Recent Trail</h3><a href="#/activity" class="btn btn-sm btn-ghost">Open log</a></div>${activityRows}</section>
     </div>`;
   const bugStatus = [['open', 'Open'], ['in_progress', 'In progress'], ['sent', 'Sent'], ['fixed', 'Fixed'], ['closed', 'Closed'], ['wont_fix', "Won't fix"]];
+  const bugSubtabsHtml = `<div class="admin-bug-subtabs">
+    <button type="button" class="tab-btn ${activeBugTab === 'open' ? 'active' : ''}" data-action="admin-bug-tab" data-bug-tab="open">Open (${openBugReports.length})</button>
+    <button type="button" class="tab-btn ${activeBugTab === 'fixed' ? 'active' : ''}" data-action="admin-bug-tab" data-bug-tab="fixed">Fixed (${fixedBugReports.length})</button>
+  </div>`;
   const bugsHtml = `<section class="section-card admin-bugs-panel" data-section="bugs">
-    <div class="section-header"><h2>${ICONS.alertTriangle} Bugs &amp; Error Reports</h2><span class="projects-page-count">${bugReports.length}</span></div>
+    <div class="section-header"><h2>${ICONS.alertTriangle} Bugs &amp; Error Reports</h2><span class="projects-page-count">${visibleBugReports.length}/${bugReports.length}</span></div>
+    ${bugSubtabsHtml}
     <div class="section-body bug-report-list">
-      ${bugReports.length ? bugReports.map(r => {
+      ${visibleBugReports.length ? visibleBugReports.map(r => {
         const who = uMap[r.userId];
         const st = r.status || 'open';
-        const resolved = ['fixed', 'closed', 'wont_fix'].includes(st);
+        const resolved = resolvedBugStatuses.has(st);
         return `<div class="bug-report-row ${resolved ? 'bug-report-row--resolved' : ''}">
           <div class="bug-report-main">
             <div class="bug-report-titleline"><strong>${esc(r.title || r.message || 'Untitled report')}</strong>${badge(bugStatus.find(s => s[0] === st)?.[1] || st, resolved ? 'green' : 'amber')}</div>
@@ -4521,7 +4562,7 @@ async function renderAdminTabbed() {
             </form>
           </div>
         </div>`;
-      }).join('') : '<p class="text-muted text-sm" style="padding:16px 20px">No bug reports yet.</p>'}
+      }).join('') : `<p class="text-muted text-sm" style="padding:16px 20px">No ${activeBugTab === 'fixed' ? 'fixed' : 'open'} bug reports.</p>`}
     </div>
   </section>`;
   const usersHtml = `<section class="section-card">
@@ -4545,6 +4586,8 @@ async function renderAdminTabbed() {
             <button class="btn btn-sm btn-ghost" data-action="edit-user-classrooms" data-id="${u.id}">Classrooms</button>
             <button class="btn btn-sm btn-ghost" data-action="reset-password" data-id="${u.id}">Reset PW</button>
             <button class="btn btn-sm btn-ghost" data-action="approve-password-reset" data-user-id="${u.id}" title="Issue a one-time password the user must change">Send OTP</button>
+            <button class="btn btn-sm btn-ghost" data-action="send-announcement" data-user-id="${u.id}">${ICONS.send} Announce</button>
+            ${Number(u.id) !== actorId() ? `<button class="btn btn-sm btn-ghost btn-danger-text" data-action="force-logout-user" data-id="${u.id}">${ICONS.logOut} Force logout</button>` : ''}
             ${Number(u.id) !== actorId() ? `<button class="btn btn-sm btn-ghost btn-danger-text" data-action="delete-user" data-id="${u.id}">${ICONS.trash} Delete</button>` : ''}
           </div>
         </div>`;
@@ -4596,14 +4639,16 @@ async function renderAdminTabbed() {
   </div>`;
   const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : overviewHtml;
   content.innerHTML = `
-    <div class="view-header admin-suite-header">
-      <div><h1>Admin</h1><p class="view-subtitle">Oversight, people, workspace templates, bugs, and data tools.</p></div>
-      <div class="view-actions">
-        <button class="btn btn-ghost" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
-        <button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button>
+    <div class="admin-sticky-head">
+      <div class="view-header admin-suite-header">
+        <div><h1>Admin</h1><p class="view-subtitle">Oversight, people, workspace templates, bugs, and data tools.</p></div>
+        <div class="view-actions">
+          <button class="btn btn-ghost" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
+          <button class="btn btn-primary" data-action="add-user">${ICONS.plus} Add User</button>
+        </div>
       </div>
+      ${tabsHtml}
     </div>
-    ${tabsHtml}
     ${body}`;
 }
 
@@ -4861,7 +4906,7 @@ async function renderAdminDashboard() {
     ['To do', tasks.filter(t => t.status === 'todo').length, 'amber'],
   ];
   const topContributors = users
-    .map(u => ({ user: u, stats: userProfileStats(u.id, projects, tasks) }))
+    .map(u => ({ user: u, stats: userProfileStats(u, projects, tasks) }))
     .sort((a, b) => b.stats.score - a.stats.score)
     .slice(0, 5);
   const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
@@ -5593,6 +5638,7 @@ function showModal(title, body, opts = {}) {
   // Per-modal close behaviour: lockBackdrop = ignore outside clicks;
   // confirmCancel = ask before closing (used by the new-user form).
   ov.dataset.lockBackdrop = opts.lockBackdrop ? 'true' : '';
+  ov.dataset.lockKeyboard = opts.lockKeyboard ? 'true' : '';
   ov.dataset.confirmCancel = opts.confirmCancel ? 'true' : '';
   ov.dataset.cancelMsg = opts.cancelMsg || '';
   delete ov.dataset.confirmDialog;
@@ -5604,7 +5650,7 @@ function hideModal() {
   const ov = document.getElementById('modal-overlay');
   ov.classList.add('hidden');
   ov.innerHTML = '';
-  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
 }
 // Close the current modal, honouring a confirm-before-cancel guard (native confirm
 // so it doesn't replace the modal's own content). Returns true if it closed.
@@ -5809,7 +5855,7 @@ async function showProjectModal(editId = null) {
         <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
         <button type="submit" class="btn btn-primary">${isE ? 'Save changes' : 'Create Project'}</button>
       </div>
-    </form>`);
+    </form>`, { lockBackdrop: true, lockKeyboard: true });
 
   if (!isE) {
     const list = document.getElementById('bulk-task-list');
@@ -6272,6 +6318,59 @@ async function showProjectAccessModal(projectId) {
     </div>`);
 }
 
+function readFileAsDataUrl(fileOrBlob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(fileOrBlob);
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function prepareBugScreenshot(file) {
+  const fallback = async () => ({
+    name: file.name,
+    mimeType: file.type || 'image/png',
+    dataUrl: await readFileAsDataUrl(file),
+    size: file.size
+  });
+  if (!file?.type?.startsWith('image/') || typeof createImageBitmap !== 'function') return fallback();
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxEdge = 1280;
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+
+    let blob = null;
+    for (const quality of [0.78, 0.66, 0.54]) {
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (!blob || blob.size <= 450 * 1024) break;
+    }
+    if (!blob) return fallback();
+    const baseName = String(file.name || 'screenshot').replace(/\.[^.]+$/, '');
+    return {
+      name: `${baseName}.jpg`,
+      mimeType: 'image/jpeg',
+      dataUrl: await readFileAsDataUrl(blob),
+      size: blob.size,
+      originalSize: file.size
+    };
+  } catch (_) {
+    return fallback();
+  }
+}
+
 function showBugReportModal() {
   const version = getAppVersion();
   showModal('Report Bug', `
@@ -6292,18 +6391,64 @@ function showBugReportModal() {
     const files = Array.from(input.files || []).slice(0, 3).filter(f => f.size <= 2 * 1024 * 1024);
     const images = [];
     for (const file of files) {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      images.push({ name: file.name, mimeType: file.type || 'image/png', dataUrl });
+      images.push(await prepareBugScreenshot(file));
     }
     hidden.value = JSON.stringify(images);
     preview.innerHTML = images.map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name)}">`).join('');
     if ((input.files || []).length > images.length) showToast('Some screenshots were skipped. Max 3 images, 2 MB each.', 'warning');
   });
+}
+
+function announcementTargetsMe(payload = {}) {
+  const target = payload.targetUserId;
+  if (target == null || target === '' || target === 'all') return true;
+  return Number(target) === Number(actorId());
+}
+
+function dismissAnnouncement() {
+  const ov = document.getElementById('announcement-overlay');
+  if (!ov) return;
+  ov.classList.remove('announcement-overlay--show');
+  setTimeout(() => ov.remove(), 260);
+}
+
+function showAnnouncementOverlay(payload = {}) {
+  if (!announcementTargetsMe(payload)) return;
+  const existing = document.getElementById('announcement-overlay');
+  if (existing) existing.remove();
+  const title = payload.title || 'Announcement';
+  const message = payload.message || '';
+  const from = payload.fromName || 'Team';
+  const overlay = document.createElement('div');
+  overlay.id = 'announcement-overlay';
+  overlay.className = 'announcement-overlay';
+  overlay.innerHTML = `
+    <div class="announcement-card" role="dialog" aria-modal="true" aria-live="assertive">
+      <div class="announcement-pulse" aria-hidden="true"></div>
+      <p class="announcement-kicker">${esc(from)}</p>
+      <h2>${esc(title)}</h2>
+      <p class="announcement-message">${esc(message)}</p>
+      <button type="button" class="btn btn-primary" data-action="dismiss-announcement">Got it</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('announcement-overlay--show'));
+}
+
+async function showAnnouncementModal(targetUserId = null) {
+  const users = await DB.getUsers().catch(() => []);
+  const selected = targetUserId != null ? Number(targetUserId) : null;
+  const targetOptions = [
+    `<option value="all" ${selected == null ? 'selected' : ''}>Everyone</option>`,
+    ...users.map(u => `<option value="${u.id}" ${Number(u.id) === selected ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` - ${departmentLabel(u.department)}` : ''}</option>`)
+  ].join('');
+  showModal('Send Announcement', `
+    <form data-form="announcement">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Show a full-screen message immediately to everyone or one teammate.</p>
+      <div class="form-group"><label>Target</label><select name="targetUserId">${targetOptions}</select></div>
+      <div class="form-group"><label>Title</label><input name="title" type="text" maxlength="90" value="Announcement" required autofocus></div>
+      <div class="form-group"><label>Message</label><textarea name="message" rows="5" class="fixed-textarea" maxlength="600" required placeholder="Write the message to show on screen."></textarea></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${ICONS.send} Send now</button></div>
+    </form>`, { lockBackdrop: true });
 }
 
 async function showAssignTaskModal(taskId) {
@@ -6339,11 +6484,17 @@ function rankIcon(label, size = 18) {
   const paths = {
     pawn: '<circle cx="12" cy="10.5" r="4.3"/><path d="M6 20c1.2-2.4 3.4-3.6 6-3.6s4.8 1.2 6 3.6z"/>',
     scout: '<path d="M12 3.5l6.2 8.3H5.8z"/><circle cx="12" cy="16.5" r="2.4"/>',
+    operator: '<rect x="5" y="5" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8M12 8v8" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     pilot: '<path d="M3 12l17.5-7.5L13 21l-3-7.2z"/>',
+    specialist: '<path d="M12 3l2.2 5.1 5.6.5-4.2 3.7 1.3 5.5L12 15l-4.9 2.8 1.3-5.5-4.2-3.7 5.6-.5z"/>',
     navigator: '<path d="M12 2.2l2.5 6.7 6.9.3-5.4 4.3 1.9 6.7L12 16.6 6.1 20.5l1.9-6.7L2.6 9.2l6.9-.3z"/>',
+    coordinator: '<circle cx="7" cy="12" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="17" cy="17" r="3"/><path d="M9.8 10.7 14.2 8.3M9.8 13.3l4.4 2.4" fill="none" stroke="currentColor" stroke-width="1.6"/>',
     commander: '<path d="M12 3l7.5 2.4v6.1c0 4.3-3.1 7.6-7.5 8.7-4.4-1.1-7.5-4.4-7.5-8.7V5.4z"/>',
+    strategist: '<path d="M4 18 18 4M7 7h10v10H7z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="7" cy="17" r="2.2"/><circle cx="17" cy="7" r="2.2"/>',
     architect: '<path d="M12 2.6l8 4.6v9.6l-8 4.6-8-4.6V7.2z"/><path d="M12 7.4l4 2.3v4.6l-4 2.3-4-2.3V9.7z" fill="#0b0e14" opacity=".35"/>',
+    vanguard: '<path d="M12 2.8 20 8v8l-8 5.2L4 16V8z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 6v12M7.5 9.5 12 6l4.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     orbital: '<circle cx="12" cy="12" r="4.2"/><ellipse cx="12" cy="12" rx="9.4" ry="3.6" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(-22 12 12)"/>',
+    apex: '<path d="M12 2.5 21 20H3z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 14h7L12 7z"/>',
     veteran: '<circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 20v-2a6 6 0 0 1 12 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 11l3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     ascendant: '<path d="M12 3v6M8 7l4-4 4 4M6 20h12M8 14h8l-1 6H9z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     transcendent: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8M12 8v8" fill="none" stroke="currentColor" stroke-width="1.8"/>',
@@ -6357,13 +6508,19 @@ function rankIcon(label, size = 18) {
 const RANK_TIERS = [
   { label: 'Pawn', tone: 'muted', min: 0 },
   { label: 'Scout', tone: 'amber', min: 25 },
-  { label: 'Pilot', tone: 'green', min: 60 },
-  { label: 'Navigator', tone: 'blue', min: 110 },
-  { label: 'Commander', tone: 'purple', min: 180 },
-  { label: 'Architect', tone: 'purple', min: 300 },
-  { label: 'Orbital', tone: 'purple', min: 460 },
+  { label: 'Operator', tone: 'green', min: 55 },
+  { label: 'Pilot', tone: 'green', min: 95 },
+  { label: 'Specialist', tone: 'blue', min: 150 },
+  { label: 'Navigator', tone: 'blue', min: 220 },
+  { label: 'Coordinator', tone: 'purple', min: 320 },
+  { label: 'Commander', tone: 'purple', min: 450 },
+  { label: 'Strategist', tone: 'purple', min: 620 },
+  { label: 'Architect', tone: 'purple', min: 840 },
+  { label: 'Vanguard', tone: 'purple', min: 1120 },
+  { label: 'Orbital', tone: 'purple', min: 1480 },
+  { label: 'Apex', tone: 'purple', min: 1900 },
 ];
-const RANK_ORDER = { Pawn: 0, Scout: 1, Pilot: 2, Navigator: 3, Commander: 4, Architect: 5, Orbital: 6, Veteran: 3, Ascendant: 5, Transcendent: 7 };
+const RANK_ORDER = { Pawn: 0, Scout: 1, Operator: 2, Pilot: 3, Specialist: 4, Navigator: 5, Coordinator: 6, Commander: 7, Strategist: 8, Architect: 9, Vanguard: 10, Orbital: 11, Apex: 12, Veteran: 5, Ascendant: 9, Transcendent: 13 };
 const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
 function romanLevel(n) { return ROMAN[Math.max(0, Math.min(4, n - 1))]; }
 
@@ -6392,16 +6549,16 @@ function profileRank(score) {
   return { label: tier.label, tone: tier.tone, level, levelRoman: romanLevel(level), next: need, nextLabel };
 }
 
-function completionMilestone(completedTasks) {
-  if (completedTasks >= 200) return { label: 'Transcendent', tone: 'purple', kind: 'milestone' };
-  if (completedTasks >= 100) return { label: 'Ascendant', tone: 'purple', kind: 'milestone' };
-  if (completedTasks >= 50) return { label: 'Veteran', tone: 'blue', kind: 'milestone' };
+function completionMilestone({ completedTasks = 0, hoursLogged = 0, founded = 0, completedFounded = 0 } = {}) {
+  if (completedTasks >= 260 || hoursLogged >= 420 || completedFounded >= 28) return { label: 'Transcendent', tone: 'purple', kind: 'milestone' };
+  if (completedTasks >= 140 || hoursLogged >= 220 || founded >= 28 || completedFounded >= 14) return { label: 'Ascendant', tone: 'purple', kind: 'milestone' };
+  if (completedTasks >= 70 || hoursLogged >= 110 || founded >= 14 || completedFounded >= 7) return { label: 'Veteran', tone: 'blue', kind: 'milestone' };
   return null;
 }
 
-function resolveUserRank(score, completedTasks) {
+function resolveUserRank(score, milestoneStats = {}) {
   const scoreRank = profileRank(score);
-  const milestone = completionMilestone(completedTasks);
+  const milestone = completionMilestone(milestoneStats);
   if (!milestone) return scoreRank;
   const scoreOrd = RANK_ORDER[scoreRank.label] ?? 0;
   const mileOrd = RANK_ORDER[milestone.label] ?? 0;
@@ -6409,21 +6566,58 @@ function resolveUserRank(score, completedTasks) {
   return scoreRank;
 }
 
-function userProfileStats(userId, projects = [], tasks = []) {
-  const uid = Number(userId);
+function resolveUserPosition({ founded = 0, completedFounded = 0, coediting = 0, assigned = 0, completedTasks = 0, hoursLogged = 0 } = {}) {
+  if (completedFounded >= 12 && completedTasks >= 120) return 'Delivery Lead';
+  if (founded >= 18) return 'Project Captain';
+  if (coediting >= 14) return 'Collaboration Lead';
+  if (hoursLogged >= 160) return 'Hours Anchor';
+  if (completedTasks >= 90) return 'Task Closer';
+  if (assigned >= 60) return 'Workstream Operator';
+  if (founded >= 6 || coediting >= 6) return 'Project Driver';
+  if (completedTasks >= 25) return 'Execution Specialist';
+  return 'Contributor';
+}
+
+function userProfileStats(userOrId, projects = [], tasks = []) {
+  const user = userOrId && typeof userOrId === 'object' ? userOrId : null;
+  const uid = Number(user?.id ?? userOrId);
   const founded = projects.filter(p => Number(p.ownerId) === uid);
   const coediting = projects.filter(p => Number(p.ownerId) !== uid && (p.editorIds || []).map(Number).includes(uid));
   const assigned = tasks.filter(t => Number(t.assigneeId) === uid);
   const completedTasks = assigned.filter(t => t.status === 'done');
   const completedFounded = founded.filter(p => p.status === 'completed' || projectStatsFromTasks(tasks, p.id).progress === 100);
-  const score = founded.length * 8 + completedFounded.length * 10 + coediting.length * 5 + completedTasks.length * 3 + assigned.filter(t => t.status === 'doing').length;
-  const rank = resolveUserRank(score, completedTasks.length);
+  const hoursLogged = Math.max(0, Number(user?.hoursLoggedTotal || 0) || 0);
+  const doingCount = assigned.filter(t => t.status === 'doing').length;
+  const score =
+    founded.length * 14 +
+    completedFounded.length * 18 +
+    coediting.length * 8 +
+    assigned.length * 2 +
+    completedTasks.length * 5 +
+    doingCount * 2 +
+    Math.floor(hoursLogged * 1.5);
+  const position = resolveUserPosition({
+    founded: founded.length,
+    completedFounded: completedFounded.length,
+    coediting: coediting.length,
+    assigned: assigned.length,
+    completedTasks: completedTasks.length,
+    hoursLogged
+  });
+  const rank = resolveUserRank(score, {
+    completedTasks: completedTasks.length,
+    hoursLogged,
+    founded: founded.length,
+    completedFounded: completedFounded.length
+  });
   return {
     founded: founded.length,
     completedFounded: completedFounded.length,
     coediting: coediting.length,
     assigned: assigned.length,
     completedTasks: completedTasks.length,
+    hoursLogged,
+    position,
     score,
     rank
   };
@@ -6467,7 +6661,7 @@ async function showUserProfileModal(userId) {
   const user = await DB.getUser(Number(userId));
   if (!user) { showToast('User not found', 'error'); return; }
   const { projects, tasks } = await getWorkspaceData();
-  const stats = userProfileStats(user.id, projects, tasks);
+  const stats = userProfileStats(user, projects, tasks);
   const isSelf = Number(user.id) === Number(actorId());
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
   const accent = user.accentColor || user.color || userColor(user);
@@ -6561,7 +6755,7 @@ async function showUserProfileModal(userId) {
           <span class="pcard-xp">${stats.score} XP</span>
         </div>
         <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
-        <div class="pcard-rank-hint">${rankHint}</div>
+        <div class="pcard-rank-hint">${esc(stats.position)} · ${rankHint}</div>
       </div>
 
       <div class="pcard-stats">
@@ -6617,7 +6811,7 @@ async function showUserProfileModal(userId) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal pcard-modal">${body}</div>`;
   ov.classList.remove('hidden');
-  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
 
   // Animate the rank bar + wire the small in-card toggles (spaces / overflow menu).
@@ -6980,7 +7174,7 @@ async function showProfileModal() {
   if (!user) { showToast('Could not load profile', 'error'); return; }
   const isAdm = s.role === 'admin';
   const { projects, tasks } = await getWorkspaceData();
-  const stats = userProfileStats(user.id, projects, tasks);
+  const stats = userProfileStats(user, projects, tasks);
   const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
   const isHex = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
   const accentHex = isHex(user.accentColor) ? user.accentColor : (isHex(user.color) ? user.color : '#4f46e5');
@@ -7043,7 +7237,7 @@ async function showProfileModal() {
       <div class="pcard-rank profile-rank--${esc(rk.tone)}">
         <div class="pcard-rank-top"><span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span><span class="pcard-xp">${stats.score} XP</span></div>
         <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
-        <div class="pcard-rank-hint">${rankHint}</div>
+        <div class="pcard-rank-hint">${esc(stats.position)} · ${rankHint}</div>
       </div>
       <div class="pcard-stats">${statCell(stats.founded, 'Projects created')}${statCell(stats.completedFounded, 'Completed')}${statCell(stats.completedTasks, 'Tasks done')}${statCell(stats.coediting, 'Collaborations')}</div>
       <div class="pcard-section"><div class="pcard-section-h">Current activity</div>${activityHtml}</div>
@@ -7108,7 +7302,7 @@ async function showProfileModal() {
     <div class="form-actions pcard-form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
   </form></div>`;
   ov.classList.remove('hidden');
-  ov.dataset.lockBackdrop = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
   requestAnimationFrame(() => {
     const fill = ov.querySelector('[data-rank-fill]');
@@ -7235,6 +7429,14 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.1', date: '2026-07-11', highlights: [
+    'Lite sync tuning to keep routine cloud traffic quieter.',
+    'Admin and team communication controls refreshed.',
+    'Small readability and activity-map improvements.',
+  ], adminNotes: [
+    'Bug management now separates open and fixed reports.',
+    'Admins can trigger live announcements and active-session logout requests.',
+  ] },
   { version: '3.3.3', date: '2026-06-25', highlights: [
     'Fixed document storage staying "not authorized" after a password change — file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
   ] },
@@ -7322,6 +7524,7 @@ async function renderSupportPage() {
           <p class="text-muted text-sm">Report issues or request improvements.</p>
           <div class="support-actions">
             <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
+            <button type="button" class="btn btn-ghost" data-action="send-announcement">${ICONS.send} Announcement</button>
             <a href="#/diagnostics" class="btn btn-ghost">${ICONS.file} Diagnostics</a>
           </div>
         </section>
@@ -7498,7 +7701,7 @@ async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
 
   return `<section class="dash-panel team-activity-map">
     <div class="dash-panel-head"><h3>Team Constellation</h3><span class="projects-page-count">A living map of who is working with whom · click a star</span></div>
-    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
+    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:620px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
     <div class="activity-pent-legend">${legend}</div>
   </section>`;
 }
@@ -7585,21 +7788,22 @@ function initializeTeamActivityD3() {
     /* ── Nodes enriched with contribution/workload/streak/availability ── */
     const nodes = users.map(u => {
       const name = u.displayName || u.username || 'Unknown';
-      const stats = userProfileStats(u.id, projects, tasks);
+      const stats = userProfileStats(u, projects, tasks);
       const assigned = tasks.filter(t => Number(t.assigneeId) === Number(u.id));
       const workload = assigned.filter(t => t.status !== 'done').length;
       const blocked = assigned.filter(t => t.status === 'blocked').length;
       const doing = assigned.filter(t => t.status === 'doing')[0] || assigned.filter(t => t.status !== 'done')[0] || null;
-      const online = isUserOnline(u);
+      const presence = presenceState(u);
+      const online = presence === 'active';
       return {
         id: Number(u.id), name,
         initials: name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
         activity: activityByUser[u.id]?.activeMinutes || 0,
         actionCount: activityByUser[u.id]?.actionCount || 0,
-        score: stats.score, rank: stats.rank,
+        score: stats.score, rank: stats.rank, position: stats.position,
         workload, blocked, currentTask: doing,
         streak: streakOf(u.id),
-        online, available: online && workload <= 2 && blocked === 0,
+        presence, online, available: online && workload <= 2 && blocked === 0,
         lastSeen: u.lastSeenAt, department: u.department || 'general',
         projectCount: stats.founded, taskCount: assigned.length,
         user: u,
@@ -7788,7 +7992,16 @@ function initializeTeamActivityD3() {
     nodeSel.filter(d => recognition[d.id] === 'comet').append('circle').attr('class', 'team-map-comet').attr('r', 4).attr('cx', d => d._r).attr('cy', d => -d._r);
 
     nodeSel.append('text').attr('text-anchor', 'middle').attr('dy', '0.36em').attr('class', 'team-map-initials').text(d => d.initials);
-    nodeSel.append('circle').attr('class', 'team-map-online-dot').attr('r', 6).attr('display', d => d.online ? null : 'none');
+    const statusWave = nodeSel.append('g')
+      .attr('class', d => `team-map-heartbeat team-map-heartbeat--${d.presence}`)
+      .attr('transform', d => `translate(${d._r - 2},${-d._r - 10})`);
+    statusWave.append('rect').attr('x', -2).attr('y', 0).attr('width', 34).attr('height', 16).attr('rx', 8);
+    statusWave.append('path')
+      .attr('d', d => d.presence === 'active'
+        ? 'M1 8 H7 L9.5 3 L13 13 L16 8 H31'
+        : d.presence === 'idle'
+          ? 'M1 8 H8 L11 5 L14 11 L17 8 H31'
+          : 'M1 8 H31');
     nodeSel.append('text').attr('class', 'team-map-name').attr('text-anchor', 'middle').attr('y', d => d._r + 18)
       .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}…` : d.name);
 
@@ -7823,6 +8036,11 @@ function initializeTeamActivityD3() {
       .force('collide', d3.forceCollide(d => d._r + 12));
 
     simulation.on('tick', () => {
+      nodes.forEach(d => {
+        const pad = Math.max(52, (d._r || 24) + 28);
+        d.x = Math.max(pad, Math.min(width - pad, d.x || width / 2));
+        d.y = Math.max(pad, Math.min(height - pad, d.y || height / 2));
+      });
       linkSel.attr('d', d => {
         const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
         const mx = (sx + tx) / 2;
@@ -7877,6 +8095,7 @@ function initializeTeamActivityD3() {
           <div><b>${esc(d.name)}</b><span>${esc(departmentLabel(d.department))} · ${rankIcon(d.rank.label, 12)}${d.rank.label}${d.rank.level ? ' ' + d.rank.levelRoman : ''}</span></div>
           <span class="team-pop-avail team-pop-avail--${avail.toLowerCase()}">${avail}</span>
         </div>
+        <div class="team-pop-row"><span>Position</span> ${esc(d.position || 'Contributor')}</div>
         <div class="team-pop-stats">
           <div><b>${d.score}</b><span>XP</span></div>
           <div><b>${d.workload}</b><span>Open</span></div>
@@ -7937,7 +8156,7 @@ function initializeTeamActivityD3() {
       try {
         const bounds = g.node().getBBox();
         if (!bounds.width || !bounds.height) return;
-        const scale = Math.min(1.6, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+        const scale = Math.min(1.6, 0.82 / Math.max(bounds.width / width, bounds.height / height));
         const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
         const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
         svg.transition().duration(260).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
@@ -7975,7 +8194,7 @@ function initializeTeamActivityD3() {
     function ambientLoop(ts) {
       const s = ts / 1000;
       nodeSel.select('.team-map-core').attr('r', d => d._r + (d.online ? Math.sin(s * 1.4 + d.id) * 1.6 : 0));
-      nodeSel.select('.team-map-online-dot').attr('cx', d => Math.cos(s * 1.6 + d.id) * (d._r + 4)).attr('cy', d => Math.sin(s * 1.6 + d.id) * (d._r + 4));
+      nodeSel.select('.team-map-heartbeat').attr('transform', d => `translate(${d._r - 2},${-d._r - 10 + Math.sin(s * 1.2 + d.id) * (d.online ? 1.4 : 0.4)})`);
       nodeSel.select('.team-map-comet').attr('cx', d => Math.cos(-s * 2 + d.id) * (d._r + 5)).attr('cy', d => Math.sin(-s * 2 + d.id) * (d._r + 5));
       // Background responds to how many are online.
       const onlineRatio = nodes.filter(n => n.online).length / Math.max(1, nodes.length);
@@ -7983,7 +8202,7 @@ function initializeTeamActivityD3() {
       ambientRAF = requestAnimationFrame(ambientLoop);
     }
     if (animate) ambientRAF = requestAnimationFrame(ambientLoop);
-    else nodeSel.select('.team-map-online-dot').attr('cx', d => d._r).attr('cy', d => -d._r);
+    else nodeSel.select('.team-map-heartbeat').attr('transform', d => `translate(${d._r - 2},${-d._r - 10})`);
 
     /* ── Overlays: constellation goal + relay baton ── */
     let constellationEdges = [];
@@ -8172,6 +8391,7 @@ function initializeTeamActivityD3() {
     });
 
     setTimeout(fit, 350);
+    setTimeout(fit, 1200);
     // Clean up ambient loop + realtime when the map element leaves the DOM.
     const cleanup = () => {
       if (ambientRAF) cancelAnimationFrame(ambientRAF);
@@ -8482,6 +8702,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
     { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
     { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'PDF previews fixed in the desktop app; themed dialogs, calmer toasts, and Escape/outside-click dismissal'] },
     { version: '3.1.12', date: 'June 2026', features: ['Project detail pages now respect the selected light/dark theme', 'Professional typography scale applied to project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Oversized task text and spacing reduced for a cleaner project workspace'] },
@@ -9075,6 +9296,25 @@ async function handleFormSubmit(e) {
       }
       hideModal();
       showToast('Bug report sent', 'success');
+    } else if (type === 'announcement') {
+      const sender = getSession();
+      const targetRaw = fd.get('targetUserId') || 'all';
+      const title = (fd.get('title') || '').trim();
+      const message = (fd.get('message') || '').trim();
+      if (!title || !message) { showToast('Title and message are required', 'warning'); return; }
+      const payload = {
+        id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        fromUserId: sender?.userId || uid,
+        fromName: sender?.displayName || sender?.username || 'Someone',
+        targetUserId: targetRaw === 'all' ? null : Number(targetRaw),
+        title,
+        message,
+        createdAt: new Date().toISOString()
+      };
+      const sent = await window.RealtimeSync?.broadcastAnnouncement?.(payload);
+      if (announcementTargetsMe(payload)) showAnnouncementOverlay(payload);
+      hideModal();
+      showToast(sent ? 'Announcement sent' : 'Announcement shown here. Realtime is offline.', sent ? 'success' : 'warning');
     } else if (type === 'update-bug-report') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       if (!DB.updateBugReport) { showToast('Bug ticket management needs the latest database update', 'warning'); return; }
@@ -9427,6 +9667,10 @@ const actions = {
     state.adminTab = b.dataset.tab || 'overview';
     await renderAdminTabbed();
   },
+  'admin-bug-tab': async (b) => {
+    state.adminBugTab = b.dataset.bugTab === 'fixed' ? 'fixed' : 'open';
+    await renderAdminTabbed();
+  },
   'add-personal-note': async () => { await window.WTNotes?.addNote?.(); },
   'dash-new-note': async () => {
     const uid = getSession()?.userId;
@@ -9446,6 +9690,7 @@ const actions = {
   'import-tasks': (b) => showTaskImportModal('', { projectId: Number(b.dataset.projectId) || state.currentProjectId || null }),
   'add-milestone': (b) => showMilestoneModal(Number(b.dataset.projectId)),
   'add-update': (b) => showUpdateModal(Number(b.dataset.projectId)),
+  'send-announcement': (b) => showAnnouncementModal(b.dataset.userId ? Number(b.dataset.userId) : null),
   'edit-project': (b) => showProjectModal(resolveProjectIdFromAction(b)),
   'delete-project': async (b) => {
     if (!canDeleteProject()) { showToast('Only admins can delete projects', 'error'); return; }
@@ -9903,17 +10148,7 @@ const actions = {
     }
   },
   'user-logout': async () => {
-    const s = getSession();
-    if (s) await DB.logActivity({ userId: s.userId, action: 'logged_out', entityType: 'session', details: s.username }).catch(() => {});
-    window.RealtimeSync?.stop?.();
-    localStorage.setItem(LOGOUT_FLAG_KEY, String(Date.now()));
-    resetClientState();
-    clearSession({ trusted: true });
-    if (isV3Mode()) window.SyncEngineV3?.signOut?.().catch(() => {});
-    else window.SupabaseDB?.signOutSupabase?.().catch(() => {});
-    wtAppBootstrapped = false;
-    window.location.hash = '';
-    await applyRoute();
+    await performLogout();
   },
   'toggle-task-group': (b) => {
     const pid = b.dataset.pid;
@@ -10188,6 +10423,27 @@ const actions = {
   'edit-user': (b) => showEditUserModalBlack(Number(b.dataset.id)),
   'edit-user-classrooms': (b) => showUserClassroomsModal(Number(b.dataset.id)),
   'reset-password': (b) => showResetPwModal(Number(b.dataset.id)),
+  'force-logout-user': async (b) => {
+    if (!isAdmin()) { showToast('Admins only', 'error'); return; }
+    const targetId = Number(b.dataset.id);
+    const s = getSession();
+    if (!targetId || targetId === Number(s?.userId)) { showToast('Cannot force logout yourself', 'warning'); return; }
+    const user = await DB.getUser(targetId).catch(() => null);
+    const name = user?.displayName || user?.username || 'this user';
+    if (!await showConfirmDialog({
+      title: 'Force logout?',
+      message: `Sign ${name} out on their active device now?`,
+      confirmLabel: 'Force logout',
+      tone: 'warning'
+    })) return;
+    const sent = await window.RealtimeSync?.broadcastForceLogout?.({
+      targetUserId: targetId,
+      fromUserId: s?.userId,
+      fromName: s?.displayName || s?.username || 'Admin',
+      reason: 'Signed out by an admin'
+    });
+    showToast(sent ? `Force logout sent to ${name}` : 'Realtime is offline. Could not send logout.', sent ? 'success' : 'warning');
+  },
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
     if (!isAdmin()) { showToast('Admins only', 'error'); return; }
@@ -10309,6 +10565,7 @@ const actions = {
     else await applyRoute();
   },
   'dismiss-celebration': () => { dismissCelebration(); },
+  'dismiss-announcement': () => { dismissAnnouncement(); },
   'export-report-pdf': async () => {
     // Comprehensive, all-inclusive project report (admin-only). Falls back to the
     // legacy monthly summary PDF if the module isn't available.
@@ -10650,12 +10907,61 @@ function presenceState(user) {
 function presenceDotHtml(user) {
   const st = presenceState(user);
   const label = st === 'active' ? 'Active now' : st === 'idle' ? 'Idle' : (user?.lastSeenAt ? 'Last active ' + timeAgo(user.lastSeenAt) : 'Offline');
-  return `<span class="presence-dot presence-dot--${st}" title="${label}"></span>`;
+  const path = st === 'active'
+    ? 'M1 8 H6 L8.5 3 L12 13 L15 8 H27'
+    : st === 'idle'
+      ? 'M1 8 H7 L10 5 L13 11 L16 8 H27'
+      : 'M1 8 H27';
+  return `<span class="presence-wave presence-wave--${st}" title="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 28 16" aria-hidden="true"><path d="${path}"></path></svg></span>`;
 }
 
 /* ──── Ranking explanation (Phase 4) ──── */
 
+function rankingExplanationBodyHtmlV2() {
+  const tiers = RANK_TIERS.map((tier, idx) => {
+    const next = RANK_TIERS[idx + 1];
+    return {
+      l: tier.label,
+      r: next ? `${tier.min} - ${next.min - 1}` : `${tier.min}+`,
+      tone: tier.tone
+    };
+  });
+  const milestones = [
+    { l: 'Veteran', r: '70 tasks / 110h / 14 projects', tone: 'blue' },
+    { l: 'Ascendant', r: '140 tasks / 220h / 28 projects', tone: 'purple' },
+    { l: 'Transcendent', r: '260 tasks / 420h / 28 completed projects', tone: 'purple' },
+  ];
+  return `
+    <p class="ranking-panel-intro">The more you found, co-edit, complete, and log, the higher your rank climbs. Task, hour, and project milestones can override your score tier.</p>
+    <div class="ranking-points">
+      <span class="ranking-point">Found a project <strong>+14</strong></span>
+      <span class="ranking-point">Complete a founded project <strong>+18</strong></span>
+      <span class="ranking-point">Co-edit a project <strong>+8</strong></span>
+      <span class="ranking-point">Assigned task <strong>+2</strong></span>
+      <span class="ranking-point">Complete a task <strong>+5</strong></span>
+      <span class="ranking-point">Task in progress <strong>+2</strong></span>
+      <span class="ranking-point">Logged hour <strong>+1.5</strong></span>
+    </div>
+    <div class="ranking-panel-section-label">Score tiers</div>
+    <div class="ranking-tiers">
+      ${tiers.map(t => `<div class="ranking-tier profile-rank--${t.tone}"><span class="rank-label">${rankIcon(t.l, 18)}${t.l}</span><small>${t.r} pts</small></div>`).join('')}
+    </div>
+    <div class="ranking-panel-section-label">Position labels</div>
+    <div class="ranking-points">
+      <span class="ranking-point">Project Captain</span>
+      <span class="ranking-point">Collaboration Lead</span>
+      <span class="ranking-point">Hours Anchor</span>
+      <span class="ranking-point">Task Closer</span>
+      <span class="ranking-point">Delivery Lead</span>
+    </div>
+    <div class="ranking-panel-section-label">Completion milestones</div>
+    <div class="ranking-tiers">
+      ${milestones.map(t => `<div class="ranking-tier profile-rank--${t.tone}"><span class="rank-label">${rankIcon(t.l, 18)}${t.l}</span><small>${t.r}</small></div>`).join('')}
+    </div>`;
+}
+
 function rankingExplanationBodyHtml() {
+  return rankingExplanationBodyHtmlV2();
   const tiers = [
     { l: 'Pawn', r: '0 – 24', tone: 'muted' },
     { l: 'Scout', r: '25 – 59', tone: 'amber' },
@@ -10727,7 +11033,7 @@ async function renderUsers() {
     getUsersCached(true),
     getWorkspaceData(),
   ]);
-  const enriched = users.map(u => ({ u, stats: userProfileStats(u.id, projects, tasks) }))
+  const enriched = users.map(u => ({ u, stats: userProfileStats(u, projects, tasks) }))
     .sort((a, b) => {
       const aOnline = isUserOnline(a.u) ? 1 : 0;
       const bOnline = isUserOnline(b.u) ? 1 : 0;
@@ -10754,6 +11060,7 @@ async function renderUsers() {
         <div class="user-card-sub">@${esc(u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}</div>
         <div class="user-card-badges">
           <span class="profile-rank profile-rank--${esc(stats.rank.tone)}"><span class="rank-label">${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}</span><strong>${stats.score}</strong></span>
+          ${badge(stats.position, 'accent')}
           ${u.role === 'admin' ? badge('Admin', 'purple') : ''}
         </div>
       </div>
@@ -11035,6 +11342,22 @@ function setupRealtimeHandlers() {
     refreshActivityViews().catch(() => {});
   });
 
+  window.addEventListener('wt-realtime-announcement', (e) => {
+    const payload = e.detail || {};
+    if (!announcementTargetsMe(payload)) return;
+    NotificationSounds?.play?.('notification');
+    showAnnouncementOverlay(payload);
+  });
+
+  window.addEventListener('wt-realtime-force-logout', (e) => {
+    const payload = e.detail || {};
+    if (Number(payload.targetUserId) !== Number(actorId())) return;
+    showToast(payload.reason || 'You were signed out by an admin.', 'warning');
+    setTimeout(() => {
+      performLogout({ reason: payload.reason || 'forced by admin' }).catch(() => {});
+    }, 250);
+  });
+
   window.addEventListener('wt-realtime-access-request', (e) => {
     const row = e.detail?.row;
     if (!row || e.detail?.eventType !== 'INSERT') return;
@@ -11234,7 +11557,7 @@ async function init() {
         return;
       }
       if (e.currentTarget.dataset.lockBackdrop === 'true') return; // don't close on outside click
-      hideModal();
+      requestModalClose();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -11246,7 +11569,11 @@ async function init() {
         else if (window.WTNotes?.isOpen?.()) window.WTNotes.close();
         else if (state.rankingPanelOpen) hideRankingPanel();
         else if (state.projectPanelOpen) hideDocumentPanel();
-        else requestModalClose();
+        else {
+          const ov = document.getElementById('modal-overlay');
+          if (ov?.dataset?.lockKeyboard === 'true') return;
+          requestModalClose();
+        }
       } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight')
         && !document.getElementById('file-preview-overlay')?.classList.contains('hidden')) {
         // Page through attachments with the arrow keys while the viewer is open.

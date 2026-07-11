@@ -14,6 +14,7 @@
   const sb = () => window.SupabaseDB?._client || null;
   const fnBase = () => `${String(cfg().supabaseUrl || "").replace(/\/$/, "")}/functions/v1`;
   const anonKey = () => cfg().supabaseAnonKey || "";
+  const FILE_META_COLS = "id,project_id,task_id,uploaded_by,original_name,mime_type,size_bytes,created_at";
 
   function enabled() { return cfg().storageProvider === "google_drive"; }
 
@@ -237,7 +238,7 @@
   async function list(projectId) {
     const client = sb();
     const { data, error } = await client.from("project_files")
-      .select("*").eq("project_id", projectId).is("deleted_at", null)
+      .select(FILE_META_COLS).eq("project_id", projectId).is("deleted_at", null)
       .order("created_at", { ascending: false });
     if (error) throw error;
     return data || [];
@@ -246,7 +247,7 @@
   // One metadata row by id (uuid).
   async function getOne(id) {
     const client = sb();
-    const { data } = await client.from("project_files").select("*").eq("id", id).is("deleted_at", null).maybeSingle();
+    const { data } = await client.from("project_files").select(FILE_META_COLS).eq("id", id).is("deleted_at", null).maybeSingle();
     return data || null;
   }
 

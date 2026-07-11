@@ -2367,8 +2367,11 @@ const SupabaseDB = {
     return data?.id;
   },
 
-  async getBugReports({ limit = 100 } = {}) {
-    const { data, error } = await this._sb().from('wt_bug_reports').select('*').order('created_at', { ascending: false }).limit(limit);
+  async getBugReports({ limit = 100, includeScreenshots = false } = {}) {
+    const cols = includeScreenshots
+      ? '*'
+      : 'id,user_id,title,description,severity,app_version,status,github_issue_url,resolution_note,created_at,updated_at';
+    const { data, error } = await this._sb().from('wt_bug_reports').select(cols).order('created_at', { ascending: false }).limit(limit);
     if (error) {
       const msg = `${error.code || ''} ${error.message || ''} ${error.details || ''}`.toLowerCase();
       if (msg.includes('does not exist') || msg.includes('schema cache')) return [];

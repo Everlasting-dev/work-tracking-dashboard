@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.5.1
+
+### Changed
+- **Lite egress tuning** - admin bug screenshots are only pulled when the Bugs tab needs them, routine safety pulls are less aggressive, and project file metadata reads request fewer columns.
+- **Admin controls** - Bugs now separates open and fixed reports, admins can send live announcements, and active users can be force-signed-out through realtime.
+- **Team polish** - expanded ranks/positions, heartbeat-style presence, a better-fitting team map, sticky admin tabs, and darker-theme update/readability fixes.
+
+### Fixed
+- **Project creation modal** - backdrop clicks and Escape no longer close a long project draft; only Create Project, Cancel, or X dismiss it.
+
 ## 3.3.3
 
 ### Fixed

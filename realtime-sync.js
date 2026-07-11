@@ -312,12 +312,18 @@ const RealtimeSync = (() => {
     _teamChannel.on('broadcast', { event: 'sync' }, ({ payload }) => {
       _scheduleTeamPull(payload || {});
     });
+    _teamChannel.on('broadcast', { event: 'announcement' }, ({ payload }) => {
+      window.dispatchEvent(new CustomEvent('wt-realtime-announcement', { detail: payload || {} }));
+    });
+    _teamChannel.on('broadcast', { event: 'force-logout' }, ({ payload }) => {
+      window.dispatchEvent(new CustomEvent('wt-realtime-force-logout', { detail: payload || {} }));
+    });
     _teamChannel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR') console.warn('[RealtimeSync] team sync channel error');
     });
   }
 
-  async function broadcastTeamSync(detail = {}) {
+  async function _broadcastTeamEvent(event, detail = {}) {
     if (!_client || !navigator.onLine) return false;
     if (!_teamChannel) _initTeamChannel();
     try {
@@ -331,14 +337,26 @@ const RealtimeSync = (() => {
       }
       await _teamChannel.send({
         type: 'broadcast',
-        event: 'sync',
+        event,
         payload: { ...detail, at: Date.now() }
       });
       return true;
     } catch (err) {
-      console.warn('[RealtimeSync] broadcastTeamSync failed', err);
+      console.warn(`[RealtimeSync] ${event} broadcast failed`, err);
       return false;
     }
+  }
+
+  async function broadcastTeamSync(detail = {}) {
+    return _broadcastTeamEvent('sync', detail);
+  }
+
+  async function broadcastAnnouncement(detail = {}) {
+    return _broadcastTeamEvent('announcement', detail);
+  }
+
+  async function broadcastForceLogout(detail = {}) {
+    return _broadcastTeamEvent('force-logout', detail);
   }
 
   function _subscribe(table, handler, filter) {
@@ -435,7 +453,7 @@ const RealtimeSync = (() => {
     return init(session.userId);
   }
 
-  return { init, stop, restart, isConnected, broadcastTeamSync };
+  return { init, stop, restart, isConnected, broadcastTeamSync, broadcastAnnouncement, broadcastForceLogout };
 })();
 
 window.RealtimeSync = RealtimeSync;

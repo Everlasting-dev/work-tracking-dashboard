@@ -22,6 +22,9 @@ const SyncEngine = (() => {
   let _lastPullAt    = 0;
   let _pullTimer     = null;
   let _safetyTimer   = null;
+  const FALLBACK_PULL_MS = 2 * 60 * 1000;
+  const SAFETY_PULL_MS = 30 * 60 * 1000;
+  const FOCUS_PULL_STALE_MS = 10 * 60 * 1000;
 
   // ── Persistence ─────────────────────────────────────────────────────
 
@@ -629,7 +632,14 @@ const SyncEngine = (() => {
           return (data || []).map(r => sb._mapNotification(r));
         })(),
         sb.getProjectAccessRequests ? sb.getProjectAccessRequests() : Promise.resolve([]),
-        sb.getBugReports ? sb.getBugReports({ limit: 500 }) : Promise.resolve([]),
+        (async () => {
+          if (!sb.getBugReports) return [];
+          const sessionUser = myId ? await window.LocalDB?.db?.users?.get(Number(myId)).catch(() => null) : null;
+          if (sessionUser?.role !== 'admin') return [];
+          // Screenshot data URLs can be several MB each. Periodic sync only
+          // needs ticket metadata; admins fetch screenshots on demand in the UI.
+          return sb.getBugReports({ limit: 80, includeScreenshots: false });
+        })(),
         sb._sb().from('wt_user_classrooms').select('*').then(({ data, error }) => {
           if (error) throw error;
           return (data || []).map(r => ({ id: r.id, userId: r.user_id, classroomId: r.classroom_id, createdAt: r.created_at }));
@@ -879,11 +889,11 @@ const SyncEngine = (() => {
       const rtConnected = window.RealtimeSync?.isConnected?.();
       if (rtConnected) return;
       pull().catch(() => {});
-    }, 60000);
+    }, FALLBACK_PULL_MS);
     _safetyTimer = setInterval(() => {
       if (!_client || !navigator.onLine || _pullRunning || _hidden()) return;
       pull().catch(() => {});
-    }, 300000);
+    }, SAFETY_PULL_MS);
   }
 
   function getLastPullAt() { return _lastPullAt; }
@@ -968,6 +978,7 @@ const SyncEngine = (() => {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         if (!_client || !navigator.onLine || _pullRunning) return;
+        if (Date.now() - _lastPullAt < FOCUS_PULL_STALE_MS) return;
         pull().catch(() => {});
       });
     }
