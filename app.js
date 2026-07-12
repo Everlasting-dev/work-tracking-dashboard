@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.2'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.3'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -7694,6 +7694,13 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.3', date: '2026-07-12', highlights: [
+    'Teams now opens directly to the member cards and status view.',
+    'Removed the extra Team Flow / Project Rooms panel from above the cards.',
+    'Teams does less background summary work when it loads.',
+  ], adminNotes: [
+    'No database changes required.',
+  ] },
   { version: '3.5.2', date: '2026-07-11', highlights: [
     'Lite refresh behavior is calmer during routine use.',
     'Team tiles and status visibility stay in place while the old constellation map is removed.',
@@ -8437,6 +8444,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.5.3', date: 'July 2026', features: ['Team page simplified to member cards', 'Less team summary loading', 'Minor Lite polish'] },
     { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
     { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
     { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
@@ -10875,13 +10883,11 @@ async function renderUsers() {
     </div>`;
   }).join('');
 
-  const heatmapHtml = users.length ? await buildTeamActivityHeatmapHtml(users, projects, tasks) : '';
   content.innerHTML = `
     <div class="view-header">
       <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} · ranked by contribution</p></div>
       <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
     </div>
-    ${heatmapHtml}
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
 }

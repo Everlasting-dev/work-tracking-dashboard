@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.5.3
+
+### Changed
+- **Team page** - Teams now opens directly to the ranked member cards with status visibility, without the extra Team Flow / Project Rooms panel above them.
+
+### Fixed
+- **Lite egress** - the Teams page no longer requests the additional weekly team activity summary used only by the removed panel.
+
 ## 3.5.2
 
 ### Changed
