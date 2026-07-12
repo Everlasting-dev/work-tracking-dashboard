@@ -88,7 +88,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.3.3'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.2'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -1197,12 +1197,176 @@ const state = {
   _scrollPositions: {},
   _scrollManagerInstalled: false,
   adminTab: 'overview',
-  adminBugTab: 'open'
+  adminBugTab: 'open',
+  teamView: localStorage.getItem('wt-team-view-v1') || 'flow',
+  shortcutPrefix: null,
+  shortcutPrefixAt: 0
 };
 
 let wtAppBootstrapped = false;
 
 const THEME_KEY = 'wt-theme-mode-v1';
+const PERFORMANCE_KEY = 'wt-performance-mode-v1';
+const SHORTCUT_OVERRIDES_KEY = 'wt-shortcut-overrides-v1';
+
+const PERFORMANCE_MODES = {
+  full: {
+    label: 'Full',
+    description: 'Short transitions, visual polish, normal realtime, and normal refresh cadence.',
+    realtime: true,
+    blur: true,
+    animation: true
+  },
+  balanced: {
+    label: 'Balanced',
+    description: 'Reduced decorative motion, lighter blur, and calmer background work.',
+    realtime: true,
+    blur: false,
+    animation: false
+  },
+  'low-power': {
+    label: 'Low Power',
+    description: 'No decorative animation, no blur, static workspace surfaces, slower refresh, and no global realtime.',
+    realtime: false,
+    blur: false,
+    animation: false
+  }
+};
+
+function getPerformanceMode() {
+  const saved = localStorage.getItem(PERFORMANCE_KEY);
+  if (saved && PERFORMANCE_MODES[saved]) return saved;
+  try {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return 'low-power';
+  } catch (_) {}
+  return 'balanced';
+}
+
+function applyPerformanceMode(mode = getPerformanceMode()) {
+  const next = PERFORMANCE_MODES[mode] ? mode : 'balanced';
+  document.body.classList.toggle('perf-full', next === 'full');
+  document.body.classList.toggle('perf-balanced', next === 'balanced');
+  document.body.classList.toggle('perf-low-power', next === 'low-power');
+  document.documentElement.dataset.performanceMode = next;
+  localStorage.setItem(PERFORMANCE_KEY, next);
+  try { window.dispatchEvent(new CustomEvent('wt-performance-mode-changed', { detail: { mode: next } })); } catch (_) {}
+  return next;
+}
+
+function setPerformanceMode(mode) {
+  const next = applyPerformanceMode(mode);
+  if (window.RealtimeSync) {
+    if (PERFORMANCE_MODES[next].realtime) window.RealtimeSync.restart?.();
+    else window.RealtimeSync.stop?.();
+  }
+  showToast(`Performance mode: ${PERFORMANCE_MODES[next].label}`, 'success');
+  return next;
+}
+
+function shouldUseRealtime() {
+  return !!PERFORMANCE_MODES[getPerformanceMode()]?.realtime;
+}
+
+window.WT_shouldUseRealtime = shouldUseRealtime;
+
+const SHORTCUT_DEFAULTS = [
+  { id: 'command.open', category: 'Search', action: 'Open command centre', description: 'Search actions, pages, projects, tasks, and members.', keys: ['Mod+K'] },
+  { id: 'shortcuts.open', category: 'Settings', action: 'Open shortcut guide', description: 'Open the shortcut settings panel.', keys: ['Mod+/'] },
+  { id: 'nav.dashboard', category: 'Navigation', action: 'Dashboard', description: 'Open the admin dashboard when available.', keys: ['G D'] },
+  { id: 'nav.projects', category: 'Navigation', action: 'Projects', description: 'Open the project landing page.', keys: ['G P'] },
+  { id: 'nav.tasks', category: 'Navigation', action: 'Tasks', description: 'Open the task board.', keys: ['G A'] },
+  { id: 'nav.team', category: 'Navigation', action: 'Team', description: 'Open the team tiles and status view.', keys: ['G T'] },
+  { id: 'nav.settings', category: 'Navigation', action: 'Settings', description: 'Open settings.', keys: ['G S'] },
+  { id: 'create.task', category: 'Creation', action: 'New task', description: 'Create a task in the current project context.', keys: ['N T', 'Mod+N'] },
+  { id: 'create.project', category: 'Creation', action: 'New project', description: 'Open project creation.', keys: ['N P', 'Mod+Shift+N'] },
+  { id: 'search.focus', category: 'Search', action: 'Focus page search', description: 'Focus the current page search field.', keys: ['/'] },
+  { id: 'form.save', category: 'Creation', action: 'Save current form', description: 'Submit the focused form when possible.', keys: ['Mod+S'] },
+  { id: 'performance.toggle', category: 'Settings', action: 'Toggle low-power mode', description: 'Switch between Balanced and Low Power.', keys: ['Mod+Shift+P'] },
+  { id: 'notes.toggle', category: 'Creation', action: 'Toggle notes', description: 'Open or close personal notes.', keys: ['Alt+N'] }
+];
+
+function loadShortcutOverrides() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SHORTCUT_OVERRIDES_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveShortcutOverrides(overrides) {
+  localStorage.setItem(SHORTCUT_OVERRIDES_KEY, JSON.stringify(overrides || {}));
+}
+
+function shortcutPref(id) {
+  const def = SHORTCUT_DEFAULTS.find(s => s.id === id);
+  const overrides = loadShortcutOverrides();
+  const custom = overrides[id] || {};
+  return {
+    ...def,
+    keys: Array.isArray(custom.keys) && custom.keys.length ? custom.keys : (def?.keys || []),
+    enabled: custom.enabled !== false
+  };
+}
+
+function shortcutLabel(keys) {
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || '');
+  return (keys || []).map(k => String(k)
+    .replace(/Mod/g, mac ? 'Cmd' : 'Ctrl')
+    .replace(/\+/g, ' + ')
+    .replace(/^([A-Z0-9]) ([A-Z0-9])$/i, '$1 then $2')
+  ).join(', ');
+}
+
+function eventShortcutChord(e) {
+  const key = e.key === ' ' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  const parts = [];
+  if (e.ctrlKey || e.metaKey) parts.push('Mod');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.altKey) parts.push('Alt');
+  parts.push(key);
+  return parts.join('+');
+}
+
+function isTypingTarget(target) {
+  return !!target?.closest?.('input, textarea, select, [contenteditable="true"], .ProseMirror, .ql-editor');
+}
+
+function shortcutConflicts() {
+  const seen = new Map();
+  const conflicts = new Set();
+  for (const def of SHORTCUT_DEFAULTS) {
+    const pref = shortcutPref(def.id);
+    if (!pref.enabled) continue;
+    for (const key of pref.keys.map(k => k.trim().toLowerCase()).filter(Boolean)) {
+      const existing = seen.get(key);
+      if (existing) {
+        conflicts.add(existing);
+        conflicts.add(def.id);
+      } else {
+        seen.set(key, def.id);
+      }
+    }
+  }
+  return conflicts;
+}
+
+function setShortcutOverride(id, patch) {
+  const overrides = loadShortcutOverrides();
+  const current = overrides[id] || {};
+  overrides[id] = { ...current, ...patch };
+  saveShortcutOverrides(overrides);
+}
+
+function resetShortcutOverride(id = null) {
+  if (!id) {
+    saveShortcutOverrides({});
+    return;
+  }
+  const overrides = loadShortcutOverrides();
+  delete overrides[id];
+  saveShortcutOverrides(overrides);
+}
 
 function getThemeMode() {
   const saved = localStorage.getItem(THEME_KEY);
@@ -1562,7 +1726,7 @@ async function showApp() {
   prewarmWorkspaceCache();
   startSidebarClock();
   startPresenceHeartbeat();
-  if (isCloudMode() && window.RealtimeSync) {
+  if (isCloudMode() && window.RealtimeSync && shouldUseRealtime()) {
     RealtimeSync.init(s.userId).catch(() => {});
   }
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
@@ -4652,8 +4816,88 @@ async function renderAdminTabbed() {
     ${body}`;
 }
 
+function renderPerformanceSettingsHtml({ compact = false } = {}) {
+  const current = getPerformanceMode();
+  return `<section class="section-card settings-foundation-card">
+    <div class="section-header">
+      <div>
+        <h2>Performance</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Control animation, blur, realtime, and background activity on this device.</p>
+      </div>
+      ${badge(PERFORMANCE_MODES[current].label, current === 'low-power' ? 'amber' : current === 'full' ? 'purple' : 'green')}
+    </div>
+    <div class="section-body settings-performance-grid">
+      ${Object.entries(PERFORMANCE_MODES).map(([key, mode]) => `<button type="button" class="settings-performance-option ${key === current ? 'active' : ''}" data-action="set-performance-mode" data-mode="${esc(key)}">
+        <strong>${esc(mode.label)}</strong>
+        <span>${esc(mode.description)}</span>
+        <small>${mode.realtime ? 'Realtime on' : 'Realtime quiet'} · ${mode.animation ? 'Motion on' : 'Static UI'} · ${mode.blur ? 'Blur on' : 'No blur'}</small>
+      </button>`).join('')}
+    </div>
+    ${compact ? '' : '<p class="text-muted text-sm" style="padding:0 20px 18px">Low Power also pauses the global realtime channel. Critical changes still sync on manual refresh and normal background pulls.</p>'}
+  </section>`;
+}
+
+function renderShortcutSettingsHtml() {
+  const conflicts = shortcutConflicts();
+  const rows = SHORTCUT_DEFAULTS.map(def => {
+    const pref = shortcutPref(def.id);
+    const hasConflict = conflicts.has(def.id);
+    return `<tr>
+      <td><strong>${esc(def.action)}</strong><small>${esc(def.description)}</small></td>
+      <td>${(pref.keys || []).map(k => `<kbd>${esc(shortcutLabel([k]))}</kbd>`).join(' ')}</td>
+      <td>${badge(def.category, 'muted')}</td>
+      <td>${hasConflict ? badge('Conflict', 'red') : (pref.enabled ? badge('Enabled', 'green') : badge('Disabled', 'muted'))}</td>
+      <td class="settings-shortcut-actions">
+        <button type="button" class="btn btn-sm btn-ghost" data-action="toggle-shortcut-enabled" data-shortcut-id="${esc(def.id)}">${pref.enabled ? 'Disable' : 'Enable'}</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="edit-shortcut" data-shortcut-id="${esc(def.id)}">Edit</button>
+        <button type="button" class="btn-icon" data-action="reset-shortcut" data-shortcut-id="${esc(def.id)}" title="Reset">${ICONS.refresh}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<section class="section-card settings-foundation-card">
+    <div class="section-header">
+      <div>
+        <h2>Keyboard Shortcuts</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Shortcuts are local to this device. Sequential shortcuts do not fire while typing.</p>
+      </div>
+      <div class="settings-shortcut-toolbar">
+        <button type="button" class="btn btn-sm btn-ghost" data-action="export-shortcuts">${ICONS.download} Export</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="import-shortcuts">${ICONS.upload} Import</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="reset-all-shortcuts">${ICONS.refresh} Defaults</button>
+      </div>
+    </div>
+    <div class="section-body settings-shortcuts-body">
+      <div class="settings-shortcuts-search-wrap">
+        <input type="search" class="settings-shortcuts-search" data-shortcuts-filter placeholder="Search shortcuts">
+      </div>
+      <div class="settings-shortcuts-table-wrap">
+        <table class="settings-shortcuts-table">
+          <thead><tr><th>Action</th><th>Keys</th><th>Group</th><th>Status</th><th>Controls</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  </section>`;
+}
+
+async function renderPersonalSettings() {
+  const content = document.getElementById('content');
+  if (!content) return;
+  content.innerHTML = `
+    <div class="view-header">
+      <div><h1>Settings</h1><p class="view-subtitle">Personal controls for shortcuts, performance, and app behavior.</p></div>
+    </div>
+    <div class="settings-category-grid">
+      <a class="settings-category-card" href="#/settings" data-action="open-command-palette"><strong>Command Centre</strong><span>Ctrl/Cmd + K for navigation and actions.</span></a>
+      <div class="settings-category-card"><strong>Low Power</strong><span>Static UI, no blur, quieter realtime.</span></div>
+      <div class="settings-category-card"><strong>Shortcuts</strong><span>Customize, disable, export, or reset key bindings.</span></div>
+    </div>
+    ${renderPerformanceSettingsHtml()}
+    ${renderShortcutSettingsHtml()}`;
+}
+
 async function renderSettings() {
-  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+  if (!isAdmin()) { await renderPersonalSettings(); return; }
   const content = document.getElementById('content');
   await ensureDepartmentCfg();
   const [{ users, projects }, departments, classrooms, workflowTemplates] = await Promise.all([
@@ -4756,8 +5000,16 @@ async function renderSettings() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Settings</h1><p class="view-subtitle">Workspace configuration</p></div>
+      <div><h1>Settings</h1><p class="view-subtitle">Workspace configuration, shortcuts, and performance.</p></div>
     </div>
+    <div class="settings-category-grid">
+      <div class="settings-category-card"><strong>General</strong><span>Workspace, classroom, and department defaults.</span></div>
+      <div class="settings-category-card"><strong>Shortcuts</strong><span>Local command and navigation shortcuts.</span></div>
+      <div class="settings-category-card"><strong>Performance</strong><span>Full, Balanced, and Low Power modes.</span></div>
+      <div class="settings-category-card"><strong>Administration</strong><span>Users, visibility, templates, and data tools.</span></div>
+    </div>
+    ${renderPerformanceSettingsHtml({ compact: true })}
+    ${renderShortcutSettingsHtml()}
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header">
         <div>
@@ -6159,11 +6411,18 @@ async function showCommandPalette(initialQuery = '') {
   const input = document.getElementById('command-palette-input');
   const results = document.getElementById('command-palette-results');
   const routeCommands = [
-    { label: 'Open Orbit Map', sub: 'Team activity & connections map', route: '/users' },
+    { label: 'Go to Team', sub: 'User tiles and status visibility', route: '/users' },
     { label: 'Go to Projects', sub: 'Project grid and onboarding', route: '/projects' },
     { label: 'Go to Tasks', sub: 'Board and table views', route: '/tasks' },
     { label: 'Go to Reports', sub: 'Workspace reporting', route: '/reports' },
-    { label: 'Go to Settings', sub: 'Workspace settings', route: '/settings' }
+    { label: 'Go to Support', sub: 'Help, changelog, and diagnostics', route: '/support' },
+    { label: 'Go to Settings', sub: 'Shortcuts, performance, workspace settings', route: '/settings' },
+    ...(isAdmin() ? [{ label: 'Go to Admin', sub: 'Users, bugs, data, and workspace tools', route: '/admin' }] : [])
+  ];
+  const actionCommands = [
+    { label: 'Toggle low-power mode', sub: `Current: ${PERFORMANCE_MODES[getPerformanceMode()].label}`, action: 'command-toggle-performance', icon: ICONS.bolt || '⚡' },
+    { label: 'Open shortcut guide', sub: shortcutLabel(shortcutPref('shortcuts.open').keys), action: 'command-open-shortcuts', icon: ICONS.keyboard || '⌨' },
+    { label: 'Open notifications', sub: 'Notification inbox', action: 'command-route', route: '/notifications', icon: ICONS.bell }
   ];
 
   const render = () => {
@@ -6175,16 +6434,23 @@ async function showCommandPalette(initialQuery = '') {
     const taskMatches = visibleTasks
       .filter(t => !q || taskSearchHaystack(t, pMap[t.projectId], uMap[t.assigneeId]).includes(q))
       .slice(0, 8);
+    const userMatches = users
+      .filter(u => !q || normalizeSearchText(`${u.displayName || ''} ${u.username || ''} ${departmentLabel(u.department || '')}`).includes(q))
+      .slice(0, 8);
     const routeMatches = routeCommands.filter(cmd => !q || normalizeSearchText(`${cmd.label} ${cmd.sub}`).includes(q));
+    const actionMatches = actionCommands.filter(cmd => !q || normalizeSearchText(`${cmd.label} ${cmd.sub}`).includes(q));
     results.innerHTML = `
       <div class="command-group">
         <div class="command-group-label">Actions</div>
         <button type="button" class="command-item" data-action="command-create-task">
-          <span>${ICONS.plus}</span><strong>Create task</strong><em>Ctrl N</em>
+          <span>${ICONS.plus}</span><strong>Create task</strong><em>${esc(shortcutLabel(shortcutPref('create.task').keys))}</em>
         </button>
         <button type="button" class="command-item" data-action="command-create-project">
-          <span>${ICONS.folder}</span><strong>Create project</strong><em>Ctrl Shift N</em>
+          <span>${ICONS.folder}</span><strong>Create project</strong><em>${esc(shortcutLabel(shortcutPref('create.project').keys))}</em>
         </button>
+        ${actionMatches.map(cmd => `<button type="button" class="command-item" data-action="${esc(cmd.action)}" ${cmd.route ? `data-route="${esc(cmd.route)}"` : ''}>
+          <span>${cmd.icon}</span><strong>${esc(cmd.label)}</strong><small>${esc(cmd.sub)}</small>
+        </button>`).join('')}
       </div>
       ${routeMatches.length ? `<div class="command-group">
         <div class="command-group-label">Navigate</div>
@@ -6204,7 +6470,13 @@ async function showCommandPalette(initialQuery = '') {
           <span class="status-dot status-dot-${esc(t.status)}"></span><strong>${esc(t.title)}</strong><small>${esc(pMap[t.projectId]?.name || 'Project')}</small>
         </button>`).join('')}
       </div>` : ''}
-      ${!projectMatches.length && !taskMatches.length && !routeMatches.length ? '<p class="command-empty">No matching command.</p>' : ''}
+      ${userMatches.length ? `<div class="command-group">
+        <div class="command-group-label">Members</div>
+        ${userMatches.map(u => `<button type="button" class="command-item" data-action="command-open-user" data-user-id="${u.id}">
+          <span>${presenceDotHtml(u)}</span><strong>${esc(u.displayName || u.username)}</strong><small>@${esc(u.username)}${u.department ? ` / ${esc(departmentLabel(u.department))}` : ''}</small>
+        </button>`).join('')}
+      </div>` : ''}
+      ${!projectMatches.length && !taskMatches.length && !userMatches.length && !routeMatches.length && !actionMatches.length ? '<p class="command-empty">No matching command.</p>' : ''}
     `;
   };
   // Keyboard navigation: ↑/↓ move the highlight, Enter runs it (cmdk feel).
@@ -6762,7 +7034,7 @@ async function showUserProfileModal(userId) {
         ${statCell(stats.founded, 'Projects created')}
         ${statCell(stats.completedFounded, 'Completed')}
         ${statCell(stats.completedTasks, 'Tasks done')}
-        ${statCell(stats.coediting, 'Collaborations', `data-action="pcard-highlight-collabs" data-user-id="${user.id}" title="Highlight collaborations on the team map"`)}
+        ${statCell(stats.coediting, 'Collaborations')}
       </div>
 
       <div class="pcard-section">
@@ -6797,14 +7069,7 @@ async function showUserProfileModal(userId) {
       <div class="pcard-actions">
         ${actionsRight}
         ${isSelf ? '' : `<button type="button" class="pcard-btn" data-action="add-task" data-default-status="todo" data-assignee-id="${user.id}">Assign task</button>`}
-        <button type="button" class="pcard-btn" data-action="show-user-profile-full" data-user-id="${user.id}">View profile</button>
-        <div class="pcard-menu">
-          <button type="button" class="pcard-btn pcard-btn--icon" data-pcard-toggle="menu" aria-label="More">⋯</button>
-          <div class="pcard-menu-list" data-menu hidden>
-            <button type="button" data-action="pcard-highlight-collabs" data-user-id="${user.id}">Highlight on map</button>
-            ${isSelf ? `<button type="button" data-action="user-view-profile">Open my profile</button>` : ''}
-          </div>
-        </div>
+        ${isSelf ? `<button type="button" class="pcard-btn" data-action="user-view-profile">Open my profile</button>` : ''}
       </div>
     </div>`;
 
@@ -7294,7 +7559,7 @@ async function showProfileModal() {
         <div class="form-group"><label>Address</label><input name="address" type="text" value="${esc(user.address || '')}"></div>
         ${isAdm ? `<div class="form-group"><label>Department</label><select name="department"><option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>${departmentOptionsHtml(user.department || '')}</select></div>` : `<div class="form-group"><label>Department</label><div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div></div>`}
         <input name="color" type="hidden" value="#000000">
-        <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide me from the team activity map</strong></span></label>
+        <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide my tile from the team view</strong></span></label>
         <div class="profile-security-row"><div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from Admin.' : 'Ask an admin for a one-time password.'}</p></div>
           ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}</div>
       </div>
@@ -7429,6 +7694,13 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.2', date: '2026-07-11', highlights: [
+    'Lite refresh behavior is calmer during routine use.',
+    'Team tiles and status visibility stay in place while the old constellation map is removed.',
+    'Shortcut and performance controls were polished.',
+  ], adminNotes: [
+    'Admin broadcast, logout, and bug-management tools received stability polish.',
+  ] },
   { version: '3.5.1', date: '2026-07-11', highlights: [
     'Lite sync tuning to keep routine cloud traffic quieter.',
     'Admin and team communication controls refreshed.',
@@ -7539,7 +7811,7 @@ async function renderSupportPage() {
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
           <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace — projects, boards, notes, and documents in one app.</p>
-          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, D3 · Quill · jsPDF · SortableJS, and Electron. Made by Everlasting.</p>
+          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, Quill, jsPDF, SortableJS, and Electron. Made by Everlasting.</p>
         </section>
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>Release notes</h3></div>
@@ -7682,726 +7954,189 @@ function teamMapDeptColor(dept) {
   return TEAM_DEPT_COLORS[h % TEAM_DEPT_COLORS.length];
 }
 
+function teamMemberModel(user, projects = [], tasks = [], activityByUser = {}) {
+  const uid = Number(user?.id);
+  const assigned = tasks.filter(t => Number(t.assigneeId) === uid);
+  const open = assigned.filter(t => t.status !== 'done');
+  const blocked = open.filter(t => t.status === 'blocked' || t.blocked || t.blockerReason);
+  const reviewing = open.filter(t => t.status === 'review' || t.status === 'in_review' || t.reviewRequestedAt);
+  const doing = open.find(t => t.status === 'doing') || reviewing[0] || open[0] || null;
+  const project = doing ? projects.find(p => Number(p.id) === Number(doing.projectId)) : null;
+  const owned = projects.filter(p => Number(p.ownerId) === uid);
+  const coediting = projects.filter(p => Number(p.ownerId) !== uid && (p.editorIds || []).map(Number).includes(uid));
+  const stats = userProfileStats(user, projects, tasks);
+  const presence = presenceState(user);
+  const lastSeenMs = user?.lastSeenAt ? Date.parse(user.lastSeenAt) : 0;
+  const lastSeenAge = Number.isFinite(lastSeenMs) ? Date.now() - lastSeenMs : Infinity;
+  let flow = 'available';
+  if (!lastSeenMs || lastSeenAge > 24 * 60 * 60 * 1000) flow = 'offline';
+  else if (blocked.length) flow = 'blocked';
+  else if (reviewing.length) flow = 'reviewing';
+  else if (open.some(t => t.status === 'doing')) flow = 'working';
+  else if (presence === 'away') flow = 'away';
+  const activity = activityByUser?.[uid] || activityByUser?.[String(uid)] || {};
+  return {
+    user,
+    uid,
+    assigned,
+    open,
+    blocked,
+    reviewing,
+    doing,
+    project,
+    owned,
+    coediting,
+    stats,
+    presence,
+    flow,
+    workload: open.length,
+    activityMinutes: activity.activeMinutes || 0,
+    actionCount: activity.actionCount || 0
+  };
+}
+
+function teamMemberCardHtml(member, { compact = false } = {}) {
+  const u = member.user;
+  const name = u.displayName || u.username || 'Unknown';
+  const initials = name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const avatar = avatarSrc(u)
+    ? `<img src="${esc(avatarSrc(u))}" alt="${esc(initials)}">`
+    : esc(initials);
+  const projectName = member.project?.name || member.owned[0]?.name || member.coediting[0]?.name || 'No active project';
+  const taskName = member.doing?.title || (member.open.length ? 'Queued work' : 'Available');
+  const progress = member.project ? projectStatsFromTasks(tasksForProjectCache(member.project.id), member.project.id).progress : 0;
+  const activityLabel = member.activityMinutes
+    ? `${Math.round(member.activityMinutes)}m active this week`
+    : member.actionCount
+      ? `${member.actionCount} actions this week`
+      : (u.lastSeenAt ? `Last active ${timeAgo(u.lastSeenAt)}` : 'No recent activity');
+  return `<button type="button" class="team-flow-card team-flow-card--${esc(member.flow)} ${compact ? 'team-flow-card--compact' : ''}" data-action="show-user-profile" data-user-id="${u.id}">
+    <span class="team-flow-avatar" ${userColorStyle(u)}>${avatar}</span>
+    <span class="team-flow-main">
+      <strong>${esc(name)}</strong>
+      <small>${esc(member.stats.position)}${u.department ? ` · ${esc(departmentLabel(u.department))}` : ''}</small>
+    </span>
+    <span class="team-flow-presence">${presenceDotHtml(u)}</span>
+    ${compact ? '' : `<span class="team-flow-work">
+      <b>${esc(projectName)}</b>
+      <small>${esc(taskName)}</small>
+      <span class="team-flow-progress"><span class="team-flow-progress-track"><i style="width:${progress}%"></i></span><em>${progress}%</em></span>
+    </span>`}
+    <span class="team-flow-meta">
+      <span>${member.workload} open</span>
+      <span>${member.blocked.length} blocked</span>
+      <span>${esc(activityLabel)}</span>
+    </span>
+  </button>`;
+}
+
+function tasksForProjectCache(projectId) {
+  const all = state._teamLiteTasks || [];
+  return all.filter(t => Number(t.projectId) === Number(projectId));
+}
+
+function renderTeamFlowHtml(members) {
+  const groups = [
+    ['available', 'Available'],
+    ['working', 'Working'],
+    ['reviewing', 'Reviewing'],
+    ['blocked', 'Blocked'],
+    ['away', 'Away'],
+    ['offline', 'Offline']
+  ];
+  return `<div class="team-flow-grid">
+    ${groups.map(([key, label]) => {
+      const list = members.filter(m => m.flow === key);
+      return `<section class="team-flow-column team-flow-column--${key}">
+        <div class="team-flow-column-head"><strong>${label}</strong><span>${list.length}</span></div>
+        <div class="team-flow-list">${list.length ? list.map(m => teamMemberCardHtml(m)).join('') : '<p class="team-lite-empty">Nobody here right now.</p>'}</div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
+function projectRoomMembers(project, members, tasks = []) {
+  const ids = new Set();
+  if (project.ownerId != null) ids.add(Number(project.ownerId));
+  (project.editorIds || []).forEach(id => ids.add(Number(id)));
+  tasks.filter(t => Number(t.projectId) === Number(project.id) && t.assigneeId != null && t.status !== 'done')
+    .forEach(t => ids.add(Number(t.assigneeId)));
+  return members.filter(m => ids.has(Number(m.uid)));
+}
+
+function renderProjectRoomsHtml(members, projects = [], tasks = []) {
+  const activeProjects = [...projects]
+    .map(project => {
+      const projectTasks = tasks.filter(t => Number(t.projectId) === Number(project.id));
+      const open = projectTasks.filter(t => t.status !== 'done');
+      const people = projectRoomMembers(project, members, tasks);
+      const progress = projectStatsFromTasks(tasks, project.id).progress;
+      return { project, people, projectTasks, open, progress };
+    })
+    .filter(room => room.people.length || room.open.length)
+    .sort((a, b) => b.people.length - a.people.length || b.open.length - a.open.length)
+    .slice(0, 12);
+  const activeIds = new Set(activeProjects.flatMap(room => room.people.map(m => m.uid)));
+  const bench = members.filter(m => !activeIds.has(m.uid));
+  const roomsHtml = activeProjects.map(room => {
+    const blocked = room.projectTasks.filter(t => t.status === 'blocked' || t.blocked || t.blockerReason).length;
+    const nextTask = room.open.sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')))[0];
+    return `<article class="team-room-card">
+      <div class="team-room-head">
+        <div><strong>${esc(room.project.name)}</strong><small>${esc(STAT_CFG[room.project.status]?.l || room.project.status || 'Active')} · ${room.open.length} open task${room.open.length === 1 ? '' : 's'}</small></div>
+        ${badge(`${room.people.length} ${room.people.length === 1 ? 'member' : 'members'}`, 'blue')}
+      </div>
+      <div class="team-room-progress">${progressBar(room.progress, 'sm')}<span>${room.progress}%</span></div>
+      <div class="team-room-meta">
+        <span>${blocked ? `${blocked} blockers` : 'No blockers'}</span>
+        <span>${nextTask ? `Next: ${esc(nextTask.title)}` : 'No active task'}</span>
+        <span>${room.project.updatedAt ? `Updated ${timeAgo(room.project.updatedAt)}` : 'No recent update'}</span>
+      </div>
+      <div class="team-room-members">${room.people.map(m => teamMemberCardHtml(m, { compact: true })).join('') || '<p class="team-lite-empty">No members assigned.</p>'}</div>
+    </article>`;
+  }).join('');
+  const benchHtml = bench.length ? `<article class="team-room-card team-room-card--bench">
+    <div class="team-room-head"><div><strong>Available Bench</strong><small>People not tied to an active room right now</small></div>${badge(`${bench.length}`, 'muted')}</div>
+    <div class="team-room-members">${bench.map(m => teamMemberCardHtml(m, { compact: true })).join('')}</div>
+  </article>` : '';
+  return `<div class="team-room-grid">${roomsHtml || '<p class="team-lite-empty">No active project rooms yet.</p>'}${benchHtml}</div>`;
+}
+
 async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
-  const [activityByUser, activityDaily] = await Promise.all([
-    DB.getTeamActivitySummary({ days: 7 }),
-    DB.getUserActivityDaily ? DB.getUserActivityDaily(null, { days: 7 }).catch(() => []) : [],
-  ]);
-  const vibrant = getThemeMode() === 'normal';
-
-  // Respect each user's "hide me from the team map" preference.
+  const activityByUser = DB.getTeamActivitySummary ? await DB.getTeamActivitySummary({ days: 7 }).catch(() => ({})) : {};
   const visibleUsers = (users || []).filter(u => !u.hideFromTeamMap);
-
-  const mapId = `team-map-${Date.now()}`;
-  window._teamActivityData = window._teamActivityData || {};
-  window._teamActivityData[mapId] = { users: visibleUsers, projects, tasks, activityByUser, activityDaily, vibrant };
-
-  const depts = [...new Set(visibleUsers.map(u => u.department || 'general'))];
-  const legend = depts.map(d => `<span><i style="background:${teamMapDeptColor(d)}"></i> ${esc(departmentLabel(d))}</span>`).join('');
-
-  return `<section class="dash-panel team-activity-map">
-    <div class="dash-panel-head"><h3>Team Constellation</h3><span class="projects-page-count">A living map of who is working with whom · click a star</span></div>
-    <div class="activity-map-d3-wrap" id="${mapId}" data-map-id="${mapId}" style="width:100%;height:620px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative"></div>
+  const view = ['flow', 'rooms'].includes(state.teamView) ? state.teamView : 'flow';
+  state._teamLiteTasks = tasks || [];
+  const flowOrder = { available: 0, working: 1, reviewing: 2, blocked: 3, away: 4, offline: 5 };
+  const members = visibleUsers
+    .map(u => teamMemberModel(u, projects, tasks, activityByUser))
+    .sort((a, b) => (flowOrder[a.flow] ?? 9) - (flowOrder[b.flow] ?? 9) || b.stats.score - a.stats.score);
+  const body = view === 'rooms'
+    ? renderProjectRoomsHtml(members, projects, tasks)
+    : renderTeamFlowHtml(members);
+  const tabs = [
+    ['flow', 'Team Flow'],
+    ['rooms', 'Project Rooms']
+  ];
+  const active = members.filter(m => m.presence === 'active').length;
+  const idle = members.filter(m => m.presence === 'idle').length;
+  const blocked = members.filter(m => m.blocked.length).length;
+  const legend = [...new Set(visibleUsers.map(u => u.department || 'general'))]
+    .map(d => `<span><i style="background:${teamMapDeptColor(d)}"></i> ${esc(departmentLabel(d))}</span>`)
+    .join('');
+  return `<section class="dash-panel team-activity-map team-activity-map--lite">
+    <div class="dash-panel-head team-lite-head">
+      <div>
+        <h3>Team View</h3>
+        <span class="projects-page-count">${visibleUsers.length} visible · ${active} online · ${idle} idle · ${blocked} blocked</span>
+      </div>
+      <div class="team-lite-tabs" role="tablist" aria-label="Team view">
+        ${tabs.map(([key, label]) => `<button type="button" class="team-lite-tab ${view === key ? 'active' : ''}" data-action="team-view-tab" data-team-view="${key}">${label}</button>`).join('')}
+      </div>
+    </div>
+    <div class="team-lite-body">${body}</div>
     <div class="activity-pent-legend">${legend}</div>
   </section>`;
-}
-
-// Lightweight realtime side-channel for the map: reactions, live events and
-// co-op challenges. Rides the app's shared Supabase client (same pattern as the
-// games hub / collaborative canvas). Returns null when offline.
-function joinMapChannel(onMsg) {
-  const sb = window.SupabaseDB && window.SupabaseDB._client;
-  if (!sb || !navigator.onLine) return null;
-  const s = (typeof getSession === 'function' ? getSession() : null) || {};
-  const me = {
-    id: s.userId != null ? String(s.userId) : ('guest-' + Math.random().toString(36).slice(2, 7)),
-    name: s.displayName || s.username || 'Someone',
-  };
-  let channel;
-  try {
-    channel = sb.channel('orbi-map:team', { config: { broadcast: { self: false, ack: false }, presence: { key: me.id } } });
-  } catch (_) { return null; }
-  channel.on('broadcast', { event: 'map' }, ({ payload }) => { try { onMsg?.(payload); } catch (_) {} });
-  channel.on('presence', { event: 'sync' }, () => { try { onMsg?.({ type: 'presence', state: channel.presenceState() }); } catch (_) {} });
-  channel.subscribe(async (st) => { if (st === 'SUBSCRIBED') { try { await channel.track({ id: me.id, name: me.name, focus: false }); } catch (_) {} } });
-  return {
-    me,
-    send: (payload) => { try { channel.send({ type: 'broadcast', event: 'map', payload: { ...payload, fromId: me.id, fromName: me.name } }); } catch (_) {} },
-    track: (meta) => { try { channel.track({ id: me.id, name: me.name, ...meta }); } catch (_) {} },
-    presence: () => { try { return channel.presenceState(); } catch (_) { return {}; } },
-    leave: () => { try { channel.untrack(); } catch (_) {} try { channel.unsubscribe(); } catch (_) {} },
-  };
-}
-
-function initializeTeamActivityD3() {
-  if (!window.d3) return;
-  const reduce = (() => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; } })();
-  document.querySelectorAll('[data-map-id]').forEach(el => {
-    const mapId = el.dataset.mapId;
-    const data = window._teamActivityData?.[mapId];
-    if (!data || el.dataset.d3Ready === 'true') return;
-    el.dataset.d3Ready = 'true';
-
-    const { users, projects = [], tasks = [], activityByUser, activityDaily = [], vibrant } = data;
-    const width = Math.max(720, el.clientWidth || 900);
-    const height = Math.max(480, el.clientHeight || 520);
-    const departments = [...new Set(users.map(u => u.department || 'general'))];
-    const lite = users.length > 60; // performance guard: skip per-frame FX on large teams
-    const animate = !reduce && !lite;
-
-    /* ── Per-user daily activity → streak + last-active day ── */
-    const dailyByUser = {};
-    activityDaily.forEach(r => { (dailyByUser[Number(r.userId)] = dailyByUser[Number(r.userId)] || {})[r.date] = (r.activeMinutes || 0) + (r.actionCount || 0); });
-    const streakOf = (uid) => {
-      const map = dailyByUser[Number(uid)] || {};
-      let streak = 0;
-      for (let i = 0; i < 7; i++) { const key = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); if ((map[key] || 0) > 0) streak++; else break; }
-      return streak;
-    };
-
-    /* ── Links: frequency (shared projects/tasks) + recency (latest shared update) ── */
-    const pairKey = (a, b) => [Number(a), Number(b)].sort((x, y) => x - y).join(':');
-    const linkMeta = new Map();
-    const parseTs = (t) => { const ms = Date.parse(t || ''); return Number.isFinite(ms) ? ms : 0; };
-    projects.forEach(project => {
-      const participants = new Set();
-      if (project.ownerId != null) participants.add(Number(project.ownerId));
-      const projTasks = tasks.filter(t => Number(t.projectId) === Number(project.id));
-      projTasks.forEach(t => { if (t.assigneeId != null) participants.add(Number(t.assigneeId)); });
-      const ids = [...participants].filter(id => users.some(u => Number(u.id) === id));
-      const lastTs = Math.max(parseTs(project.updatedAt || project.createdAt), ...projTasks.map(t => parseTs(t.updatedAt || t.createdAt)), 0);
-      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
-        const key = pairKey(ids[i], ids[j]);
-        const m = linkMeta.get(key) || { weight: 0, lastTs: 0 };
-        m.weight += 1; m.lastTs = Math.max(m.lastTs, lastTs);
-        linkMeta.set(key, m);
-      }
-    });
-    const now = Date.now(), WEEK = 7 * 86400000;
-    const links = [...linkMeta.entries()].map(([key, m]) => {
-      const [source, target] = key.split(':').map(Number);
-      const age = m.lastTs ? (now - m.lastTs) : WEEK * 3;
-      const recency = Math.max(0.05, Math.min(1, 1 - age / (WEEK * 3))); // 1 = fresh, →0 = stale
-      return { source, target, weight: m.weight, recency, active: age < WEEK };
-    });
-
-    /* ── Nodes enriched with contribution/workload/streak/availability ── */
-    const nodes = users.map(u => {
-      const name = u.displayName || u.username || 'Unknown';
-      const stats = userProfileStats(u, projects, tasks);
-      const assigned = tasks.filter(t => Number(t.assigneeId) === Number(u.id));
-      const workload = assigned.filter(t => t.status !== 'done').length;
-      const blocked = assigned.filter(t => t.status === 'blocked').length;
-      const doing = assigned.filter(t => t.status === 'doing')[0] || assigned.filter(t => t.status !== 'done')[0] || null;
-      const presence = presenceState(u);
-      const online = presence === 'active';
-      return {
-        id: Number(u.id), name,
-        initials: name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase(),
-        activity: activityByUser[u.id]?.activeMinutes || 0,
-        actionCount: activityByUser[u.id]?.actionCount || 0,
-        score: stats.score, rank: stats.rank, position: stats.position,
-        workload, blocked, currentTask: doing,
-        streak: streakOf(u.id),
-        presence, online, available: online && workload <= 2 && blocked === 0,
-        lastSeen: u.lastSeenAt, department: u.department || 'general',
-        projectCount: stats.founded, taskCount: assigned.length,
-        user: u,
-      };
-    });
-    const nodeById = new Map(nodes.map(n => [n.id, n]));
-
-    /* ── Adjacency + recognition metrics ── */
-    const neighbors = new Map();
-    const collabStrength = new Map();
-    links.forEach(l => {
-      const s = l.source, t = l.target;
-      if (!neighbors.has(s)) neighbors.set(s, new Set());
-      if (!neighbors.has(t)) neighbors.set(t, new Set());
-      neighbors.get(s).add(t); neighbors.get(t).add(s);
-      collabStrength.set(s, (collabStrength.get(s) || 0) + l.weight);
-      collabStrength.set(t, (collabStrength.get(t) || 0) + l.weight);
-    });
-    const topContributor = nodes.reduce((a, b) => (b.score > (a?.score ?? -1) ? b : a), null);
-    const bestCollaborator = nodes.reduce((a, b) => ((collabStrength.get(b.id) || 0) > (collabStrength.get(a?.id) || -1) ? b : a), null);
-    const fastestImprover = nodes.reduce((a, b) => (b.actionCount > (a?.actionCount ?? -1) ? b : a), null);
-    const weeklyWinner = nodes.reduce((a, b) => (b.activity > (a?.activity ?? -1) ? b : a), null);
-    const recognition = {};
-    if (topContributor && topContributor.score > 0) recognition[topContributor.id] = 'crown';
-    if (bestCollaborator && (collabStrength.get(bestCollaborator.id) || 0) > 0 && bestCollaborator.id !== topContributor?.id) recognition[bestCollaborator.id] = 'star';
-    if (fastestImprover && fastestImprover.actionCount > 0 && !recognition[fastestImprover.id]) recognition[fastestImprover.id] = 'comet';
-    if (weeklyWinner && weeklyWinner.activity > 0 && !recognition[weeklyWinner.id]) recognition[weeklyWinner.id] = 'aura';
-    nodes.forEach(n => { if (!recognition[n.id] && n.streak >= 5 && n.score < (topContributor?.score || 1)) recognition[n.id] = 'consistent'; });
-
-    /* ── Shell markup: controls, reactions, co-op, popover, focus overlay ── */
-    const REACTIONS_QUICK = ['👏', '🙌', '☕', '🎉', '🎯', '❤️'];
-    el.innerHTML = `
-      <div class="team-map-canvas"></div>
-      <div class="team-map-zoom">
-        <button type="button" data-map-tool="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
-        <button type="button" data-map-tool="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
-        <button type="button" data-map-tool="fit" title="Fit everyone in view" aria-label="Fit to view">⤢</button>
-      </div>
-      <div class="team-map-floating-controls">
-        <button type="button" data-map-tool="reset">Reset</button>
-        <button type="button" data-map-filter="all" class="active">All</button>
-        <button type="button" data-map-filter="online">Online</button>
-        <button type="button" data-map-filter="active">Active</button>
-        <button type="button" data-map-filter="available">Available</button>
-        <button type="button" data-map-filter="blocked">Blocked</button>
-        <select class="team-map-select" data-map-group>
-          <option value="none">Cluster: free</option>
-          <option value="department">By department</option>
-          <option value="workload">By workload</option>
-          <option value="contribution">By contribution</option>
-          <option value="project">By project</option>
-        </select>
-      </div>
-      <div class="team-map-coop">
-        <button type="button" data-coop="pulse" title="Everyone confirms a focus session">◎ Team Pulse</button>
-        <button type="button" data-coop="constellation" title="Completed work links the team">✦ Constellation</button>
-        <button type="button" data-coop="relay" title="Send a baton around the team">→ Relay</button>
-        <button type="button" data-coop="swarm" title="Gather everyone in focus mode">❋ Focus Swarm</button>
-      </div>
-      <div class="team-map-reactions">
-        ${REACTIONS_QUICK.map((e) => `<button type="button" data-react-emoji="${e}" title="React">${e}</button>`).join('')}
-        <button type="button" class="team-emoji-trigger" data-emoji-open title="More emojis">😀</button>
-      </div>
-      <div class="team-map-tooltip hidden"></div>
-      <div class="team-map-status" aria-live="polite"></div>`;
-    const tooltip = el.querySelector('.team-map-tooltip');
-    const statusEl = el.querySelector('.team-map-status');
-    const canvasWrap = el.querySelector('.team-map-canvas');
-
-    let popoverEl = document.getElementById('team-map-popover-portal');
-    if (!popoverEl) {
-      popoverEl = document.createElement('div');
-      popoverEl.id = 'team-map-popover-portal';
-      popoverEl.className = 'team-map-popover team-map-popover--portal hidden';
-      document.body.appendChild(popoverEl);
-    }
-    let focusPortal = document.getElementById('team-map-focus-portal');
-    if (!focusPortal) {
-      focusPortal = document.createElement('div');
-      focusPortal.id = 'team-map-focus-portal';
-      focusPortal.className = 'team-map-focus-portal hidden';
-      document.body.appendChild(focusPortal);
-    }
-    let focusEscHandler = null;
-    const closeFocusPortal = () => {
-      focusPortal.classList.add('hidden');
-      focusPortal.innerHTML = '';
-      if (focusEscHandler) { window.removeEventListener('keydown', focusEscHandler); focusEscHandler = null; }
-      try { window._teamMapChannel?.track({ focus: false }); } catch (_) {}
-    };
-
-    const svg = d3.select(canvasWrap).append('svg')
-      .attr('width', width).attr('height', height)
-      .attr('viewBox', `0 0 ${width} ${height}`)
-      .attr('class', 'team-map-svg-rich');
-    const g = svg.append('g');
-    const linkLayer = g.append('g').attr('class', 'team-map-links');
-    const fxLayer = g.append('g').attr('class', 'team-map-fx');
-    const overlayLayer = g.append('g').attr('class', 'team-map-overlay'); // constellation/relay
-    const nodeLayer = g.append('g').attr('class', 'team-map-nodes');
-    let selectedNodeData = null;
-    const positionPopoverForNode = (d) => {
-      if (!d || popoverEl.classList.contains('hidden')) return;
-      const wrapRect = el.getBoundingClientRect();
-      const t = d3.zoomTransform(svg.node());
-      const sx = wrapRect.left + t.applyX(d.x);
-      const sy = wrapRect.top + t.applyY(d.y);
-      const pw = 300, ph = 250, margin = 14;
-      let left = sx + 20, top = sy - 40;
-      if (left + pw > window.innerWidth - margin) left = sx - pw - 20;
-      if (left < margin) left = margin;
-      if (top + ph > window.innerHeight - margin) top = sy - ph - 20;
-      if (top < margin) top = margin;
-      popoverEl.style.left = `${left}px`;
-      popoverEl.style.top = `${top}px`;
-    };
-    const zoomBehavior = d3.zoom().scaleExtent([0.4, 2.6])
-      // Let d3 handle drag / pinch to pan; wheel is handled manually below so we
-      // can require Ctrl (⌘) and reliably beat Chromium's page-zoom in Electron.
-      .filter((event) => {
-        if (event.type === 'wheel') return false;
-        return !event.button;
-      })
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-        if (selectedNodeData) positionPopoverForNode(selectedNodeData);
-      });
-    svg.call(zoomBehavior);
-    // Ctrl/⌘ + wheel zooms the map about the cursor; a plain wheel scrolls the page.
-    svg.node().addEventListener('wheel', (event) => {
-      if (!(event.ctrlKey || event.metaKey)) return;   // no Ctrl → let the page scroll
-      event.preventDefault();
-      const rect = svg.node().getBoundingClientRect();
-      const point = [event.clientX - rect.left, event.clientY - rect.top];
-      zoomBehavior.scaleBy(svg, event.deltaY < 0 ? 1.15 : 1 / 1.15, point);
-    }, { passive: false });
-    svg.on('click', () => { clearSelection(); });
-
-    /* ── Links ── */
-    const baseLinkOpacity = d => Math.min(0.6, (0.12 + d.weight * 0.07)) * (0.4 + d.recency * 0.6);
-    const baseLinkWidth = d => Math.min(6.5, 1 + d.weight * 1.1);
-    const linkSel = linkLayer.selectAll('path').data(links).enter().append('path')
-      .attr('class', d => `team-map-link ${d.active ? 'is-active' : 'is-stale'}`)
-      .attr('fill', 'none').attr('stroke-linecap', 'round')
-      .attr('stroke', d => nodeById.get(d.source)?.blocked && nodeById.get(d.target)?.blocked ? 'var(--danger, #ef4444)' : 'var(--accent)')
-      .attr('stroke-width', baseLinkWidth)
-      .attr('stroke-dasharray', d => d.active ? null : '5 7')
-      .attr('opacity', baseLinkOpacity);
-
-    const touchesNode = (l, id) => l.source === id || l.target === id || l.source?.id === id || l.target?.id === id;
-    const linkId = (l) => { const s = l.source.id ?? l.source, t = l.target.id ?? l.target; return pairKey(s, t); };
-
-    /* ── Nodes ── */
-    let selectedId = null;
-    const baseR = d => 22 + Math.min(18, Math.sqrt((d.activity || 0) + 1) * 1.5) + Math.min(8, d.score / 40);
-    nodes.forEach(d => { d._r = baseR(d); });
-
-    const nodeSel = nodeLayer.selectAll('g').data(nodes).enter().append('g')
-      .attr('class', 'team-map-node').style('cursor', 'grab')
-      .call(d3.drag()
-        .on('start', (event, d) => { simulation.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
-        .on('end', (_event, d) => { simulation.alphaTarget(0); if (!d._pin) { d.fx = null; d.fy = null; } }));
-
-    // Recognition adornments (behind the main circle).
-    nodeSel.filter(d => recognition[d.id] === 'aura').append('circle').attr('class', 'team-map-aura').attr('r', d => d._r + 12);
-    nodeSel.filter(d => recognition[d.id] === 'consistent').append('circle').attr('class', 'team-map-halo').attr('r', d => d._r + 7);
-    // Long-term collaborator halo (strong mutual links).
-    nodeSel.filter(d => (collabStrength.get(d.id) || 0) >= 4 && recognition[d.id] !== 'aura').append('circle').attr('class', 'team-map-halo soft').attr('r', d => d._r + 6);
-
-    nodeSel.append('circle').attr('class', 'team-map-core')
-      .attr('r', d => d._r)
-      .attr('fill', d => teamMapDeptColor(d.department))
-      .attr('stroke', 'var(--card)').attr('stroke-width', 3)
-      .attr('opacity', d => d.online ? 1 : 0.72)
-      .on('click', (event, d) => { event.stopPropagation(); selectNode(d, event); })
-      .on('mouseenter', (event, d) => hoverNode(d, true))
-      .on('mousemove', (event, d) => moveTooltip(event, d))
-      .on('mouseleave', () => { tooltip.classList.add('hidden'); if (!selectedId) applyFilter(filterMode); });
-
-    // Blocked → rescue beacon ring.
-    nodeSel.filter(d => d.blocked > 0).append('circle').attr('class', 'team-map-beacon').attr('r', d => d._r + 4);
-    // Recognition marks that sit on top.
-    nodeSel.filter(d => recognition[d.id] === 'crown').append('text').attr('class', 'team-map-crown').attr('text-anchor', 'middle').attr('dy', d => -d._r - 6).text('♛');
-    nodeSel.filter(d => recognition[d.id] === 'star').append('text').attr('class', 'team-map-starmark').attr('text-anchor', 'middle').attr('dy', d => -d._r - 6).text('✦');
-    nodeSel.filter(d => recognition[d.id] === 'comet').append('circle').attr('class', 'team-map-comet').attr('r', 4).attr('cx', d => d._r).attr('cy', d => -d._r);
-
-    nodeSel.append('text').attr('text-anchor', 'middle').attr('dy', '0.36em').attr('class', 'team-map-initials').text(d => d.initials);
-    const statusWave = nodeSel.append('g')
-      .attr('class', d => `team-map-heartbeat team-map-heartbeat--${d.presence}`)
-      .attr('transform', d => `translate(${d._r - 2},${-d._r - 10})`);
-    statusWave.append('rect').attr('x', -2).attr('y', 0).attr('width', 34).attr('height', 16).attr('rx', 8);
-    statusWave.append('path')
-      .attr('d', d => d.presence === 'active'
-        ? 'M1 8 H7 L9.5 3 L13 13 L16 8 H31'
-        : d.presence === 'idle'
-          ? 'M1 8 H8 L11 5 L14 11 L17 8 H31'
-          : 'M1 8 H31');
-    nodeSel.append('text').attr('class', 'team-map-name').attr('text-anchor', 'middle').attr('y', d => d._r + 18)
-      .text(d => d.name.length > 14 ? `${d.name.slice(0, 12)}…` : d.name);
-
-    /* ── Simulation with dept clustering + activity-based centering ── */
-    const deptAngle = {}; departments.forEach((d, i) => { deptAngle[d] = (i / departments.length) * Math.PI * 2; });
-    const deptAnchor = (d, axis) => {
-      const R = Math.min(width, height) * 0.32;
-      const a = deptAngle[d.department] ?? 0;
-      return axis === 'x' ? width / 2 + Math.cos(a) * R : height / 2 + Math.sin(a) * R;
-    };
-    let groupMode = 'none';
-    const groupTargetX = (d) => {
-      if (groupMode === 'department') return deptAnchor(d, 'x');
-      if (groupMode === 'workload') return 80 + (Math.min(10, d.workload) / 10) * (width - 160);
-      if (groupMode === 'contribution') return 80 + Math.min(1, d.score / Math.max(1, topContributor?.score || 1)) * (width - 160);
-      if (groupMode === 'project') { const p = d.projectCount; return 80 + (Math.min(6, p) / 6) * (width - 160); }
-      return width / 2;
-    };
-    const groupTargetY = (d) => {
-      if (groupMode === 'department') return deptAnchor(d, 'y');
-      // Active/online drift toward centre; inactive drift outward.
-      const pull = d.online ? 0 : (d.id % 2 ? -1 : 1) * height * 0.18;
-      return height / 2 + pull;
-    };
-
-    const simulation = d3.forceSimulation(nodes)
-      .velocityDecay(reduce ? 0.6 : 0.42)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(d => Math.max(60, 150 - d.weight * 14 - d.recency * 20)).strength(d => Math.min(0.5, 0.06 + d.weight * 0.03)))
-      .force('charge', d3.forceManyBody().strength(-300))
-      .force('x', d3.forceX(groupTargetX).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.02) : 0.14))
-      .force('y', d3.forceY(groupTargetY).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.03) : 0.14))
-      .force('collide', d3.forceCollide(d => d._r + 12));
-
-    simulation.on('tick', () => {
-      nodes.forEach(d => {
-        const pad = Math.max(52, (d._r || 24) + 28);
-        d.x = Math.max(pad, Math.min(width - pad, d.x || width / 2));
-        d.y = Math.max(pad, Math.min(height - pad, d.y || height / 2));
-      });
-      linkSel.attr('d', d => {
-        const sx = d.source.x, sy = d.source.y, tx = d.target.x, ty = d.target.y;
-        const mx = (sx + tx) / 2;
-        return `M${sx},${sy} C ${mx},${sy} ${mx},${ty} ${tx},${ty}`;
-      });
-      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
-      updateOverlays();
-      if (selectedNodeData) positionPopoverForNode(selectedNodeData);
-    });
-
-    /* ── Tooltip + hover ── */
-    function moveTooltip(event, d) {
-      tooltip.classList.remove('hidden');
-      tooltip.style.left = `${event.offsetX + 14}px`;
-      tooltip.style.top = `${event.offsetY + 14}px`;
-      tooltip.innerHTML = `<strong>${esc(d.name)}</strong><span>${esc(departmentLabel(d.department))} · ${d.rank.label}${d.rank.level ? ' ' + d.rank.levelRoman : ''}</span><small>${(d.activity / 60).toFixed(1)}h this week · ${d.workload} open${d.blocked ? ' · ' + d.blocked + ' blocked' : ''}</small>`;
-    }
-    function hoverNode(d, on) {
-      if (selectedId) return;
-      if (!on) { applyFilter(filterMode); return; }
-      const near = neighbors.get(d.id) || new Set();
-      nodeSel.classed('is-dim', n => !(n.id === d.id || near.has(n.id)));
-      linkSel.classed('is-hi', l => touchesNode(l, d.id)).classed('is-dim', l => !touchesNode(l, d.id));
-    }
-
-    /* ── Selection → compact profile popover, highlight connected, fade rest ── */
-    function selectNode(d, event) {
-      selectedId = d.id;
-      const near = neighbors.get(d.id) || new Set();
-      nodeSel.classed('is-selected', n => n.id === d.id).classed('is-dim', n => !(n.id === d.id || near.has(n.id)));
-      linkSel.classed('is-hi', l => touchesNode(l, d.id)).classed('is-dim', l => !touchesNode(l, d.id));
-      showPopover(d);
-    }
-    let popoverDocHandler = null;
-    function clearSelection() {
-      selectedId = null;
-      selectedNodeData = null;
-      popoverEl.classList.add('hidden');
-      nodeSel.classed('is-selected', false).classed('is-dim', false);
-      linkSel.classed('is-hi', false).classed('is-dim', false);
-      if (popoverDocHandler) { document.removeEventListener('pointerdown', popoverDocHandler, true); popoverDocHandler = null; }
-      applyFilter(filterMode);
-    }
-    function showPopover(d) {
-      selectedNodeData = d;
-      const collabs = [...(neighbors.get(d.id) || [])].map(id => nodeById.get(id)).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 4);
-      const avail = d.blocked ? 'Blocked' : d.available ? 'Available' : d.online ? 'Busy' : 'Offline';
-      popoverEl.innerHTML = `
-        <button class="team-pop-x" data-pop-close aria-label="Close">×</button>
-        <div class="team-pop-head">
-          <span class="team-pop-avatar" style="background:${teamMapDeptColor(d.department)}">${esc(d.initials)}</span>
-          <div><b>${esc(d.name)}</b><span>${esc(departmentLabel(d.department))} · ${rankIcon(d.rank.label, 12)}${d.rank.label}${d.rank.level ? ' ' + d.rank.levelRoman : ''}</span></div>
-          <span class="team-pop-avail team-pop-avail--${avail.toLowerCase()}">${avail}</span>
-        </div>
-        <div class="team-pop-row"><span>Position</span> ${esc(d.position || 'Contributor')}</div>
-        <div class="team-pop-stats">
-          <div><b>${d.score}</b><span>XP</span></div>
-          <div><b>${d.workload}</b><span>Open</span></div>
-          <div><b>${d.streak}</b><span>Streak</span></div>
-          <div><b>${(d.activity / 60).toFixed(1)}h</b><span>Week</span></div>
-        </div>
-        <div class="team-pop-row"><span>Current</span> ${d.currentTask ? esc(d.currentTask.title) : 'Available for collaboration'}</div>
-        ${collabs.length ? `<div class="team-pop-row"><span>Works with</span> ${collabs.map(c => esc(c.name.split(' ')[0])).join(', ')}</div>` : ''}
-        <div class="team-pop-actions">
-          <button data-pop-action="profile">Profile</button>
-          <button data-pop-action="focus">Focus</button>
-          ${Number(d.id) === Number(actorId()) ? '' : '<button data-pop-action="assign">Assign</button>'}
-        </div>`;
-      popoverEl.classList.remove('hidden');
-      positionPopoverForNode(d);
-      // Click anywhere outside the card (and outside the map) closes the mini profile.
-      if (popoverDocHandler) document.removeEventListener('pointerdown', popoverDocHandler, true);
-      popoverDocHandler = (ev) => { if (popoverEl.contains(ev.target) || el.contains(ev.target)) return; clearSelection(); };
-      setTimeout(() => document.addEventListener('pointerdown', popoverDocHandler, true), 0);
-      popoverEl.querySelector('[data-pop-close]').onclick = (e) => { e.stopPropagation(); clearSelection(); };
-      popoverEl.querySelectorAll('[data-pop-action]').forEach(btn => btn.onclick = (e) => {
-        e.stopPropagation();
-        const act = btn.dataset.popAction;
-        if (act === 'profile') { const id = d.id; clearSelection(); showUserProfileModal(id); }
-        else if (act === 'focus') enterFocus(d);
-        else if (act === 'assign') showTaskModal(null, 'todo', d.id);
-      });
-    }
-    popoverEl.addEventListener('click', (e) => e.stopPropagation());
-    const onMapResize = () => { if (selectedNodeData) positionPopoverForNode(selectedNodeData); };
-    window.addEventListener('resize', onMapResize);
-
-    /* ── Filters ── */
-    let filterMode = 'all';
-    function applyFilter(mode) {
-      filterMode = mode;
-      el.querySelectorAll('[data-map-filter]').forEach(btn => btn.classList.toggle('active', btn.dataset.mapFilter === mode));
-      nodeSel.classed('is-dim', d => {
-        if (mode === 'online') return !d.online;
-        if (mode === 'active') return d.activity <= 0;
-        if (mode === 'available') return !d.available;
-        if (mode === 'blocked') return d.blocked <= 0;
-        return false;
-      }).classed('is-selected', false);
-      linkSel.classed('is-hi', false).classed('is-dim', d => {
-        const s = nodeById.get(d.source.id ?? d.source), t = nodeById.get(d.target.id ?? d.target);
-        if (mode === 'online') return !(s?.online && t?.online);
-        if (mode === 'active') return !(s?.activity > 0 && t?.activity > 0);
-        if (mode === 'available') return !(s?.available && t?.available);
-        if (mode === 'blocked') return !(s?.blocked && t?.blocked);
-        return false;
-      });
-    }
-
-    /* ── Fit / reset ── */
-    const reset = () => svg.transition().duration(220).call(zoomBehavior.transform, d3.zoomIdentity);
-    const fit = () => {
-      try {
-        const bounds = g.node().getBBox();
-        if (!bounds.width || !bounds.height) return;
-        const scale = Math.min(1.6, 0.82 / Math.max(bounds.width / width, bounds.height / height));
-        const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
-        const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
-        svg.transition().duration(260).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
-      } catch (_) {}
-    };
-
-    /* ── FX layer: ripples, particles, badges, exchange dots ── */
-    function ripple(x, y, color) {
-      const c = fxLayer.append('circle').attr('cx', x).attr('cy', y).attr('r', 6).attr('class', 'team-map-ripple').attr('stroke', color || 'var(--accent)');
-      c.transition().duration(900).attr('r', 60).attr('opacity', 0).on('end', () => c.remove());
-    }
-    function floatBadge(x, y, text, color) {
-      const t = fxLayer.append('text').attr('x', x).attr('y', y).attr('class', 'team-map-badge').attr('fill', color || 'var(--accent)').text(text);
-      t.transition().duration(1600).attr('y', y - 42).attr('opacity', 0).on('end', () => t.remove());
-    }
-    function exchangeParticle(link) {
-      const s = nodeById.get(link.source.id ?? link.source), t = nodeById.get(link.target.id ?? link.target);
-      if (!s || !t) return;
-      const p = fxLayer.append('circle').attr('r', 4).attr('class', 'team-map-particle');
-      const t0 = performance.now(), dur = 900;
-      (function step(now) {
-        const k = Math.min(1, (now - t0) / dur);
-        p.attr('cx', s.x + (t.x - s.x) * k).attr('cy', s.y + (t.y - s.y) * k);
-        if (k < 1) requestAnimationFrame(step); else p.remove();
-      })(t0);
-    }
-    function emitAtUser(uid, kind, text) {
-      const d = nodeById.get(Number(uid)); if (!d) return;
-      if (kind === 'ripple') ripple(d.x, d.y, 'var(--green,#22c55e)');
-      else if (kind === 'badge') floatBadge(d.x, d.y - d._r, text || '✦', 'var(--accent)');
-    }
-
-    /* ── Ambient: breathing + orbiting status dot ── */
-    let ambientRAF = null;
-    function ambientLoop(ts) {
-      const s = ts / 1000;
-      nodeSel.select('.team-map-core').attr('r', d => d._r + (d.online ? Math.sin(s * 1.4 + d.id) * 1.6 : 0));
-      nodeSel.select('.team-map-heartbeat').attr('transform', d => `translate(${d._r - 2},${-d._r - 10 + Math.sin(s * 1.2 + d.id) * (d.online ? 1.4 : 0.4)})`);
-      nodeSel.select('.team-map-comet').attr('cx', d => Math.cos(-s * 2 + d.id) * (d._r + 5)).attr('cy', d => Math.sin(-s * 2 + d.id) * (d._r + 5));
-      // Background responds to how many are online.
-      const onlineRatio = nodes.filter(n => n.online).length / Math.max(1, nodes.length);
-      el.style.setProperty('--map-glow', (0.05 + onlineRatio * 0.14).toFixed(3));
-      ambientRAF = requestAnimationFrame(ambientLoop);
-    }
-    if (animate) ambientRAF = requestAnimationFrame(ambientLoop);
-    else nodeSel.select('.team-map-heartbeat').attr('transform', d => `translate(${d._r - 2},${-d._r - 10})`);
-
-    /* ── Overlays: constellation goal + relay baton ── */
-    let constellationEdges = [];
-    let relayState = null;
-    function updateOverlays() {
-      const oc = overlayLayer.selectAll('path.team-constellation-edge').data(constellationEdges, d => d.k);
-      oc.enter().append('path').attr('class', 'team-constellation-edge').merge(oc)
-        .attr('d', d => { const s = nodeById.get(d.a), t = nodeById.get(d.b); if (!s || !t) return ''; return `M${s.x},${s.y} L${t.x},${t.y}`; });
-      oc.exit().remove();
-      if (relayState) {
-        const s = nodeById.get(relayState.from), t = nodeById.get(relayState.to);
-        if (s && t) {
-          const k = relayState.k;
-          overlayLayer.selectAll('circle.team-relay-baton').data([0]).join('circle').attr('class', 'team-relay-baton')
-            .attr('r', 8).attr('cx', s.x + (t.x - s.x) * k).attr('cy', s.y + (t.y - s.y) * k);
-        }
-      } else overlayLayer.selectAll('circle.team-relay-baton').remove();
-    }
-
-    /* ── Focus mode: rings of tasks / collaborators / projects ── */
-    function enterFocus(d) {
-      clearSelection();
-      const focusSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.9, 720);
-      const cx = focusSize / 2, cy = focusSize / 2;
-      const scale = focusSize / Math.max(width, height);
-      const openTasks = tasks.filter(t => Number(t.assigneeId) === Number(d.id) && t.status !== 'done').slice(0, 8);
-      const doneTasks = tasks.filter(t => Number(t.assigneeId) === Number(d.id) && t.status === 'done').slice(0, 6);
-      const collabs = [...(neighbors.get(d.id) || [])].map(id => nodeById.get(id)).filter(Boolean).slice(0, 8);
-      const projs = projects.filter(p => Number(p.ownerId) === Number(d.id) || (p.editorIds || []).map(Number).includes(Number(d.id))).slice(0, 8);
-      const ring = (items, radius, cls, label) => items.map((it, i) => {
-        const a = (i / Math.max(1, items.length)) * Math.PI * 2 - Math.PI / 2;
-        const x = cx + Math.cos(a) * radius * scale, y = cy + Math.sin(a) * radius * scale;
-        return { x, y, cls, label: label(it), it };
-      });
-      const taskItems = ring(openTasks, 120, 'task', t => t.title);
-      const collabItems = ring(collabs, 210, 'collab', c => c.name);
-      const projItems = ring(projs, 300, 'proj', p => p.name);
-      focusPortal.classList.remove('hidden');
-      focusPortal.innerHTML = `<div class="team-map-focus-backdrop" data-focus-exit aria-hidden="true"></div>
-        <div class="team-map-focus-panel">
-          <button class="team-focus-exit" data-focus-exit>← Exit focus</button>
-          <svg class="team-focus-svg" viewBox="0 0 ${focusSize} ${focusSize}" width="${focusSize}" height="${focusSize}"></svg>
-        </div>`;
-      const fsvg = d3.select(focusPortal).select('.team-focus-svg');
-      [300, 210, 120].forEach(r => fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', r * scale).attr('class', 'team-focus-ring'));
-      const link = (items) => items.forEach(it => fsvg.append('line').attr('x1', cx).attr('y1', cy).attr('x2', it.x).attr('y2', it.y).attr('class', 'team-focus-link'));
-      link(taskItems); link(collabItems); link(projItems);
-      const draw = (items) => items.forEach(it => {
-        const gg = fsvg.append('g').attr('transform', `translate(${it.x},${it.y})`).attr('class', `team-focus-item team-focus-${it.cls}`);
-        const blocked = it.cls === 'task' && it.it.status === 'blocked';
-        gg.append('circle').attr('r', it.cls === 'proj' ? 20 : 16).attr('class', blocked ? 'is-blocked' : '');
-        gg.append('text').attr('y', it.cls === 'proj' ? 34 : 28).attr('text-anchor', 'middle').text((it.label || '').slice(0, 14));
-      });
-      draw(projItems); draw(collabItems); draw(taskItems);
-      doneTasks.forEach((_, i) => setTimeout(() => {
-        const a = Math.random() * Math.PI * 2, r = (60 + Math.random() * 70) * scale;
-        const dot = fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 3).attr('class', 'team-focus-dissolve');
-        dot.transition().duration(1200).attr('cx', cx + Math.cos(a) * r).attr('cy', cy + Math.sin(a) * r).attr('opacity', 0).on('end', () => dot.remove());
-      }, i * 240));
-      fsvg.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 34).attr('class', 'team-focus-center').attr('fill', teamMapDeptColor(d.department));
-      fsvg.append('text').attr('x', cx).attr('y', cy + 5).attr('text-anchor', 'middle').attr('class', 'team-focus-center-label').text(d.initials);
-      focusPortal.querySelectorAll('[data-focus-exit]').forEach(btn => { btn.onclick = () => closeFocusPortal(); });
-      focusEscHandler = (e) => { if (e.key === 'Escape') closeFocusPortal(); };
-      window.addEventListener('keydown', focusEscHandler);
-      try { window._teamMapChannel?.track({ focus: true, focusName: d.name }); } catch (_) {}
-    }
-    window._teamMapHighlightUser = (id) => { const d = nodeById.get(Number(id)); if (d) { selectNode(d); fit(); } };
-
-    /* ── Realtime: reactions, live events, co-op ── */
-    let pulseSet = new Set();
-    const net = joinMapChannel((msg) => {
-      if (!msg) return;
-      if (msg.type === 'reaction') {
-        const legacy = { applause: '👏', highfive: '🙌', coffee: '☕', help: '🆘', party: '🎉', focus: '🎯' };
-        const emoji = msg.emoji || legacy[msg.kind] || '✨';
-        const d = nodeById.get(Number(msg.fromId));
-        if (d) floatBadge(d.x, d.y - d._r, emoji, 'var(--accent)');
-        else { statusEl.textContent = `${msg.fromName || 'Someone'} reacted ${emoji}`; setTimeout(() => { statusEl.textContent = ''; }, 2500); }
-      } else if (msg.type === 'exchange') {
-        const l = links.find(x => pairKey(x.source.id ?? x.source, x.target.id ?? x.target) === msg.link);
-        if (l) exchangeParticle(l);
-      } else if (msg.type === 'event') {
-        emitAtUser(msg.uid, msg.kind || 'ripple', msg.text);
-        if (msg.text) { statusEl.textContent = msg.text; setTimeout(() => { statusEl.textContent = ''; }, 3000); }
-      } else if (msg.type === 'pulse') {
-        pulseSet.add(String(msg.fromId));
-        checkPulse();
-      } else if (msg.type === 'relay') {
-        startRelayAnim(Number(msg.from), Number(msg.to));
-      } else if (msg.type === 'constellation') {
-        constellationEdges = msg.edges || constellationEdges;
-      } else if (msg.type === 'presence') {
-        // Focus Swarm: pull focused users together.
-        const state = msg.state || {};
-        const focused = new Set();
-        Object.values(state).forEach(arr => (arr || []).forEach(p => { if (p.focus) focused.add(String(p.id)); }));
-        nodeSel.classed('is-swarm', d => focused.has(String(d.id)));
-      }
-    });
-    if (net) el.dataset.mapRealtime = '1';
-    window._teamMapChannel?.leave?.();
-    window._teamMapChannel = net;
-
-    function checkPulse() {
-      const onlineIds = nodes.filter(n => n.online).map(n => String(n.id));
-      const done = onlineIds.length && onlineIds.every(id => pulseSet.has(id));
-      statusEl.textContent = `Team Pulse ${pulseSet.size}/${onlineIds.length || nodes.length}`;
-      if (done) {
-        nodeSel.classed('is-pulse', true);
-        setTimeout(() => { nodeSel.classed('is-pulse', false); statusEl.textContent = ''; pulseSet = new Set(); }, 2600);
-      } else setTimeout(() => { if (statusEl.textContent.startsWith('Team Pulse')) statusEl.textContent = ''; }, 3000);
-    }
-    function startRelayAnim(from, to) {
-      relayState = { from, to, k: 0 };
-      const t0 = performance.now(), dur = 1400;
-      (function step(now) {
-        relayState.k = Math.min(1, (now - t0) / dur);
-        if (relayState.k < 1) requestAnimationFrame(step); else relayState = null;
-      })(t0);
-    }
-
-    /* ── Wire controls ── */
-    el.querySelector('[data-map-tool="reset"]')?.addEventListener('click', reset);
-    el.querySelector('[data-map-tool="fit"]')?.addEventListener('click', fit);
-    el.querySelector('[data-map-tool="zoom-in"]')?.addEventListener('click', () => svg.transition().duration(180).call(zoomBehavior.scaleBy, 1.3));
-    el.querySelector('[data-map-tool="zoom-out"]')?.addEventListener('click', () => svg.transition().duration(180).call(zoomBehavior.scaleBy, 1 / 1.3));
-    el.querySelectorAll('[data-map-filter]').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.mapFilter || 'all')));
-    el.querySelector('[data-map-group]')?.addEventListener('change', (e) => {
-      groupMode = e.target.value;
-      simulation
-        .force('x', d3.forceX(groupTargetX).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.02) : 0.14))
-        .force('y', d3.forceY(groupTargetY).strength(d => groupMode === 'none' ? (d.online ? 0.06 : 0.03) : 0.14))
-        .alpha(0.7).restart();
-    });
-    const sendReaction = (emoji) => {
-      const myId = actorId();
-      const mine = nodeById.get(Number(myId));
-      const rx = mine?.x ?? width / 2;
-      const ry = mine ? mine.y - (mine._r || 22) : height / 2;
-      floatBadge(rx, ry, emoji, 'var(--accent)');
-      try { net?.send({ type: 'reaction', emoji }); } catch (_) {}
-      statusEl.textContent = net ? `You reacted ${emoji}` : `You reacted ${emoji} (offline)`;
-      setTimeout(() => { if (statusEl.textContent.includes('You reacted')) statusEl.textContent = ''; }, 2200);
-    };
-    el.querySelectorAll('[data-react-emoji]').forEach(btn => btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      sendReaction((btn.dataset.reactEmoji || btn.textContent || '').trim());
-    }));
-    el.querySelector('[data-emoji-open]')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const rect = e.currentTarget.getBoundingClientRect();
-      if (typeof window.TeamEmojiPicker?.open === 'function') {
-        window.TeamEmojiPicker.open(rect, sendReaction);
-      } else {
-        sendReaction('😀');
-      }
-    });
-    el.querySelectorAll('[data-coop]').forEach(btn => btn.addEventListener('click', () => {
-      const kind = btn.dataset.coop;
-      const myId = String(actorId());
-      if (kind === 'pulse') { pulseSet.add(myId); net?.send({ type: 'pulse' }); checkPulse(); }
-      else if (kind === 'swarm') { const on = btn.classList.toggle('active'); net?.track({ focus: on }); statusEl.textContent = on ? 'Focus Swarm: on' : ''; }
-      else if (kind === 'relay') {
-        // Send a baton from you to a random collaborator (or any node).
-        const me = nodeById.get(Number(myId)) || nodes[0];
-        const near = [...(neighbors.get(me.id) || [])];
-        const toId = near.length ? near[Math.floor(Math.random() * near.length)] : nodes.find(n => n.id !== me.id)?.id;
-        if (toId != null) { startRelayAnim(me.id, toId); net?.send({ type: 'relay', from: me.id, to: toId }); }
-      } else if (kind === 'constellation') {
-        // Build the shared constellation from strongest collaboration links.
-        constellationEdges = links.slice().sort((a, b) => (b.weight + b.recency) - (a.weight + a.recency)).slice(0, Math.min(links.length, nodes.length))
-          .map(l => ({ k: pairKey(l.source.id ?? l.source, l.target.id ?? l.target), a: l.source.id ?? l.source, b: l.target.id ?? l.target }));
-        net?.send({ type: 'constellation', edges: constellationEdges });
-        statusEl.textContent = 'Team Constellation forming…'; setTimeout(() => { statusEl.textContent = ''; }, 2600);
-      }
-    }));
-
-    // Rescue beacons: clicking a blocked node's beacon offers help.
-    nodeSel.filter(d => d.blocked > 0).select('.team-map-beacon').style('cursor', 'pointer').on('click', (event, d) => {
-      event.stopPropagation();
-      net?.send({ type: 'event', uid: d.id, kind: 'ripple', text: `Help is on the way for ${d.name}` });
-      ripple(d.x, d.y, 'var(--danger,#ef4444)');
-      statusEl.textContent = `You offered to help ${d.name.split(' ')[0]}`; setTimeout(() => { statusEl.textContent = ''; }, 2500);
-    });
-
-    setTimeout(fit, 350);
-    setTimeout(fit, 1200);
-    // Clean up ambient loop + realtime when the map element leaves the DOM.
-    const cleanup = () => {
-      if (ambientRAF) cancelAnimationFrame(ambientRAF);
-      window.removeEventListener('resize', onMapResize);
-      popoverEl.classList.add('hidden');
-      closeFocusPortal();
-    };
-    const mo = new MutationObserver(() => { if (!document.body.contains(el)) { cleanup(); mo.disconnect(); if (window._teamMapChannel === net) { net?.leave?.(); window._teamMapChannel = null; } } });
-    mo.observe(document.body, { childList: true, subtree: true });
-  });
 }
 
 function layoutTaskGraph(tasks, deps) {
@@ -8702,6 +8437,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
     { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
     { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
     { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'PDF previews fixed in the desktop app; themed dialogs, calmer toasts, and Escape/outside-click dismissal'] },
@@ -8782,8 +8518,8 @@ async function renderAboutPage() {
           </div>
           <div class="feature-card">
             <div class="feature-icon">👥</div>
-            <strong>Team Activity Map</strong>
-            <p>Interactive D3.js visualization showing team member activity, online status, and engagement levels.</p>
+            <strong>Team Tiles</strong>
+            <p>Tile-based team visibility with member status, contribution ranks, departments, and quick profile access.</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">🔔</div>
@@ -8813,7 +8549,7 @@ async function renderAboutPage() {
         <div class="tech-stack">
           <div class="tech-item"><strong>Frontend:</strong> Vanilla HTML/CSS/JavaScript</div>
           <div class="tech-item"><strong>Database:</strong> Dexie.js (IndexedDB) + Supabase (cloud sync)</div>
-          <div class="tech-item"><strong>Libraries:</strong> D3.js (visualizations), Quill.js (rich text), SortableJS (drag-drop), jsPDF (reports)</div>
+          <div class="tech-item"><strong>Libraries:</strong> Quill.js (rich text), SortableJS (drag-drop), jsPDF (reports)</div>
           <div class="tech-item"><strong>Desktop:</strong> Electron</div>
           <div class="tech-item"><strong>Design:</strong> Custom CSS with theme support (Black & Normal)</div>
         </div>
@@ -9611,6 +9347,83 @@ const actions = {
     const taskId = Number(b.dataset.taskId);
     if (taskId) await showTaskDetailModal(taskId);
   },
+  'command-open-user': async (b) => {
+    hideModal();
+    const id = Number(b.dataset.userId);
+    if (id) await showUserProfileModal(id);
+  },
+  'command-toggle-performance': () => {
+    hideModal();
+    const current = getPerformanceMode();
+    setPerformanceMode(current === 'low-power' ? 'balanced' : 'low-power');
+    router().catch(() => {});
+  },
+  'command-open-shortcuts': () => {
+    hideModal();
+    window.location.hash = '#/settings';
+    setTimeout(() => document.querySelector('.settings-shortcuts-search')?.focus(), 350);
+  },
+  'set-performance-mode': async (b) => {
+    const mode = b.dataset.mode || 'balanced';
+    setPerformanceMode(mode);
+    await router();
+  },
+  'toggle-shortcut-enabled': async (b) => {
+    const id = b.dataset.shortcutId;
+    const pref = shortcutPref(id);
+    setShortcutOverride(id, { enabled: !pref.enabled, keys: pref.keys });
+    await renderSettings();
+  },
+  'edit-shortcut': async (b) => {
+    const id = b.dataset.shortcutId;
+    const pref = shortcutPref(id);
+    const next = prompt('Shortcut keys, separated by commas. Use Mod for Ctrl/Cmd. Example: Mod+K or G P', pref.keys.join(', '));
+    if (next == null) return;
+    const keys = next.split(',').map(s => s.trim()).filter(Boolean);
+    if (!keys.length) { showToast('Shortcut needs at least one key.', 'warning'); return; }
+    setShortcutOverride(id, { enabled: pref.enabled, keys });
+    await renderSettings();
+  },
+  'reset-shortcut': async (b) => {
+    resetShortcutOverride(b.dataset.shortcutId);
+    await renderSettings();
+  },
+  'reset-all-shortcuts': async () => {
+    resetShortcutOverride();
+    showToast('Shortcuts restored to defaults', 'success');
+    await renderSettings();
+  },
+  'export-shortcuts': async () => {
+    const blob = new Blob([JSON.stringify(loadShortcutOverrides(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'orbitrack-shortcuts.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  'import-shortcuts': async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const parsed = JSON.parse(await file.text());
+        const next = {};
+        for (const def of SHORTCUT_DEFAULTS) {
+          if (parsed?.[def.id]) next[def.id] = parsed[def.id];
+        }
+        saveShortcutOverrides(next);
+        showToast('Shortcuts imported', 'success');
+        await renderSettings();
+      } catch (err) {
+        showToast('Could not import shortcut file', 'error');
+      }
+    };
+    input.click();
+  },
   'open-notes': (b) => {
     const noteId = Number(b?.dataset?.noteId || 0);
     if (noteId) window.WTNotes?.open?.(noteId);
@@ -9683,6 +9496,11 @@ const actions = {
   'toggle-ranking-panel': async () => {
     state.rankingPanelOpen = !state.rankingPanelOpen;
     await renderRankingPanel();
+  },
+  'team-view-tab': async (b) => {
+    state.teamView = b.dataset.teamView === 'rooms' ? 'rooms' : 'flow';
+    localStorage.setItem('wt-team-view-v1', state.teamView);
+    await renderUsers();
   },
   'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
   'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
@@ -9960,25 +9778,6 @@ const actions = {
   },
   'show-user-profile': async (b) => {
     await showUserProfileModal(Number(b.dataset.userId));
-  },
-  // Player-card secondary: jump to the team map and highlight this user's links.
-  'pcard-highlight-collabs': async (b) => {
-    const id = Number(b.dataset.userId);
-    hideModal();
-    if ((window.location.hash.slice(1) || '/projects') !== '/users') {
-      window.location.hash = '#/users';
-      // Wait for the map to build, then highlight.
-      setTimeout(() => { try { window._teamMapHighlightUser?.(id); } catch (_) {} }, 700);
-    } else {
-      try { window._teamMapHighlightUser?.(id); } catch (_) {}
-    }
-  },
-  // Player-card secondary: "View profile" → team view (or own profile if self).
-  'show-user-profile-full': async (b) => {
-    const id = Number(b.dataset.userId);
-    if (id === Number(actorId())) { hideModal(); await showProfileModal(); return; }
-    hideModal();
-    if ((window.location.hash.slice(1) || '/projects') !== '/users') window.location.hash = '#/users';
   },
   // Player-card: open (focus) a classroom the user belongs to.
   'open-classroom': async (b) => {
@@ -10912,7 +10711,8 @@ function presenceDotHtml(user) {
     : st === 'idle'
       ? 'M1 8 H7 L10 5 L13 11 L16 8 H27'
       : 'M1 8 H27';
-  return `<span class="presence-wave presence-wave--${st}" title="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 28 16" aria-hidden="true"><path d="${path}"></path></svg></span>`;
+  const staticClass = getPerformanceMode() === 'full' ? '' : ' presence-wave--static';
+  return `<span class="presence-wave presence-wave--${st}${staticClass}" title="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 28 16" aria-hidden="true"><path d="${path}"></path></svg></span>`;
 }
 
 /* ──── Ranking explanation (Phase 4) ──── */
@@ -11084,7 +10884,6 @@ async function renderUsers() {
     ${heatmapHtml}
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
-  requestAnimationFrame(() => initializeTeamActivityD3());
 }
 
 async function router() {
@@ -11115,7 +10914,6 @@ async function router() {
   else if (hash === '/dashboard') {
     if (isAdmin()) {
       await renderAdminDashboard();
-      requestAnimationFrame(() => initializeTeamActivityD3());
     } else await renderProjects();
   }
   else if (hash === '/reports') {
@@ -11301,6 +11099,75 @@ async function applyRoute() {
 
 /* ──── Realtime event handlers ──── */
 
+function runShortcutAction(id) {
+  if (id === 'command.open') return showCommandPalette().catch(err => console.error('[command]', err));
+  if (id === 'shortcuts.open') { window.location.hash = '#/settings'; setTimeout(() => document.querySelector('.settings-shortcuts-search')?.focus(), 350); return; }
+  if (id === 'nav.dashboard') { window.location.hash = isAdmin() ? '#/admin' : '#/projects'; return; }
+  if (id === 'nav.projects') { window.location.hash = '#/projects'; return; }
+  if (id === 'nav.tasks') { window.location.hash = '#/tasks'; return; }
+  if (id === 'nav.team') { window.location.hash = '#/users'; return; }
+  if (id === 'nav.settings') { window.location.hash = '#/settings'; return; }
+  if (id === 'create.task') return showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
+  if (id === 'create.project') return showProjectModal().catch(err => console.error('[shortcut:new-project]', err));
+  if (id === 'search.focus') {
+    const search = document.querySelector('.orbi-task-search-input, .projects-search-input, .guide-search, .settings-shortcuts-search');
+    if (search) { search.focus(); search.select?.(); }
+    return;
+  }
+  if (id === 'form.save') {
+    const form = document.activeElement?.closest?.('form');
+    if (form?.requestSubmit) form.requestSubmit();
+    return;
+  }
+  if (id === 'performance.toggle') {
+    setPerformanceMode(getPerformanceMode() === 'low-power' ? 'balanced' : 'low-power');
+    router().catch(() => {});
+    return;
+  }
+  if (id === 'notes.toggle') { window.WTNotes?.toggle?.(); }
+}
+
+function handleConfiguredShortcut(e) {
+  const typingTarget = isTypingTarget(e.target);
+  const chord = eventShortcutChord(e);
+  const now = Date.now();
+  if (state.shortcutPrefix && now - state.shortcutPrefixAt > 900) state.shortcutPrefix = null;
+
+  for (const def of SHORTCUT_DEFAULTS) {
+    const pref = shortcutPref(def.id);
+    if (!pref.enabled) continue;
+    for (const key of pref.keys) {
+      const normalized = key.trim();
+      const seq = normalized.match(/^([a-z0-9])\s+([a-z0-9])$/i);
+      if (seq) {
+        if (typingTarget) continue;
+        const first = seq[1].toUpperCase();
+        const second = seq[2].toUpperCase();
+        if (!state.shortcutPrefix && chord === first) {
+          e.preventDefault();
+          state.shortcutPrefix = first;
+          state.shortcutPrefixAt = now;
+          return true;
+        }
+        if (state.shortcutPrefix === first && chord === second) {
+          e.preventDefault();
+          state.shortcutPrefix = null;
+          runShortcutAction(def.id);
+          return true;
+        }
+      } else if (chord.toLowerCase() === normalized.toLowerCase()) {
+        if (typingTarget && !['command.open', 'shortcuts.open', 'form.save'].includes(def.id)) continue;
+        e.preventDefault();
+        state.shortcutPrefix = null;
+        runShortcutAction(def.id);
+        return true;
+      }
+    }
+  }
+  if (!/^[a-z0-9]$/i.test(e.key)) state.shortcutPrefix = null;
+  return false;
+}
+
 async function refreshActivityViews() {
   const hash = window.location.hash.slice(1) || '';
   if (hash === '/dashboard' && isAdmin()) {
@@ -11432,6 +11299,7 @@ function onSyncPulled() {
 async function init() {
   try {
     installGlobalErrorReporting();
+    applyPerformanceMode();
     if (window.WT_SUPABASE_ERROR) {
       showToast('Cloud database unavailable — using browser-only storage for now.', 'warning');
     }
@@ -11481,33 +11349,7 @@ async function init() {
       }
     });
     document.addEventListener('keydown', (e) => {
-      const typingTarget = e.target.closest?.('input, textarea, select, [contenteditable="true"]');
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        showCommandPalette().catch(err => console.error('[command]', err));
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        if (e.shiftKey) showProjectModal().catch(err => console.error('[shortcut:new-project]', err));
-        else showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
-        return;
-      }
-      // Alt+N → Notes (avoid the taken Ctrl combos).
-      if (e.altKey && !e.ctrlKey && !e.metaKey && !typingTarget && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        window.WTNotes?.toggle?.();
-        return;
-      }
-      if (!typingTarget && e.key === '/' && document.getElementById('modal-overlay')?.classList.contains('hidden')) {
-        const search = document.querySelector('.orbi-task-search-input, .projects-search-input');
-        if (search) {
-          e.preventDefault();
-          search.focus();
-          search.select?.();
-          return;
-        }
-      }
+      if (handleConfiguredShortcut(e)) return;
       const card = e.target.matches?.('.project-card-v2[data-action="open-project-card"]') ? e.target : null;
       if (card && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
@@ -11531,6 +11373,11 @@ async function init() {
         _debounceSearchRender('project', 'project-search', (v) => { state.projectSearch = v; }, renderProjects);
       } else if (target?.dataset?.taskFilterInput === 'search') {
         _debounceSearchRender('task', 'global-task-search', (v) => { state.globalTaskSearch = v; }, renderTasks);
+      } else if (target?.dataset?.shortcutsFilter != null) {
+        const q = normalizeSearchText(target.value || '');
+        document.querySelectorAll('.settings-shortcuts-table tbody tr').forEach(row => {
+          row.hidden = q && !normalizeSearchText(row.textContent || '').includes(q);
+        });
       }
     });
     document.getElementById('content').addEventListener('change', async (e) => {

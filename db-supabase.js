@@ -5,7 +5,7 @@ const SupabaseDB = {
   BUCKET: 'project-files',
   _syncQueueKey: 'wt-supabase-sync-queue-v1',
   _shadowKey: 'wt-supabase-shadow-v1',
-  _shadowTtlMs: 45000,
+  _shadowTtlMs: 5 * 60 * 1000,
   _syncQueue: [],
   _shadowState: null,
   _syncFlushPromise: null,

@@ -9,6 +9,25 @@ const RealtimeSync = (() => {
   let _v3PullTimer = null;
   let _teamPullTimer = null;
 
+  function _performanceMode() {
+    try {
+      return document.documentElement?.dataset?.performanceMode || localStorage.getItem('wt-performance-mode-v1') || 'balanced';
+    } catch (_) {
+      return 'balanced';
+    }
+  }
+
+  function _pullDebounceMs(base = 250) {
+    const mode = _performanceMode();
+    if (mode === 'low-power') return Math.max(base, 4000);
+    if (mode === 'balanced') return Math.max(base, 1200);
+    return base;
+  }
+
+  function _hidden() {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  }
+
   function _getSession() {
     try {
       if (typeof window.WT_getActiveSession === 'function') return window.WT_getActiveSession();
@@ -284,7 +303,7 @@ const RealtimeSync = (() => {
 
   function _scheduleTeamPull(payload = {}) {
     const session = _getSession();
-    if (!session?.userId || !navigator.onLine) return;
+    if (!session?.userId || !navigator.onLine || _hidden()) return;
     const targetUserId = payload.userId != null ? Number(payload.userId) : null;
     // No userId → all online clients pull (team-wide). With userId → only that user pulls.
     if (targetUserId != null && targetUserId !== Number(session.userId)) return;
@@ -297,7 +316,7 @@ const RealtimeSync = (() => {
       } catch (err) {
         console.warn('[RealtimeSync] team sync pull failed', err);
       }
-    }, 400);
+    }, _pullDebounceMs(400));
   }
 
   function _initTeamChannel() {
@@ -371,6 +390,7 @@ const RealtimeSync = (() => {
 
   function _subscribeV3(table) {
     _channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+      if (_hidden()) return;
       clearTimeout(_v3PullTimer);
       _v3PullTimer = setTimeout(() => {
         const pullPromise = window.SyncEngineV3?.pull?.();
@@ -379,7 +399,7 @@ const RealtimeSync = (() => {
             window.dispatchEvent(new CustomEvent('wt-realtime-v3-refresh', { detail: { table } }));
           }).catch(err => console.warn('[RealtimeSync] v3 pull failed', err));
         }
-      }, 250);
+      }, _pullDebounceMs(250));
     });
   }
 
@@ -405,6 +425,7 @@ const RealtimeSync = (() => {
     stop();
     const uid = Number(userId);
     if (!uid || !navigator.onLine) return false;
+    if (typeof window.WT_shouldUseRealtime === 'function' && !window.WT_shouldUseRealtime()) return false;
 
     const isV3 = window.WT_CONFIG?.supabaseSchemaVersion === 'v3' || window.WT_STORAGE_MODE === 'hybrid-v3';
     _client = isV3 ? window.SyncEngineV3?.getClient?.() : (window.SyncEngine?.getClient?.() || window.SupabaseDB?._client);

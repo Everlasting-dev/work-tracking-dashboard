@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.5.2
+
+### Changed
+- **Lite egress tuning** - longer Supabase shadow caching, slower Balanced/Low Power background pulls, and calmer realtime-triggered refreshes reduce repeated cloud reads during routine use.
+- **Team view** - the Users page keeps member tiles and status visibility while removing the old animated constellation map path.
+- **Performance mode** - Balanced and Low Power disable decorative heartbeat/blur effects while keeping presence readable.
+
+### Fixed
+- **Shortcut settings** - custom disabled/remapped shortcuts no longer fall through to older hardcoded key handlers.
+- **Release metadata** - version displays and in-app release notes now point at the current vanilla app update.
+
 ## 3.5.1
 
 ### Changed

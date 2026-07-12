@@ -22,9 +22,40 @@ const SyncEngine = (() => {
   let _lastPullAt    = 0;
   let _pullTimer     = null;
   let _safetyTimer   = null;
+  let _perfHookBound = false;
   const FALLBACK_PULL_MS = 2 * 60 * 1000;
   const SAFETY_PULL_MS = 30 * 60 * 1000;
   const FOCUS_PULL_STALE_MS = 10 * 60 * 1000;
+
+  function _performanceMode() {
+    try {
+      const mode = document.documentElement?.dataset?.performanceMode || localStorage.getItem('wt-performance-mode-v1');
+      return mode || 'balanced';
+    } catch (_) {
+      return 'balanced';
+    }
+  }
+
+  function _fallbackPullMs() {
+    const mode = _performanceMode();
+    if (mode === 'low-power') return 15 * 60 * 1000;
+    if (mode === 'balanced') return 5 * 60 * 1000;
+    return FALLBACK_PULL_MS;
+  }
+
+  function _safetyPullMs() {
+    const mode = _performanceMode();
+    if (mode === 'low-power') return 90 * 60 * 1000;
+    if (mode === 'balanced') return 60 * 60 * 1000;
+    return SAFETY_PULL_MS;
+  }
+
+  function _focusPullStaleMs() {
+    const mode = _performanceMode();
+    if (mode === 'low-power') return 30 * 60 * 1000;
+    if (mode === 'balanced') return 15 * 60 * 1000;
+    return FOCUS_PULL_STALE_MS;
+  }
 
   // ── Persistence ─────────────────────────────────────────────────────
 
@@ -889,11 +920,11 @@ const SyncEngine = (() => {
       const rtConnected = window.RealtimeSync?.isConnected?.();
       if (rtConnected) return;
       pull().catch(() => {});
-    }, FALLBACK_PULL_MS);
+    }, _fallbackPullMs());
     _safetyTimer = setInterval(() => {
       if (!_client || !navigator.onLine || _pullRunning || _hidden()) return;
       pull().catch(() => {});
-    }, SAFETY_PULL_MS);
+    }, _safetyPullMs());
   }
 
   function getLastPullAt() { return _lastPullAt; }
@@ -978,9 +1009,13 @@ const SyncEngine = (() => {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         if (!_client || !navigator.onLine || _pullRunning) return;
-        if (Date.now() - _lastPullAt < FOCUS_PULL_STALE_MS) return;
+        if (Date.now() - _lastPullAt < _focusPullStaleMs()) return;
         pull().catch(() => {});
       });
+      if (!_perfHookBound) {
+        window.addEventListener('wt-performance-mode-changed', _startBackgroundPull);
+        _perfHookBound = true;
+      }
     }
 
     // Initial pull + flush. Callers may choose to await init() before deciding
