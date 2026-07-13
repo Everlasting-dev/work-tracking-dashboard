@@ -884,12 +884,24 @@ const SupabaseDB = {
   },
 
   _localToRemoteId(localId) {
+    return this._localToRemoteScopedId(localId, null);
+  },
+
+  _localToRemoteScopedId(localId, scope = null) {
     const id = Number(localId);
     try {
+      if (scope) {
+        const scopedRaw = localStorage.getItem('wt-sync-scoped-idmap-v1');
+        const scoped = scopedRaw ? JSON.parse(scopedRaw) : {};
+        const scopedMatch = scoped?.[scope]?.[String(id)];
+        if (scopedMatch != null) return Number(scopedMatch);
+      }
       const raw = localStorage.getItem('wt-sync-idmap-v1');
       const map = raw ? JSON.parse(raw) : {};
       const m = map[String(id)];
-      return m != null ? Number(m) : id;
+      // The legacy map is flat across entity types. Only trust it for temporary
+      // high IDs; stable IDs can collide with unrelated users/projects/tasks.
+      return m != null && id >= 9_000_000_000 ? Number(m) : id;
     } catch (_) {
       return id;
     }
@@ -915,10 +927,11 @@ const SupabaseDB = {
     await window.LocalDB?.db?.userClassrooms?.where('classroomId').equals(localId)
       .modify({ classroomId: realId }).catch(() => {});
     try {
-      const raw = localStorage.getItem('wt-sync-idmap-v1');
+      const raw = localStorage.getItem('wt-sync-scoped-idmap-v1');
       const map = raw ? JSON.parse(raw) : {};
-      map[String(localId)] = realId;
-      localStorage.setItem('wt-sync-idmap-v1', JSON.stringify(map));
+      map.classrooms = map.classrooms || {};
+      map.classrooms[String(localId)] = realId;
+      localStorage.setItem('wt-sync-scoped-idmap-v1', JSON.stringify(map));
     } catch (_) {}
     console.info(`[ResolveClassroom] patched ${localId} -> ${realId}`);
   },
@@ -931,7 +944,7 @@ const SupabaseDB = {
     const { data: byId } = await this._sb().from('wt_classrooms').select('id').eq('id', cid).maybeSingle();
     if (byId) return cid;
 
-    const mapped = this._localToRemoteId(cid);
+    const mapped = this._localToRemoteScopedId(cid, 'classrooms');
     if (mapped !== cid) {
       const { data: byMapped } = await this._sb().from('wt_classrooms').select('id').eq('id', mapped).maybeSingle();
       if (byMapped) return mapped;
@@ -959,16 +972,27 @@ const SupabaseDB = {
 
   async _resolveSupabaseProjectId(localId) {
     const pid = Number(localId);
-    const { data: byId } = await this._sb().from('wt_projects').select('id').eq('id', pid).maybeSingle();
-    if (byId) return pid;
-
-    const mapped = this._localToRemoteId(pid);
+    const mapped = this._localToRemoteScopedId(pid, 'projects');
     if (mapped !== pid) {
       const { data: byMapped } = await this._sb().from('wt_projects').select('id').eq('id', mapped).maybeSingle();
       if (byMapped) return mapped;
     }
 
     const local = await window.LocalDB?.getProject?.(pid).catch(() => null);
+
+    const { data: byId } = await this._sb().from('wt_projects').select('id,name,owner_id').eq('id', pid).maybeSingle();
+    if (byId) {
+      if (!local) {
+        throw new Error(`Project ${pid} exists in Supabase but not local DB; refusing to attach queued child rows without a local parent`);
+      }
+      let ownerId = null;
+      try { ownerId = await this._resolveSupabaseUserId(local.ownerId); } catch (_) {}
+      const nameMatches = !local.name || String(byId.name || '') === String(local.name || '');
+      const ownerMatches = ownerId == null || Number(byId.owner_id) === Number(ownerId);
+      if (nameMatches && ownerMatches) return pid;
+      console.warn(`[ResolveProject] local project ${pid} does not match Supabase row ${pid}; resolving by owner/name instead.`);
+    }
+
     if (!local) throw new Error(`Project ${pid} not found in Supabase or local DB`);
 
     const ownerId = await this._resolveSupabaseUserId(local.ownerId);
@@ -977,6 +1001,22 @@ const SupabaseDB = {
     if (byName?.id) return Number(byName.id);
 
     return this.createProject({ ...local, id: pid, actorUserId: null });
+  },
+
+  async _assertCanWriteProject(projectId, actorUserId, action = 'write to project') {
+    if (!actorUserId) return;
+    const uid = await this._resolveSupabaseUserId(actorUserId);
+    const [{ data: user, error: userErr }, { data: project, error: projectErr }] = await Promise.all([
+      this._sb().from('wt_users').select('id,role').eq('id', uid).maybeSingle(),
+      this._sb().from('wt_projects').select('id,owner_id,editor_ids,name').eq('id', Number(projectId)).maybeSingle()
+    ]);
+    if (userErr) throw userErr;
+    if (projectErr) throw projectErr;
+    if (!project) throw new Error(`Project ${projectId} not found`);
+    if (user?.role === 'admin') return;
+    const editors = Array.isArray(project.editor_ids) ? project.editor_ids.map(Number) : [];
+    if (Number(project.owner_id) === Number(uid) || editors.includes(Number(uid))) return;
+    throw new Error(`Permission denied: user ${uid} cannot ${action} "${project.name || projectId}"`);
   },
 
   async getDirectMessages(userA, userB, { limit = 100 } = {}) {
@@ -1921,6 +1961,7 @@ const SupabaseDB = {
       return id;
     }
     const projectId = await this._resolveSupabaseProjectId(data.projectId);
+    await this._assertCanWriteProject(projectId, actorUserId, 'create tasks in project');
     let resolvedAssignee = assigneeId;
     if (resolvedAssignee != null) {
       resolvedAssignee = await this._resolveSupabaseUserId(resolvedAssignee);
@@ -2041,6 +2082,9 @@ const SupabaseDB = {
     } else {
       task = await this._fetchRemoteTask(id);
     }
+    if (task?.projectId) {
+      await this._assertCanWriteProject(task.projectId, actorUserId, 'update tasks in project');
+    }
     const activityDetails = changes.activityDetails || '';
     const patch = { updated_at: new Date().toISOString() };
     if (changes.title != null) patch.title = changes.title;
@@ -2082,6 +2126,9 @@ const SupabaseDB = {
 
   async deleteTask(id, actorUserId = null) {
     const task = await this._fetchRemoteTask(id);
+    if (task?.projectId) {
+      await this._assertCanWriteProject(task.projectId, actorUserId, 'delete tasks in project');
+    }
     const { error } = await this._sb().from('wt_tasks').delete().eq('id', id);
     if (error) throw error;
     this._shadowDelete('tasks', id);

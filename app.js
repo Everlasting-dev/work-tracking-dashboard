@@ -489,6 +489,13 @@ function clearSession(opts = {}) {
 window.WT_getTrustedSession = getTrustedSession;
 window.WT_getActiveSession = getActiveSession;
 function isOffline() { return typeof navigator !== 'undefined' && navigator.onLine === false; }
+function withTimeout(promise, ms, fallback = null) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise(resolve => { timer = setTimeout(() => resolve(fallback), ms); })
+  ]).finally(() => { if (timer) clearTimeout(timer); });
+}
 function isAdmin() { return getSession()?.role === 'admin'; }
 function canEdit(project) {
   const s = getSession();
@@ -1520,14 +1527,15 @@ function showAuthError(msg, tone = 'error') {
 
 async function ensureDriveStorageSession(user, password) {
   if (!window.DriveStorage?.enabled?.() || !user || !password) return null;
+  if (isOffline()) return null;
   const email = user.email || `${user.username}@worktracker.app`;
   try {
-    return await window.DriveStorage.ensureAuthSession({
+    return await withTimeout(window.DriveStorage.ensureAuthSession({
       userId: user.id,
       username: user.username,
       email,
       password
-    });
+    }), 3500, null);
   } catch (err) {
     console.warn('[storage] Drive auth session failed:', err?.message || err);
     recordUserIssue({ level: 'warning', source: 'storage_auth', message: 'Document storage sign-in needs a refresh. Sign out and back in if files do not open.', details: err?.stack || err });
@@ -1571,6 +1579,11 @@ async function handleAuth(e) {
       hasUsers = await DB.hasUsers();
     }
     if (!hasUsers) {
+      if (isCloudConfigured() && isOffline()) {
+        showAuthError('You are offline. Sign in once while online to cache this workspace on this device.');
+        renderLogin();
+        return;
+      }
       showAuthError('The cloud database has no accounts yet. Create the administrator account below.');
       renderAdminSetup();
       return;
@@ -1587,8 +1600,13 @@ async function handleAuth(e) {
     // The canonical ID is the bigint Supabase uses in its wt_users table — it may
     // differ from the local Dexie auto-increment ID when the user was created offline.
     const sbEmail = user.email || `${user.username}@worktracker.app`;
-    const sbResult = await window.SupabaseDB?.ensureSupabaseAuth?.(sbEmail, password, user.username)
-      .catch(err => { console.warn('Supabase Auth (non-fatal):', err?.message || err); return null; });
+    const sbResult = isOffline()
+      ? null
+      : await withTimeout(
+          window.SupabaseDB?.ensureSupabaseAuth?.(sbEmail, password, user.username),
+          3500,
+          null
+        );
 
     // If Supabase knows this user under a different ID, patch LocalDB to match.
     // This fixes all FK errors: session.userId will equal wt_users.id in Supabase.
@@ -11056,6 +11074,12 @@ async function applyRoute() {
       document.getElementById('app').style.display = 'none';
       document.getElementById('menu-toggle').style.display = 'none';
       document.getElementById('auth-screen').style.display = 'flex';
+      if (isCloudConfigured() && isOffline()) {
+        renderLogin();
+        showAuthError('You are offline. Sign in once while online to cache this workspace on this device.');
+        requestSplashDismiss();
+        return;
+      }
       renderAdminSetup();
       requestSplashDismiss();
       return;

@@ -135,9 +135,11 @@ const SyncEngine = (() => {
     let cloned;
     try { cloned = JSON.parse(JSON.stringify(args)); } catch (_) { return args; }
 
-    const FOREIGN_KEYS = ['projectId','milestoneId','assigneeId','ownerId',
-                          'uploadedBy','userId','classroomId','actorUserId',
-                          'createdBy','favoriteUserId','fromUserId','toUserId'];
+    const FOREIGN_KEYS = ['projectId','relatedProjectId','milestoneId','taskId',
+                          'relatedTaskId','fromTaskId','toTaskId','assigneeId',
+                          'ownerId','uploadedBy','userId','classroomId',
+                          'actorUserId','createdBy','favoriteUserId',
+                          'fromUserId','toUserId','requesterId','decidedBy'];
 
     // First positional arg is often a bare ID for update/delete
     if (/^(update|delete)/.test(method) &&
@@ -155,6 +157,142 @@ const SyncEngine = (() => {
       }
     }
     return cloned;
+  }
+
+  const CREATE_SCOPES = {
+    createProject: 'projects',
+    createTask: 'tasks',
+    createMilestone: 'milestones',
+    createUpdate: 'updates',
+    createUser: 'users',
+    createClassroom: 'classrooms',
+    createAttachment: 'attachments',
+    createNotification: 'notifications',
+    createBugReport: 'bugReports',
+    createDirectMessage: 'directMessages',
+    requestProjectAccess: 'projectAccessRequests',
+    createWorkflowTemplate: 'workflowTemplates',
+    addFavorite: 'userFavorites',
+    createPersonalNote: 'personalNotes',
+  };
+
+  const TARGET_SCOPES = {
+    updateProject: 'projects',
+    deleteProject: 'projects',
+    updateTask: 'tasks',
+    deleteTask: 'tasks',
+    updateMilestone: 'milestones',
+    deleteMilestone: 'milestones',
+    deleteUpdate: 'updates',
+    updateUser: 'users',
+    deleteUser: 'users',
+    changePassword: 'users',
+    updateClassroom: 'classrooms',
+    deleteClassroom: 'classrooms',
+    deleteAttachment: 'attachments',
+    markNotificationRead: 'notifications',
+    updateBugReport: 'bugReports',
+    updateWorkflowTemplate: 'workflowTemplates',
+    deleteWorkflowTemplate: 'workflowTemplates',
+    updatePersonalNote: 'personalNotes',
+    deletePersonalNote: 'personalNotes',
+    respondProjectAccess: 'projectAccessRequests',
+  };
+
+  const FIELD_SCOPES = {
+    projectId: 'projects',
+    relatedProjectId: 'projects',
+    classroomId: 'classrooms',
+    milestoneId: 'milestones',
+    taskId: 'tasks',
+    relatedTaskId: 'tasks',
+    fromTaskId: 'tasks',
+    toTaskId: 'tasks',
+    assigneeId: 'users',
+    ownerId: 'users',
+    uploadedBy: 'users',
+    userId: 'users',
+    actorUserId: 'users',
+    createdBy: 'users',
+    favoriteUserId: 'users',
+    fromUserId: 'users',
+    toUserId: 'users',
+    requesterId: 'users',
+    decidedBy: 'users',
+  };
+
+  const ARRAY_FIELD_SCOPES = {
+    editorIds: 'users',
+    hiddenFromIds: 'users',
+    classroomIds: 'classrooms',
+  };
+
+  const ENTITY_SCOPES = {
+    project: 'projects',
+    task: 'tasks',
+    milestone: 'milestones',
+    update: 'updates',
+    attachment: 'attachments',
+    notification: 'notifications',
+    bug_report: 'bugReports',
+    project_access_request: 'projectAccessRequests',
+    workflow_template: 'workflowTemplates',
+    personal_note: 'personalNotes',
+  };
+
+  function _sameId(a, b) {
+    return a != null && b != null && String(a) === String(b);
+  }
+
+  function _rewriteObjectIdRefs(obj, scope, localId, remoteId) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+    let changed = false;
+
+    for (const [key, value] of Object.entries(obj)) {
+      if (FIELD_SCOPES[key] === scope && _sameId(value, localId)) {
+        obj[key] = Number(remoteId);
+        changed = true;
+      } else if (ARRAY_FIELD_SCOPES[key] === scope && Array.isArray(value)) {
+        const next = value.map(v => _sameId(v, localId) ? Number(remoteId) : v);
+        if (JSON.stringify(next) !== JSON.stringify(value)) {
+          obj[key] = next;
+          changed = true;
+        }
+      }
+    }
+
+    const entityScope = ENTITY_SCOPES[String(obj.entityType || '').toLowerCase()];
+    if (entityScope === scope && _sameId(obj.entityId, localId)) {
+      obj.entityId = Number(remoteId);
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  function _rewriteQueuedIdRefs(scope, localId, remoteId) {
+    if (!scope || localId == null || remoteId == null || _sameId(localId, remoteId)) return;
+    let changed = false;
+
+    for (const op of _queue) {
+      if (!op || op.status === 'done') continue;
+      if (op.status !== 'syncing' && op.localId != null && CREATE_SCOPES[op.method] === scope && _sameId(op.localId, localId)) {
+        op.localId = Number(remoteId);
+        changed = true;
+      }
+      if (Array.isArray(op.args)) {
+        const targetScope = TARGET_SCOPES[op.method];
+        if (targetScope === scope && _sameId(op.args[0], localId)) {
+          op.args[0] = Number(remoteId);
+          changed = true;
+        }
+        for (const arg of op.args) {
+          if (_rewriteObjectIdRefs(arg, scope, localId, remoteId)) changed = true;
+        }
+      }
+    }
+
+    if (changed) _saveQueue();
   }
 
   // ── LocalDB write interception ───────────────────────────────────────
@@ -415,9 +553,11 @@ const SyncEngine = (() => {
     // whenever they differ, not only for offline temp ids.
     if (_isCreate(op.method) && op.localId != null && result != null) {
       const remoteId = typeof result === 'number' ? result : result?.id;
-      if (remoteId != null && String(op.localId) !== String(remoteId)) {
-        if (_isOfflineId(op.localId)) { _idMap[String(op.localId)] = remoteId; _saveIdMap(); }
-        await _patchLocalId(op.method, op.localId, remoteId);
+      const localId = op.localId;
+      if (remoteId != null && String(localId) !== String(remoteId)) {
+        if (_isOfflineId(localId)) { _idMap[String(localId)] = remoteId; _saveIdMap(); }
+        _rewriteQueuedIdRefs(CREATE_SCOPES[op.method], localId, remoteId);
+        await _patchLocalId(op.method, localId, remoteId);
       }
     }
   }
@@ -452,6 +592,13 @@ const SyncEngine = (() => {
           .modify({ projectId: Number(remoteId) }).catch(() => {});
         await window.LocalDB?.db?.attachments?.where('projectId').equals(Number(localId))
           .modify({ projectId: Number(remoteId) }).catch(() => {});
+        try {
+          const oldRoute = `#/projects/${localId}`;
+          if (window.location?.hash === oldRoute) window.location.hash = `#/projects/${remoteId}`;
+          if (window.state?.currentProjectId && Number(window.state.currentProjectId) === Number(localId)) {
+            window.state.currentProjectId = Number(remoteId);
+          }
+        } catch (_) {}
       }
       if (method === 'createClassroom') {
         await window.LocalDB?.db?.projects?.where('classroomId').equals(Number(localId))

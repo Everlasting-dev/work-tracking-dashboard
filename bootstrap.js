@@ -18,8 +18,14 @@ document.getElementById('splash')?.classList.add('is-visible');
     }
     if (window.WT_INITIAL_SYNC) {
       setSplashStatus('Syncing workspace…');
-      await window.WT_INITIAL_SYNC.catch(() => {});
-      await _splashDelay(600);
+      // LocalDB is the primary store. Do not block the whole app on cloud sync:
+      // on weak/offline networks Supabase requests can hang long enough to make
+      // the app look dead before the user even reaches cached local data.
+      await Promise.race([
+        window.WT_INITIAL_SYNC.catch(() => false),
+        new Promise(resolve => setTimeout(() => resolve(false), 2500))
+      ]);
+      await _splashDelay(300);
     }
     setSplashStatus('Ready');
     await _splashDelay(500);
