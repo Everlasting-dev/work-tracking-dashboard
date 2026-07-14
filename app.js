@@ -34,6 +34,7 @@ const ICONS = {
   send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
   discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
   paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+  settings: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 
 /* ???? Utilities ???? */
@@ -88,7 +89,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.5'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.6'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -2315,14 +2316,15 @@ function updateSidebarUser() {
         <button type="button" class="sidebar-action-btn theme-toggle-btn" data-action="toggle-theme-mode" title="${themeMode === 'black' ? 'Switch to Normal mode' : 'Switch to Black mode'}" aria-label="Switch theme">
           ${themeIcon}
         </button>`;
-    const adminBtns = isAdm ? `
+    const settingsBtn = `
         <button type="button" class="sidebar-action-btn" data-action="toggle-route-settings" data-nav="settings" title="Settings" aria-label="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
+        </button>`;
+    const adminBtn = isAdm ? `
         <button type="button" class="sidebar-action-btn" data-action="toggle-route-admin" data-nav="admin" title="Admin" aria-label="Admin">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
         </button>` : '';
-    footerActions.innerHTML = bellBtn + themeBtn + adminBtns;
+    footerActions.innerHTML = bellBtn + themeBtn + settingsBtn + adminBtn;
     footerActions.style.display = '';
   }
   const adminNav  = document.getElementById('nav-admin');
@@ -2360,6 +2362,7 @@ function renderUserMenu() {
     ${syncMenuItem}
     <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '??' : '??'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
+    <button type="button" class="user-menu-item" data-action="toggle-route-settings">${ICONS.settings} Settings</button>
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
     <hr class="user-menu-divider">
@@ -4920,8 +4923,8 @@ function renderAppearanceSettingsHtml() {
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
       <div>
-        <h2>Appearance</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Day theme variants and card density for this device.</p>
+        <h2>Theme</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Choose how Orbitrack looks on this device.</p>
       </div>
       ${badge(mode === 'black' ? 'Black' : DAY_THEME_VARIANTS[variant]?.label || 'Day', mode === 'black' ? 'muted' : 'blue')}
     </div>
@@ -4939,8 +4942,8 @@ function renderAppearanceSettingsHtml() {
     </div>
     <div class="section-header" style="border-top:1px solid var(--border-light)">
       <div>
-        <h2>Card &amp; board size</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Make project cards and kanban boards smaller or roomier.</p>
+        <h2>View orientation</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Scale project cards and boards to fit how you work.</p>
       </div>
       ${badge(UI_DENSITIES[density].label, 'purple')}
     </div>
@@ -4974,7 +4977,7 @@ function renderPerformanceSettingsHtml({ compact = false } = {}) {
   </section>`;
 }
 
-function renderShortcutSettingsHtml() {
+function renderShortcutSettingsHtml({ readonly = false } = {}) {
   const conflicts = shortcutConflicts();
   const rows = SHORTCUT_DEFAULTS.map(def => {
     const pref = shortcutPref(def.id);
@@ -4984,24 +4987,24 @@ function renderShortcutSettingsHtml() {
       <td>${(pref.keys || []).map(k => `<kbd>${esc(shortcutLabel([k]))}</kbd>`).join(' ')}</td>
       <td>${badge(def.category, 'muted')}</td>
       <td>${hasConflict ? badge('Conflict', 'red') : (pref.enabled ? badge('Enabled', 'green') : badge('Disabled', 'muted'))}</td>
-      <td class="settings-shortcut-actions">
+      ${readonly ? '' : `<td class="settings-shortcut-actions">
         <button type="button" class="btn btn-sm btn-ghost" data-action="toggle-shortcut-enabled" data-shortcut-id="${esc(def.id)}">${pref.enabled ? 'Disable' : 'Enable'}</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="edit-shortcut" data-shortcut-id="${esc(def.id)}">Edit</button>
         <button type="button" class="btn-icon" data-action="reset-shortcut" data-shortcut-id="${esc(def.id)}" title="Reset">${ICONS.refresh}</button>
-      </td>
+      </td>`}
     </tr>`;
   }).join('');
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
       <div>
         <h2>Keyboard Shortcuts</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Shortcuts are local to this device. Sequential shortcuts do not fire while typing.</p>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">${readonly ? 'Reference only ? shortcuts cannot be changed on this account.' : 'Shortcuts are local to this device. Sequential shortcuts do not fire while typing.'}</p>
       </div>
-      <div class="settings-shortcut-toolbar">
+      ${readonly ? '' : `<div class="settings-shortcut-toolbar">
         <button type="button" class="btn btn-sm btn-ghost" data-action="export-shortcuts">${ICONS.download} Export</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="import-shortcuts">${ICONS.upload} Import</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="reset-all-shortcuts">${ICONS.refresh} Defaults</button>
-      </div>
+      </div>`}
     </div>
     <div class="section-body settings-shortcuts-body">
       <div class="settings-shortcuts-search-wrap">
@@ -5009,7 +5012,7 @@ function renderShortcutSettingsHtml() {
       </div>
       <div class="settings-shortcuts-table-wrap">
         <table class="settings-shortcuts-table">
-          <thead><tr><th>Action</th><th>Keys</th><th>Group</th><th>Status</th><th>Controls</th></tr></thead>
+          <thead><tr><th>Action</th><th>Keys</th><th>Group</th><th>Status</th>${readonly ? '' : '<th>Controls</th>'}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -5022,16 +5025,15 @@ async function renderPersonalSettings() {
   if (!content) return;
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Settings</h1><p class="view-subtitle">Personal controls for shortcuts, performance, and app behavior.</p></div>
+      <div><h1>Settings</h1><p class="view-subtitle">Personal look, view size, and shortcut reference for this device.</p></div>
     </div>
     <div class="settings-category-grid">
-      <a class="settings-category-card" href="#/settings" data-action="open-command-palette"><strong>Command Centre</strong><span>Ctrl/Cmd + K for navigation and actions.</span></a>
-      <div class="settings-category-card"><strong>Low Power</strong><span>Static UI, no blur, quieter realtime.</span></div>
-      <div class="settings-category-card"><strong>Shortcuts</strong><span>Customize, disable, export, or reset key bindings.</span></div>
+      <div class="settings-category-card"><strong>Theme</strong><span>Black, Vivid, or Ink day themes.</span></div>
+      <div class="settings-category-card"><strong>View orientation</strong><span>Comfortable, Compact, or Tiny boards.</span></div>
+      <div class="settings-category-card"><strong>Shortcuts</strong><span>View keyboard shortcuts (read-only).</span></div>
     </div>
     ${renderAppearanceSettingsHtml()}
-    ${renderPerformanceSettingsHtml()}
-    ${renderShortcutSettingsHtml()}`;
+    ${renderShortcutSettingsHtml({ readonly: true })}`;
 }
 
 async function renderSettings() {
@@ -6555,7 +6557,7 @@ async function showCommandPalette(initialQuery = '') {
     { label: 'Go to Tasks', sub: 'Board and table views', route: '/tasks' },
     { label: 'Go to Reports', sub: 'Workspace reporting', route: '/reports' },
     { label: 'Go to Support', sub: 'Help, changelog, and diagnostics', route: '/support' },
-    { label: 'Go to Settings', sub: 'Shortcuts, performance, workspace settings', route: '/settings' },
+    { label: 'Go to Settings', sub: isAdmin() ? 'Shortcuts, performance, workspace settings' : 'Theme, view orientation, and shortcut reference', route: '/settings' },
     ...(isAdmin() ? [{ label: 'Go to Admin', sub: 'Users, bugs, data, and workspace tools', route: '/admin' }] : [])
   ];
   const actionCommands = [
@@ -9551,12 +9553,14 @@ const actions = {
     await router();
   },
   'toggle-shortcut-enabled': async (b) => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     const id = b.dataset.shortcutId;
     const pref = shortcutPref(id);
     setShortcutOverride(id, { enabled: !pref.enabled, keys: pref.keys });
     await renderSettings();
   },
   'edit-shortcut': async (b) => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     const id = b.dataset.shortcutId;
     const pref = shortcutPref(id);
     const next = prompt('Shortcut keys, separated by commas. Use Mod for Ctrl/Cmd. Example: Mod+K or G P', pref.keys.join(', '));
@@ -9567,15 +9571,18 @@ const actions = {
     await renderSettings();
   },
   'reset-shortcut': async (b) => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     resetShortcutOverride(b.dataset.shortcutId);
     await renderSettings();
   },
   'reset-all-shortcuts': async () => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     resetShortcutOverride();
     showToast('Shortcuts restored to defaults', 'success');
     await renderSettings();
   },
   'export-shortcuts': async () => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     const blob = new Blob([JSON.stringify(loadShortcutOverrides(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -9585,6 +9592,7 @@ const actions = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
   'import-shortcuts': async () => {
+    if (!isAdmin()) { showToast('Shortcut editing is admin-only', 'error'); return; }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'application/json';
