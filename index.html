@@ -8,13 +8,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3.5.3">
+  <link rel="stylesheet" href="styles.css?v=3.5.5">
   <!-- React Flow (xyflow) island styles for the project task map -->
-  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.5.3">
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.5.5">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
-  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.5.3">
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.5.5">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -24,15 +24,16 @@
 </head>
 <body>
 
-  <!-- Loading Splash — Orbitrack Lite -->
+  <!-- Loading Splash — Orbitrack Lite v2 particle core -->
   <div id="splash">
-    <canvas id="splash-sphere" class="splash-sphere-canvas" aria-hidden="true"></canvas>
+    <div class="splash-core-wrap">
+      <canvas id="splash-sphere" class="splash-sphere-canvas" aria-hidden="true"></canvas>
+      <div class="splash-core-label">ORBITRACK LITE</div>
+    </div>
     <div class="splash-inner">
-      <p class="splash-brand">ORBITRACK</p>
-      <p class="splash-edition">Orbitrack Lite</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status" id="splash-status">Loading local database…</p>
-      <p class="splash-version" id="splash-app-version">v3.5.3</p>
+      <p class="splash-version" id="splash-app-version">v3.5.5</p>
     </div>
   </div>
 
@@ -62,6 +63,9 @@
           </svg>
         </div>
         <span class="brand-name">Orbitrack</span>
+        <button type="button" class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse navigation" aria-label="Collapse navigation" aria-pressed="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
       </div>
 
       <div class="sidebar-clock" id="sidebar-clock" aria-live="off" aria-label="Current time">
@@ -87,40 +91,40 @@
       </div>
 
       <nav class="sidebar-nav" id="sidebar-nav">
-        <a href="#/projects" class="nav-item active" data-nav="projects">
+        <a href="#/projects" class="nav-item active" data-nav="projects" title="Projects">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
           <span>Projects</span>
         </a>
-        <a href="#/tasks" class="nav-item" data-nav="tasks">
+        <a href="#/tasks" class="nav-item" data-nav="tasks" title="Tasks">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
           <span>Tasks</span>
         </a>
-        <a href="#/users" class="nav-item" data-nav="users">
+        <a href="#/users" class="nav-item" data-nav="users" title="Team">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           <span>Team</span>
         </a>
-        <a href="#/calendar" class="nav-item" data-nav="calendar">
+        <a href="#/calendar" class="nav-item" data-nav="calendar" title="Calendar">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           <span>Calendar</span>
         </a>
         <div class="sidebar-nav-label">Other</div>
-        <a href="#/support" class="nav-item" data-nav="support">
+        <a href="#/support" class="nav-item" data-nav="support" title="Support">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           <span>Support</span>
         </a>
-        <a href="#/diagnostics" class="nav-item" data-nav="diagnostics">
+        <a href="#/diagnostics" class="nav-item" data-nav="diagnostics" title="Diagnostics">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0Z"/></svg>
           <span>Diagnostics</span>
         </a>
-        <a href="#/dashboard" class="nav-item" data-nav="dashboard" id="nav-dashboard" style="display:none">
+        <a href="#/dashboard" class="nav-item" data-nav="dashboard" id="nav-dashboard" style="display:none" title="Dashboard">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
           <span>Dashboard</span>
         </a>
-        <a href="#/reports" class="nav-item" data-nav="reports" id="nav-reports" style="display:none">
+        <a href="#/reports" class="nav-item" data-nav="reports" id="nav-reports" style="display:none" title="Reports">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v-4"/><path d="M12 15V8"/><path d="M17 15v-7"/></svg>
           <span>Reports</span>
         </a>
-        <a href="#/admin" class="nav-item" data-nav="admin" id="nav-admin" style="display:none">
+        <a href="#/admin" class="nav-item" data-nav="admin" id="nav-admin" style="display:none" title="Admin">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
           <span>Admin</span>
         </a>
@@ -209,50 +213,56 @@
     </button>
   </div>
   <div class="toast-container" id="toast-container"></div>
-  <div id="upload-progress-bar" class="upload-progress-bar hidden">
-    <span class="upload-progress-label">Uploading…</span>
-    <div class="upload-progress-track"><div class="upload-progress-fill" id="upload-progress-fill"></div></div>
+  <div id="upload-progress-bar" class="upload-progress-bar hidden" role="status" aria-live="polite" aria-atomic="true">
+    <div class="upload-progress-head">
+      <span class="upload-progress-title">Uploading…</span>
+      <span class="upload-progress-pct" id="upload-progress-pct">0%</span>
+    </div>
+    <div class="upload-progress-track">
+      <div class="upload-progress-fill" id="upload-progress-fill"></div>
+    </div>
+    <span class="upload-progress-detail" id="upload-progress-detail"></span>
   </div>
   <input type="file" id="import-input" accept=".json" hidden>
   <input type="file" id="library-file-input" hidden multiple accept="image/*,.pdf,.doc,.docx,.txt,application/pdf">
 
-  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.5.3';</script>
-  <script src="config.js?v=3.5.3"></script>
+  <script>window.WT_APP_VERSION = window.WT_APP_VERSION || '3.5.5';</script>
+  <script src="config.js?v=3.5.5"></script>
   <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
-  <script src="vendor/orbiobs/orbiobs.js?v=3.5.3"></script>
+  <script src="vendor/orbiobs/orbiobs.js?v=3.5.5"></script>
   <script>
     window.OrbiObs && window.OrbiObs.init();
     window.addEventListener('error', (e) => window.OrbiObs && window.OrbiObs.captureError(e.error || e.message));
     window.addEventListener('unhandledrejection', (e) => window.OrbiObs && window.OrbiObs.captureError(e.reason));
   </script>
-  <script src="vendor/dexie.min.js?v=3.5.3"></script>
-  <script src="vendor/supabase.min.js?v=3.5.3"></script>
-  <script src="db.js?v=3.5.3"></script>
-  <script src="db-supabase.js?v=3.5.3"></script>
-  <script src="sync.js?v=3.5.3"></script>
-  <script src="sync-v3.js?v=3.5.3"></script>
-  <script src="realtime-sync.js?v=3.5.3"></script>
-  <script src="notification-sounds.js?v=3.5.3"></script>
-  <script src="db-bridge.js?v=3.5.3"></script>
-  <script src="splash-sphere.js?v=3.5.3"></script>
-  <script src="vendor/orbiemoji/orbiemoji.js?v=3.5.3"></script>
+  <script src="vendor/dexie.min.js?v=3.5.5"></script>
+  <script src="vendor/supabase.min.js?v=3.5.5"></script>
+  <script src="db.js?v=3.5.5"></script>
+  <script src="db-supabase.js?v=3.5.5"></script>
+  <script src="sync.js?v=3.5.5"></script>
+  <script src="sync-v3.js?v=3.5.5"></script>
+  <script src="realtime-sync.js?v=3.5.5"></script>
+  <script src="notification-sounds.js?v=3.5.5"></script>
+  <script src="db-bridge.js?v=3.5.5"></script>
+  <script src="splash-sphere.js?v=3.5.5"></script>
+  <script src="vendor/orbiemoji/orbiemoji.js?v=3.5.5"></script>
   <!-- Admin-only comprehensive project report generator (window.OrbiProjectReport) — used by the Reports tab. -->
-  <script src="reports-projects.js?v=3.5.3"></script>
-  <script src="app.js?v=3.5.3"></script>
+  <script src="reports-projects.js?v=3.5.5"></script>
+  <script src="app.js?v=3.5.5"></script>
   <!-- LOCAL EXPERIMENT: TipTap notes editor island (must load before notes.js mounts an editor). Roll back by removing this tag + vendor/orbitiptap + build-src/orbitiptap.js + the OrbiTipTap branch in notes.js. -->
-  <script src="vendor/orbitiptap/orbitiptap.js?v=3.5.3"></script>
-  <script src="notes.js?v=3.5.3"></script>
-  <script src="reports.js?v=3.5.3"></script>
+  <script src="vendor/orbitiptap/orbitiptap.js?v=3.5.5"></script>
+  <script src="notes.js?v=3.5.5"></script>
+  <script src="reports.js?v=3.5.5"></script>
   <!-- Hybrid Google Drive storage client (inert unless WT_CONFIG.storageProvider==='google_drive') -->
-  <script src="storage-drive.js?v=3.5.3"></script>
+  <script src="storage-drive.js?v=3.5.5"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
-  <script src="ui.js?v=3.5.3"></script>
-  <script src="bootstrap.js?v=3.5.3"></script>
-  <script src="desktop/updates.js?v=3.5.3"></script>
+  <script src="ui.js?v=3.5.5"></script>
+  <script src="bootstrap.js?v=3.5.5"></script>
+  <script src="desktop/updates.js?v=3.5.5"></script>
   <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
-  <script src="vendor/orbiflow/orbiflow.js?v=3.5.3"></script>
+  <script src="vendor/orbiflow/orbiflow.js?v=3.5.5"></script>
   <!-- Quill notes editor island -->
-  <script src="vendor/orbinotes/orbinotes.js?v=3.5.3"></script>
+  <script src="vendor/orbinotes/orbinotes.js?v=3.5.5"></script>
 </body>
 </html>
 

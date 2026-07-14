@@ -1,4 +1,4 @@
-/* ──── Icons ──── */
+/* ???? Icons ???? */
 
 const ICONS = {
   folder: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
@@ -36,7 +36,7 @@ const ICONS = {
   paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
 };
 
-/* ──── Utilities ──── */
+/* ???? Utilities ???? */
 
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 
@@ -88,14 +88,14 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.3'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.5'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
   if (splashVer) splashVer.textContent = 'v' + getAppVersion();
 });
 
-/* ──── UI v3: Splash ──── */
+/* ???? UI v3: Splash ???? */
 let _splashShownAt = Date.now();
 function setSplashStatus(msg) {
   const el = document.getElementById('splash-status');
@@ -132,7 +132,7 @@ const _splashDelay = (ms) => new Promise(r => setTimeout(r, ms));
 window.setSplashStatus = setSplashStatus;
 window.hideSplash = hideSplash;
 
-/* ──── UI v3: Classroom themes ──── */
+/* ???? UI v3: Classroom themes ???? */
 function _seededRng(seed) {
   let s = Number(seed) || 1;
   return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
@@ -273,7 +273,7 @@ const LOGISTICS_WORKFLOW_STEPS = [
   }
 ];
 
-/* ──── Template Helpers ──── */
+/* ???? Template Helpers ???? */
 
 function badge(t, c) { return `<span class="badge badge-${c}">${t}</span>`; }
 const TYPE_CFG_LEGACY = { 'job-search': { l: 'Job Search', c: 'green' } };
@@ -338,7 +338,7 @@ function logisticsStepByKey(key) {
 }
 function projectModeBadge(p) {
   if (!p?.isOngoing) return '';
-  const label = p.cadence ? `Ongoing · ${p.cadence}` : 'Ongoing';
+  const label = p.cadence ? `Ongoing ? ${p.cadence}` : 'Ongoing';
   return badge(label, 'purple');
 }
 function userColor(user) {
@@ -398,7 +398,7 @@ function emptyState(opts) {
   </div>`;
 }
 
-/* ──── Session ──── */
+/* ???? Session ???? */
 
 function projectFirstRunEmptyState() {
   return `<section class="project-empty-onboarding" aria-labelledby="project-empty-title">
@@ -516,7 +516,7 @@ function isProjectOwner(project) { const s = getSession(); return !!s && !!proje
 function canDeleteProject() { return isAdmin(); }
 function actorId() { return getSession()?.userId ?? null; }
 
-/* ──── Workspace data cache (cuts duplicate Supabase round-trips) ──── */
+/* ???? Workspace data cache (cuts duplicate Supabase round-trips) ???? */
 
 const WORKSPACE_CACHE_MS = 120000;
 const USERS_CACHE_MS = 300000;
@@ -836,7 +836,7 @@ async function recordProjectActivity({ userId, projectId = null, action, entityT
   }
 }
 
-/* ──── In-app notification helper ──── */
+/* ???? In-app notification helper ???? */
 
 async function notifyUser({ userId, type, message, projectId = null, entityType = null, entityId = null, actorUserId = null }) {
   if (userId) {
@@ -876,7 +876,7 @@ async function notifyNewCoEditors(project, prevEditorIds, nextEditorIds, actorUs
   }
 }
 
-/* ──── Last-seen / device capture ──── */
+/* ???? Last-seen / device capture ???? */
 
 async function sha256Text(text) {
   const enc = new TextEncoder();
@@ -995,7 +995,7 @@ function normalizeSearchText(value) {
 
 // Profile-picture <img src>. Drive avatars render via a public Drive thumbnail
 // URL (no auth, browser-cached); legacy avatars are inline base64. Empty string
-// means "no photo" → callers fall back to initials.
+// means "no photo" ? callers fall back to initials.
 function avatarSrc(u) {
   if (!u) return '';
   if (u.avatarDriveId) return `https://drive.google.com/thumbnail?id=${encodeURIComponent(u.avatarDriveId)}&sz=w240`;
@@ -1023,7 +1023,7 @@ function _debounceSearchRender(kind, inputId, setState, renderFn) {
     const next = document.getElementById(job.inputId);
     if (next) {
       // If the user kept typing during the async render, the freshly-rendered input
-      // carries the stale (fire-time) value — re-sync to the latest typed value and
+      // carries the stale (fire-time) value ? re-sync to the latest typed value and
       // put the caret at the end so no keystrokes are lost or reordered.
       if (next.value !== value) { next.value = value; }
       next.focus();
@@ -1171,7 +1171,7 @@ function resolveProjectIdFromAction(el) {
   return m ? Number(m[1]) : null;
 }
 
-/* ──── State ──── */
+/* ???? State ???? */
 
 const state = {
   projectFilter: 'active',
@@ -1213,6 +1213,9 @@ const state = {
 let wtAppBootstrapped = false;
 
 const THEME_KEY = 'wt-theme-mode-v1';
+const THEME_VARIANT_KEY = 'wt-theme-variant-v1';
+const UI_DENSITY_KEY = 'wt-ui-density-v1';
+const SIDEBAR_COLLAPSED_KEY = 'wt-sidebar-collapsed-v1';
 const PERFORMANCE_KEY = 'wt-performance-mode-v1';
 const SHORTCUT_OVERRIDES_KEY = 'wt-shortcut-overrides-v1';
 
@@ -1380,23 +1383,102 @@ function getThemeMode() {
   return saved === 'black' ? 'black' : 'normal';
 }
 
-function applyTheme(mode = getThemeMode()) {
+const DAY_THEME_VARIANTS = {
+  vivid: { label: 'Vivid', description: 'Blue and red accents on a soft cool background.' },
+  ink: { label: 'Ink', description: 'Pure white surfaces with pure black type and chrome.' }
+};
+
+function getThemeVariant() {
+  const saved = localStorage.getItem(THEME_VARIANT_KEY);
+  return DAY_THEME_VARIANTS[saved] ? saved : 'vivid';
+}
+
+function applyTheme(mode = getThemeMode(), variant = getThemeVariant()) {
   const next = mode === 'black' ? 'black' : 'normal';
+  const nextVariant = DAY_THEME_VARIANTS[variant] ? variant : 'vivid';
   document.body.classList.toggle('theme-black', next === 'black');
   document.body.classList.toggle('theme-normal', next !== 'black');
+  document.body.classList.toggle('theme-day-ink', next === 'normal' && nextVariant === 'ink');
   document.documentElement.dataset.theme = next;
+  if (next === 'black') delete document.documentElement.dataset.themeVariant;
+  else document.documentElement.dataset.themeVariant = nextVariant;
   localStorage.setItem(THEME_KEY, next);
+  localStorage.setItem(THEME_VARIANT_KEY, nextVariant);
   // Freeze position-based transitions briefly so the floating dock doesn't slide
   // when the theme switch reflows the layout (e.g. scrollbar-gutter differences).
   document.body.classList.add('theme-switching');
   clearTimeout(window._themeSwitchTimer);
   window._themeSwitchTimer = setTimeout(() => document.body.classList.remove('theme-switching'), 80);
-  try { window.dispatchEvent(new CustomEvent('wt-theme-changed', { detail: { theme: next } })); } catch (_) {}
+  try { window.dispatchEvent(new CustomEvent('wt-theme-changed', { detail: { theme: next, variant: nextVariant } })); } catch (_) {}
+  return next;
+}
+
+function setThemeVariant(variant) {
+  const next = DAY_THEME_VARIANTS[variant] ? variant : 'vivid';
+  applyTheme('normal', next);
+  showToast(`Day theme: ${DAY_THEME_VARIANTS[next].label}`, 'success');
   return next;
 }
 
 function toggleThemeMode() {
   return applyTheme(getThemeMode() === 'black' ? 'normal' : 'black');
+}
+
+const UI_DENSITIES = {
+  comfortable: { label: 'Comfortable', description: 'Larger project cards and roomier boards.' },
+  compact: { label: 'Compact', description: 'Smaller, denser cards ? default cute size.' },
+  tiny: { label: 'Tiny', description: 'Maximum density for busy boards.' }
+};
+
+function getUiDensity() {
+  const saved = localStorage.getItem(UI_DENSITY_KEY);
+  return UI_DENSITIES[saved] ? saved : 'compact';
+}
+
+function applyUiDensity(density = getUiDensity()) {
+  const next = UI_DENSITIES[density] ? density : 'compact';
+  document.documentElement.dataset.uiDensity = next;
+  localStorage.setItem(UI_DENSITY_KEY, next);
+  try { window.dispatchEvent(new CustomEvent('wt-ui-density-changed', { detail: { density: next } })); } catch (_) {}
+  return next;
+}
+
+function setUiDensity(density) {
+  const next = applyUiDensity(density);
+  showToast(`Card size: ${UI_DENSITIES[next].label}`, 'success');
+  return next;
+}
+
+function isSidebarCollapsed() {
+  return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+}
+
+function syncSidebarDockMetrics() {
+  const w = window.innerWidth || 1280;
+  const h = window.innerHeight || 800;
+  const collapsedWidth = w < 1200 ? '68px' : '72px';
+  document.documentElement.style.setProperty('--sidebar-collapsed-width', collapsedWidth);
+  document.body.classList.toggle('sidebar-dock-compact', h < 820);
+}
+
+function applySidebarCollapsed(collapsed = isSidebarCollapsed()) {
+  const next = !!collapsed;
+  syncSidebarDockMetrics();
+  document.body.classList.toggle('sidebar-collapsed', next);
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+  const btn = document.getElementById('sidebar-collapse-btn');
+  if (btn) {
+    btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+    btn.title = next ? 'Expand navigation' : 'Collapse navigation';
+    btn.setAttribute('aria-label', next ? 'Expand navigation' : 'Collapse navigation');
+  }
+  // Refresh icon tooltips so collapsed nav still has readable labels.
+  try { window.WTUi?.refreshIconTooltips?.(); } catch (_) {}
+  return next;
+}
+
+function toggleSidebarCollapsed() {
+  return applySidebarCollapsed(!isSidebarCollapsed());
 }
 
 const RECOVERY_TTL_MS = 10 * 60 * 1000;
@@ -1412,7 +1494,7 @@ function clearRecoveryUnlock() {
   sessionStorage.removeItem('wt-recovery-until');
 }
 
-/* ──── Auth Screens ──── */
+/* ???? Auth Screens ???? */
 
 function renderLogin() {
   const v3 = isV3Mode();
@@ -1480,7 +1562,7 @@ async function renderRecovery() {
 
 async function renderRecoveryChooseUser() {
   const users = await DB.getUsers();
-  const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} — ${esc(u.displayName || u.username)}</option>`).join('');
+  const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} ? ${esc(u.displayName || u.username)}</option>`).join('');
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
@@ -1503,7 +1585,7 @@ function renderForcePasswordChange(user) {
     ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Set your password</h2>
-    <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password — choose your own to continue.</p>
+    <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password ? choose your own to continue.</p>
     <div class="auth-error" id="auth-error"></div>
     <form data-form="force-pw" data-user-id="${user?.id}">
       <div class="form-group"><label for="fp-pw">New password</label><input id="fp-pw" name="password" type="password" required minlength="4" autocomplete="new-password"></div>
@@ -1597,7 +1679,7 @@ async function handleAuth(e) {
     if (!ok) { showAuthError('Invalid username or password'); return; }
 
     // Get Supabase Auth JWT and resolve the canonical wt_users.id.
-    // The canonical ID is the bigint Supabase uses in its wt_users table — it may
+    // The canonical ID is the bigint Supabase uses in its wt_users table ? it may
     // differ from the local Dexie auto-increment ID when the user was created offline.
     const sbEmail = user.email || `${user.username}@worktracker.app`;
     const sbResult = isOffline()
@@ -1620,7 +1702,7 @@ async function handleAuth(e) {
           if (rec) { await t.delete(oldId); await t.put({ ...rec, id: newId }); }
         }
         user = { ...user, id: newId };
-        console.info(`[Auth] local user ID ${oldId} → canonical Supabase ID ${newId}`);
+        console.info(`[Auth] local user ID ${oldId} ? canonical Supabase ID ${newId}`);
       } catch (patchErr) {
         console.warn('[Auth] ID patch failed (non-fatal):', patchErr?.message);
       }
@@ -1640,7 +1722,7 @@ async function handleAuth(e) {
     captureLastSeen(user.id).then(async () => {
       const fresh = await DB.getUser(user.id);
       const ip = fresh?.lastSeenIp;
-      await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: ip ? `${user.username} · ${ip}` : user.username });
+      await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: ip ? `${user.username} ? ${ip}` : user.username });
     }).catch(() => {});
     await showApp();
   } else if (type === 'admin-setup') {
@@ -1707,7 +1789,7 @@ async function handleAuth(e) {
   }
 }
 
-/* ──── App Shell Toggle ──── */
+/* ???? App Shell Toggle ???? */
 
 async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
@@ -1716,7 +1798,7 @@ async function showApp() {
   await DB.migrateFromLocalStorage(s.userId);
   if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
   // Personal space is created on the user's OWN first login, where s.userId is
-  // their canonical cloud id — so owner_id and membership are correct and survive
+  // their canonical cloud id ? so owner_id and membership are correct and survive
   // sync. owner_id now persists in the cloud, so this is idempotent (no per-login
   // duplicates). Dedupe first to clean up any spaces left mis-owned by the old
   // admin-side creation, then ensure exactly one exists.
@@ -1734,8 +1816,8 @@ async function showApp() {
         const first = (s.displayName || s.username || '').split(/\s+/)[0] || 'there';
         await DB.createPersonalNote({
           userId: s.userId,
-          title: 'Welcome to Orbitrack 👋',
-          content: `Hi ${first}! A few things to get you going:\n\n• Create a project from the Projects page, then add tasks.\n• Jot quick notes here any time (Alt+N).\n• Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
+          title: 'Welcome to Orbitrack ??',
+          content: `Hi ${first}! A few things to get you going:\n\n? Create a project from the Projects page, then add tasks.\n? Jot quick notes here any time (Alt+N).\n? Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
         }).catch(() => {});
       }
     }
@@ -1791,7 +1873,7 @@ function updateOfflineSyncBanner() {
     tone = 'warning';
     text = `${failed} cloud sync issue${failed === 1 ? '' : 's'} need attention.`;
   } else if (syncing) {
-    text = 'Syncing saved changes…';
+    text = 'Syncing saved changes?';
   } else if (pending) {
     text = `${pending} change${pending === 1 ? '' : 's'} waiting to sync.`;
   }
@@ -1874,7 +1956,7 @@ function startSidebarClock() {
   const WORK_START = 9 * 3600;   // 09:00
   const WORK_END   = 19 * 3600;  // 19:00
   const WORK_SPAN  = WORK_END - WORK_START;
-  const ARC_C      = 314.16;     // 2π × r50
+  const ARC_C      = 314.16;     // 2? ? r50
   function weekProgress(now) {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
@@ -1904,7 +1986,7 @@ function startSidebarClock() {
     if (yearPct) yearPct.textContent = `${Math.round(yP)}%`;
     if (monthPct) monthPct.textContent = `${Math.round(mP)}%`;
     if (weekPct) weekPct.textContent = `${Math.round(wP)}%`;
-    // Work-hours arc (9am–7pm): arc reduces as day progresses
+    // Work-hours arc (9am?7pm): arc reduces as day progresses
     const nowSecs = h * 3600 + m * 60 + s;
     const workPct = Math.min(1, Math.max(0, (nowSecs - WORK_START) / WORK_SPAN));
     if (workArc) workArc.setAttribute('stroke-dashoffset', (workPct * ARC_C).toFixed(2));
@@ -1997,7 +2079,7 @@ async function showSyncDiagnosticsModal() {
     <p class="text-secondary text-sm sync-diag-intro">
       Edits are saved on this device first, then uploaded to the cloud in the background.
       ${!online ? '<strong class="sync-diag-offline">You appear to be offline.</strong> ' : ''}
-      Click a failed row below to read the error. Details are also printed to the browser console (F12 → Console).
+      Click a failed row below to read the error. Details are also printed to the browser console (F12 ? Console).
     </p>
     <div class="sync-diag-summary">
       <span>Queued <strong>${status.pending || 0}</strong></span>
@@ -2162,22 +2244,22 @@ function renderSyncStatusIndicator() {
   el.classList.remove('hidden');
   if (status.failed) {
     const n = status.failed;
-    el.textContent = n > 1 ? ` · Sync issue (${n})` : ' · Sync issue';
+    el.textContent = n > 1 ? ` ? Sync issue (${n})` : ' ? Sync issue';
     el.className = 'sync-status-label is-failed is-clickable';
     const errorHint = status.lastError ? `\n${status.lastError.slice(0, 160)}` : '';
-    el.title = `Cloud sync failed — click for details.${errorHint}`;
+    el.title = `Cloud sync failed ? click for details.${errorHint}`;
     el.setAttribute('aria-label', `${n} failed cloud sync job${n > 1 ? 's' : ''}. Click for details.`);
     return;
   }
   if (offline) {
-    el.textContent = status.pending ? ` · Offline (${status.pending})` : ' · Offline';
+    el.textContent = status.pending ? ` ? Offline (${status.pending})` : ' ? Offline';
     el.className = 'sync-status-label is-pending is-clickable';
     el.title = 'Offline. Changes are saved locally and will sync when internet returns.';
     el.setAttribute('aria-label', 'Offline. Click for cloud sync details.');
     return;
   }
   if (status.syncing) {
-    el.textContent = status.pending > 1 ? ` · Syncing (${status.pending})` : ' · Syncing';
+    el.textContent = status.pending > 1 ? ` ? Syncing (${status.pending})` : ' ? Syncing';
     el.className = 'sync-status-label is-pending is-clickable';
     el.title = 'Click for sync queue details';
     el.setAttribute('aria-label', 'Cloud sync in progress. Click for details.');
@@ -2185,13 +2267,13 @@ function renderSyncStatusIndicator() {
   }
   if (!status.pending) {
     const live = window.RealtimeSync?.isConnected?.();
-    el.textContent = live ? ' · Live' : ' · Sync';
+    el.textContent = live ? ' ? Live' : ' ? Sync';
     el.className = live ? 'sync-status-label is-live is-clickable' : 'sync-status-label is-clickable';
-    el.title = live ? 'Realtime connected — click to sync now' : 'Sync now';
+    el.title = live ? 'Realtime connected ? click to sync now' : 'Sync now';
     el.setAttribute('aria-label', live ? 'Realtime connected. Click to sync now.' : 'Sync now.');
     return;
   }
-  el.textContent = status.pending === 1 ? ' · 1 pending sync' : ` · ${status.pending} pending sync`;
+  el.textContent = status.pending === 1 ? ' ? 1 pending sync' : ` ? ${status.pending} pending sync`;
   el.className = 'sync-status-label is-pending is-clickable';
   el.title = 'Click for sync queue details';
   el.setAttribute('aria-label', `${status.pending} change(s) waiting to sync. Click for details.`);
@@ -2276,7 +2358,7 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
   menu.innerHTML = `
     ${syncMenuItem}
-    <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '🔇' : '🔔'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
+    <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '??' : '??'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
@@ -2329,7 +2411,7 @@ function formatActivityMessage(entry, uMap) {
   return `${esc(name)} ${verb} ${type}${detail}`;
 }
 
-/* ──── Views ──── */
+/* ???? Views ???? */
 
 async function renderProjects() {
   const content = document.getElementById('content');
@@ -2379,7 +2461,7 @@ async function renderProjects() {
     if (fields.length) visibleFieldsByProject[t.projectId] = [...(visibleFieldsByProject[t.projectId] || []), ...fields];
   }
 
-  // Status → card accent color
+  // Status ? card accent color
   const STATUS_ACCENT = { active: '#000000', completed: '#262626', 'on-hold': '#737373', archived: '#a3a3a3' };
 
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
@@ -2408,7 +2490,7 @@ async function renderProjects() {
     <div class="projects-controls">
       <div class="projects-search-wrap">
         <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input id="project-search" class="projects-search-input" type="search" placeholder="Search projects…" value="${esc(state.projectSearch)}" data-project-filter-input="search">
+        <input id="project-search" class="projects-search-input" type="search" placeholder="Search projects?" value="${esc(state.projectSearch)}" data-project-filter-input="search">
         <kbd>/</kbd>
         <kbd>Ctrl K</kbd>
       </div>
@@ -2496,7 +2578,7 @@ async function renderProjects() {
     }).join('')}</div>`}`;
 }
 
-/* ──── Task order helpers (localStorage) ──── */
+/* ???? Task order helpers (localStorage) ???? */
 
 function getTaskOrder(projectId) {
   try { return JSON.parse(localStorage.getItem(`wt_task_order_${projectId}`)) || null; }
@@ -2589,7 +2671,7 @@ function sortTasksByOrder(tasks) {
   });
 }
 
-/* ──── Task view renderers ──── */
+/* ???? Task view renderers ???? */
 
 function _insertZoneHtml(afterId, status, projectId) {
   return `<div class="task-insert-zone" data-after="${afterId}" data-status="${esc(status)}" data-project-id="${projectId}">
@@ -2632,7 +2714,7 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = 
           ${editable
             ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details · notes, tracking info, files">${esc(t.title)}</button>
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details ? notes, tracking info, files">${esc(t.title)}</button>
           <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </button>
@@ -2990,7 +3072,7 @@ function renderTaskTimelineViewHtml(tasks, uMap, projectId) {
       </div>
       <div class="timeline-row-track-v2">
         <div class="timeline-today-track" style="left:${todayPct}%"></div>
-        <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} — Due ${formatDateShort(t.dueDate)}">
+        <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} ? Due ${formatDateShort(t.dueDate)}">
           <span class="timeline-bar-label-v2">${formatDateShort(t.dueDate)}</span>
         </div>
       </div>
@@ -3042,7 +3124,7 @@ function setupTaskDragDropList(projectId) {
   });
 }
 
-/* ──── Board drag-and-drop (status change + reorder) ──── */
+/* ???? Board drag-and-drop (status change + reorder) ???? */
 
 function setupTaskBoardDragDrop(projectId) {
   const container = document.getElementById('tab-content');
@@ -3086,7 +3168,7 @@ async function persistBoardOrder(projectId, movedId) {
   }
   const uid = actorId();
 
-  // Read the resulting visual order across all columns → assign small 1-based sortOrder.
+  // Read the resulting visual order across all columns ? assign small 1-based sortOrder.
   const desired = [];
   let order = 1;
   const cols = container.querySelectorAll('.task-board-col-v2');
@@ -3229,11 +3311,11 @@ function showProjectCelebration(project, creditLabel) {
   overlay.innerHTML = `
     <div class="celebration-confetti-layer">${pieces}</div>
     <div class="celebration-card">
-      <div class="celebration-trophy">🏆</div>
+      <div class="celebration-trophy">??</div>
       <h2>Project complete!</h2>
       <p class="celebration-project">${esc(project.name)}</p>
       <p class="celebration-credit">Completed by <strong>${esc(creditLabel)}</strong></p>
-      <p class="celebration-rank">Contributor ranks updated ↑</p>
+      <p class="celebration-rank">Contributor ranks updated ?</p>
       <button type="button" class="btn btn-primary" data-action="dismiss-celebration">Nice!</button>
     </div>`;
   document.body.appendChild(overlay);
@@ -3255,7 +3337,7 @@ async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks
   const who = actor?.displayName || actor?.username || 'Someone';
   await recordProjectActivity({
     userId: uid, projectId: p.id, action: 'updated', entityType: 'task', entityId: task.id,
-    details: `${task.title} → ${TSTATUS[nextStatus]?.l || nextStatus}`,
+    details: `${task.title} ? ${TSTATUS[nextStatus]?.l || nextStatus}`,
     discordLine: `${who} changed task "${task.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`
   });
   if (workflowProjectStatus) {
@@ -3270,7 +3352,7 @@ async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks
     const allDone = tasksAfterUpdate.length > 0 && tasksAfterUpdate.every(pt => pt.status === 'done');
     if (allDone && p.status !== 'completed') {
       await DB.updateProject(p.id, { status: 'completed' }, uid);
-      showToast(`"${p.name}" completed — all tasks done!`, 'success');
+      showToast(`"${p.name}" completed ? all tasks done!`, 'success');
       await recordProjectActivity({
         userId: uid, projectId: p.id, action: 'updated', entityType: 'project',
         details: 'moved to Completed (all tasks done)',
@@ -3377,8 +3459,8 @@ async function renderProjectDetail(projectId) {
   const owner = users.find(u => u.id === project.ownerId);
   const department = projectDepartmentValue(project, Object.fromEntries(users.map(u => [u.id, u])));
   let tab = state.projectTab;
-  if (!canSeeTasks && (tab === 'tasks' || tab === 'board' || tab === 'timeline')) tab = 'milestones';
-  if (['milestones', 'library', 'updates'].includes(tab)) tab = canSeeTasks ? 'tasks' : 'map';
+  if (!canSeeTasks && (tab === 'tasks' || tab === 'board' || tab === 'timeline' || tab === 'map')) tab = 'milestones';
+  if (['milestones', 'library', 'updates', 'map'].includes(tab)) tab = canSeeTasks ? 'tasks' : 'milestones';
   state.projectTab = tab;
   const attCount = attList.length;
   state.currentProjectId = project.id;
@@ -3491,7 +3573,6 @@ async function renderProjectDetail(projectId) {
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'tasks' ? 'active' : ''}" data-action="switch-tab" data-tab="tasks" data-project-id="${projectId}">Tasks <span>${tasks.length}</span></button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'board' ? 'active' : ''}" data-action="switch-tab" data-tab="board" data-project-id="${projectId}">Board</button>` : ''}
           ${canSeeTasks ? `<button class="tab-btn ${tab === 'timeline' ? 'active' : ''}" data-action="switch-tab" data-tab="timeline" data-project-id="${projectId}">Timeline</button>` : ''}
-          ${canSeeTasks ? `<button class="tab-btn ${tab === 'map' ? 'active' : ''}" data-action="switch-tab" data-tab="map" data-project-id="${projectId}">Map</button>` : ''}
         </div>
         <div id="tab-content"></div>
       </section>
@@ -3539,6 +3620,79 @@ function openDocumentPanelAnimated() {
   backdrop?.classList.remove('hidden');
   panel.classList.remove('hidden');
   requestAnimationFrame(() => panel.classList.add('is-open'));
+}
+
+function updateProjectAttachmentBadges(projectId, count) {
+  const n = Math.max(0, Number(count) || 0);
+  const pid = String(projectId);
+  document.querySelectorAll(`.project-docs-toggle[data-project-id="${pid}"]`).forEach((btn) => {
+    let badge = btn.querySelector('.project-docs-count');
+    if (n > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'project-docs-count';
+        btn.appendChild(badge);
+      }
+      badge.textContent = String(n);
+    } else if (badge) {
+      badge.remove();
+    }
+  });
+  document.querySelectorAll(`.project-panel-launcher[data-project-id="${pid}"], .project-panel-launcher`).forEach((btn) => {
+    if (btn.dataset.projectId && btn.dataset.projectId !== pid) return;
+    let badge = btn.querySelector('span');
+    if (n > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        btn.appendChild(badge);
+      }
+      badge.textContent = String(n);
+    } else if (badge) {
+      badge.remove();
+    }
+  });
+  document.querySelectorAll('.project-command-metric').forEach((btn) => {
+    const label = btn.querySelector('span:last-child');
+    const value = btn.querySelector('strong');
+    if (!label || !value) return;
+    if (label.textContent?.trim() === 'Files') value.textContent = String(n);
+  });
+}
+
+/** Soft-refresh document UI without a full page fade/reload flash. */
+async function refreshProjectAttachmentsUI(projectId) {
+  const pid = Number(projectId);
+  if (!pid) return [];
+  const attList = await DB.getAttachments(pid);
+  if (state._detailCache?.projectId === pid) {
+    state._detailCache.attList = attList;
+  }
+  updateProjectAttachmentBadges(pid, attList.length);
+
+  const project = state._detailCache?.projectId === pid && state._detailCache.project
+    ? state._detailCache.project
+    : await DB.getProject(pid);
+  if (!project) return attList;
+
+  if (state.projectPanelOpen) {
+    try { await renderDocumentPanel(pid, canEdit(project)); } catch (err) {
+      console.warn('[docs] panel refresh failed', err);
+    }
+  }
+
+  if (isLogisticsWorkflow(project)) {
+    const tasks = state._detailCache?.projectId === pid && state._detailCache.allProjectTasks
+      ? state._detailCache.allProjectTasks
+      : await DB.getTasks({ projectId: pid });
+    const card = document.querySelector('.project-detail-linear .workflow-card');
+    if (card) {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = renderLogisticsWorkflowCard(project, tasks, attList, canEdit(project));
+      const next = wrap.firstElementChild;
+      if (next) card.replaceWith(next);
+    }
+  }
+  return attList;
 }
 
 async function renderDocumentPanel(projectId, editable) {
@@ -3599,9 +3753,9 @@ async function renderDocumentPanel(projectId, editable) {
         <div class="doc-panel-info">
           <span class="doc-panel-name">${esc(item.fileName)}</span>
           <span class="doc-panel-meta">
-            ${who ? esc((who.displayName || who.username).split(' ')[0]) : '?'} · ${timeAgo(item.createdAt)}
+            ${who ? esc((who.displayName || who.username).split(' ')[0]) : '?'} ? ${timeAgo(item.createdAt)}
             ${isTaskFile ? `<span class="doc-panel-task-tag">task</span>` : ''}
-            ${item.documentType ? ` · <em>${esc(documentTypeLabel(item.documentType))}</em>` : ''}
+            ${item.documentType ? ` ? <em>${esc(documentTypeLabel(item.documentType))}</em>` : ''}
           </span>
         </div>
         </button>
@@ -3617,7 +3771,7 @@ async function renderDocumentPanel(projectId, editable) {
             <strong>${esc(m.title)}</strong>
             <span>${m.dueDate ? formatDateShort(m.dueDate) : (m.status || 'Pending')}</span>
           </div>
-          ${editable ? `<button type="button" class="btn-icon" data-action="complete-milestone" data-id="${m.id}" title="Complete">${ICONS.check || '✓'}</button>` : ''}
+          ${editable ? `<button type="button" class="btn-icon" data-action="complete-milestone" data-id="${m.id}" title="Complete">${ICONS.check || '?'}</button>` : ''}
         </div>`).join('')}</div>`
     : `<p class="doc-panel-empty">Add milestones to break this project into smaller stages.</p>`;
 
@@ -3654,7 +3808,7 @@ async function renderDocumentPanel(projectId, editable) {
     <div class="doc-panel-header project-panel-header">
       <div>
         <h3>${esc(project.name || 'Project')}</h3>
-        <span class="projects-page-count" style="font-size:0.72rem">${tasks.length} tasks · ${items.length} docs</span>
+        <span class="projects-page-count" style="font-size:0.72rem">${tasks.length} tasks ? ${items.length} docs</span>
       </div>
       <button type="button" class="btn-icon" data-action="toggle-doc-panel" data-project-id="${projectId}" title="Close panel">${ICONS.x}</button>
     </div>
@@ -3734,7 +3888,7 @@ async function openFilePreview(attachmentId, list = null) {
       catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
     }
   }
-  if (!url) { showToast('File is not available — it may still be syncing.', 'error'); return; }
+  if (!url) { showToast('File is not available ? it may still be syncing.', 'error'); return; }
   if (state._previewUrl) try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
   state._previewUrl = isBlobUrl ? url : null;
   const ov = document.getElementById('file-preview-overlay');
@@ -3798,7 +3952,7 @@ async function openFilePreview(attachmentId, list = null) {
       hdBtn.textContent = 'View HD';
       hdBtn.onclick = async () => {
         hdBtn.disabled = true;
-        hdBtn.textContent = 'Loading HD…';
+        hdBtn.textContent = 'Loading HD?';
         try {
           const full = await window.DriveStorage.objectUrl(item.id);
           const img = body.querySelector('img.file-preview-image');
@@ -3915,92 +4069,9 @@ async function renderTab(tab, projectId, editable) {
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `<div style="padding-top:4px">${renderTaskChainTimelineHtml(tasks, uMap)}</div>`;
   } else if (tab === 'map') {
-    const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
-    const allTasks = cache?.allProjectTasks ?? await DB.getTasks({ projectId });
-    const users = cache?.users ?? await getUsersCached();
-    const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-    const deps = await DB.getTaskDependencies(projectId);
-    el.classList.add('tab-content-enter');
-    if (window.OrbiFlow && allTasks.length) {
-      // Interactive React Flow (xyflow) map: draggable cards, curved links,
-      // zoom/pan/minimap, and drag-to-connect dependencies when editable.
-      const hint = editable
-        ? 'Drag cards to arrange · drag a card edge to another to link a dependency · click a link to remove it · click a card to open it'
-        : 'Task dependency flow · scroll to zoom, drag to pan';
-      el.innerHTML = `
-        <div class="orbi-flow-wrap" id="orbi-flow-wrap">
-          <div class="orbi-flow-toolbar">
-            <span class="text-muted text-sm tab-hint">${hint}</span>
-            <div class="orbi-flow-tools">
-              ${editable ? `<button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-add-task">${ICONS.plus} Task</button>` : ''}
-              <button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-fit" title="Fit all cards to view">Fit</button>
-              <button type="button" class="btn btn-sm btn-ghost" id="orbi-flow-fs" title="Fullscreen (Esc to exit)">⛶ Fullscreen</button>
-            </div>
-          </div>
-          <div id="orbi-flow-mount" class="orbi-flow-mount"></div>
-        </div>`;
-      const mountEl = el.querySelector('#orbi-flow-mount');
-      const nowMs = Date.now();
-      const flowData = {
-        editable,
-        nodes: allTasks.map(t => {
-          const st = FLOW_STATUS[t.status] || FLOW_STATUS.todo;
-          const a = uMap[t.assigneeId];
-          const who = a ? (a.displayName || a.username) : 'Unassigned';
-          const dueMs = t.dueDate ? new Date(t.dueDate).getTime() : null;
-          return {
-            id: String(t.id),
-            title: (t.title || 'Task'),
-            statusLabel: st.label,
-            headerColor: st.header,
-            who,
-            priority: t.priority || 'medium',
-            due: dueMs ? new Date(dueMs).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
-            overdue: !!(dueMs && dueMs < nowMs && t.status !== 'done'),
-            avatar: a ? who.charAt(0).toUpperCase() : '',
-            avatarColor: a?.color || '#64748b',
-          };
-        }),
-        edges: deps.filter(d => d.type === 'blocks').map(d => ({ source: String(d.fromTaskId), target: String(d.toTaskId) })),
-      };
-      const flowHandle = window.OrbiFlow.mount(mountEl, flowData, {
-        onNodeClick: (id) => showTaskDetailModal(Number(id)),
-        onConnect: editable ? async (sourceId, targetId) => {
-          try {
-            const blockers = await DB.getTaskBlockers(Number(targetId));
-            await DB.setTaskBlockedBy(Number(targetId), [...blockers, Number(sourceId)], actorId());
-            showToast('Dependency linked', 'success');
-            state._detailCache = null;
-          } catch (_) { showToast('Could not link dependency', 'error'); }
-        } : null,
-        onUnlink: editable ? async (sourceId, targetId) => {
-          try {
-            const blockers = await DB.getTaskBlockers(Number(targetId));
-            await DB.setTaskBlockedBy(Number(targetId), blockers.filter(b => b !== Number(sourceId)), actorId());
-            showToast('Dependency removed', 'success');
-            state._detailCache = null;
-          } catch (_) { showToast('Could not remove dependency', 'error'); }
-        } : null,
-      });
-      // Toolbar: add task, fit-to-view, and fullscreen (with Esc to exit).
-      const wrap = el.querySelector('#orbi-flow-wrap');
-      const fsBtn = el.querySelector('#orbi-flow-fs');
-      const refit = () => setTimeout(() => flowHandle?.fitView?.(), 90);
-      el.querySelector('#orbi-flow-add-task')?.addEventListener('click', () => showTaskModal(projectId));
-      el.querySelector('#orbi-flow-fit')?.addEventListener('click', () => flowHandle?.fitView?.());
-      const onEsc = (e) => { if (e.key === 'Escape' && wrap.classList.contains('orbi-flow-fullscreen')) toggleFs(); };
-      const toggleFs = () => {
-        const on = wrap.classList.toggle('orbi-flow-fullscreen');
-        document.body.classList.toggle('orbi-flow-fs-lock', on);
-        if (fsBtn) fsBtn.innerHTML = on ? '✕ Exit' : '⛶ Fullscreen';
-        if (on) document.addEventListener('keydown', onEsc);
-        else document.removeEventListener('keydown', onEsc);
-        refit();
-      };
-      fsBtn?.addEventListener('click', toggleFs);
-    } else {
-      el.innerHTML = renderTaskMapViewHtml(allTasks, deps, uMap, editable);
-    }
+    // Map view temporarily retired ? keep helpers, land on tasks.
+    state.projectTab = 'tasks';
+    return renderTab('tasks', projectId, editable);
   } else if (tab === 'milestones') {
     const cache = state._detailCache?.projectId === projectId ? state._detailCache : null;
     const ms = cache?.milestones ?? await DB.getMilestones(projectId);
@@ -4085,7 +4156,7 @@ async function renderTab(tab, projectId, editable) {
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add Note</button></div>` : ''}
-      <p class="text-muted text-sm tab-hint activity-hint">Activity log — visible to you${isAdmin() ? ' and all admins' : ''}.</p>
+      <p class="text-muted text-sm tab-hint activity-hint">Activity log ? visible to you${isAdmin() ? ' and all admins' : ''}.</p>
       ${logs.length === 0 ? emptyState({
         icon: 'activity',
         title: 'No activity yet',
@@ -4343,7 +4414,7 @@ async function renderTasks() {
             : `<span class="status-dot status-dot-${t.status}"></span>`}
           <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Click to open details, add notes &amp; tracking info">${esc(t.title)}</button>
           ${showProject && proj ? `<a href="#/projects/${proj.id}" class="task-card-proj-badge">${esc(proj.name)}</a>` : ''}
-          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details · add notes, tracking number, files">
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details ? add notes, tracking number, files">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
@@ -4356,7 +4427,7 @@ async function renderTasks() {
           <div class="task-card-tags">
             ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
             ${prioBadge(t.priority)}
-            ${hasNotes ? `<span class="task-note-dot" title="Has notes">📝</span>` : ''}
+            ${hasNotes ? `<span class="task-note-dot" title="Has notes">??</span>` : ''}
           </div>
         </div>
         ${fileBadge ? `<div class="task-card-fields">${fileBadge}</div>` : ''}
@@ -4367,11 +4438,13 @@ async function renderTasks() {
 
   let body = '';
   if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
-  if (f === 'all') {
-    const projIds = [...new Set(all.map(t => t.projectId))].sort((a,b) => (pMap[a]?.name||'').localeCompare(pMap[b]?.name||''));
+  const groupByProject = f === 'all' || f === 'mine';
+  if (groupByProject) {
+    const groupSource = f === 'all' ? all : filteredTasks;
+    const projIds = [...new Set(groupSource.map(t => t.projectId))].sort((a,b) => (pMap[a]?.name||'').localeCompare(pMap[b]?.name||''));
     body = projIds.map(pid => {
       const proj = pMap[pid]; if (!proj) return '';
-      const pt = all.filter(t => t.projectId === pid);
+      const pt = groupSource.filter(t => t.projectId === pid);
       const ordered = [...sortPrio(pt.filter(t=>t.status==='todo')), ...sortPrio(pt.filter(t=>t.status==='doing')), ...sortPrio(pt.filter(t=>t.status==='done'))];
       const todoCnt = pt.filter(t=>t.status==='todo').length;
       const doingCnt = pt.filter(t=>t.status==='doing').length;
@@ -4388,12 +4461,18 @@ async function renderTasks() {
           <div class="task-proj-group-badges">
             ${doingCnt ? `<span class="badge badge-blue">${doingCnt} in progress</span>` : ''}
             ${todoCnt ? `<span class="badge badge-amber">${todoCnt} to do</span>` : ''}
-            <span class="text-muted text-sm">${pt.length} tasks</span>
+            <span class="text-muted text-sm">${pt.length} task${pt.length === 1 ? '' : 's'}</span>
           </div>
         </div>
         <div class="tpg-body task-group-table">${taskListTableHtml(ordered, pMap, uMap, { showProject: false })}</div>
       </div>`;
-    }).join('') || emptyState({ icon:'tasks', title:'No tasks yet', description:'Create a project and add tasks.', cta:'New Task', ctaAction:'add-task' });
+    }).join('') || emptyState({
+      icon: 'tasks',
+      title: f === 'mine' ? 'No tasks assigned to you' : 'No tasks yet',
+      description: f === 'mine' ? 'Tasks assigned to you will appear under their projects.' : 'Create a project and add tasks.',
+      cta: f === 'mine' ? '' : 'New Task',
+      ctaAction: f === 'mine' ? '' : 'add-task'
+    });
   } else {
     const filtered = f === 'done' ? filteredTasks : sortPrio(filteredTasks);
     body = filtered.length ? taskListTableHtml(filtered, pMap, uMap, { showProject: true })
@@ -4535,7 +4614,7 @@ async function renderAdmin() {
               </div>
               <span>${esc(r.description)}</span>
               ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
-              <small>${esc(who?.displayName || who?.username || 'Unknown')} · ${esc(r.severity)} · v${esc(r.appVersion || '?')} · ${timeAgo(r.createdAt)}</small>
+              <small>${esc(who?.displayName || who?.username || 'Unknown')} ? ${esc(r.severity)} ? v${esc(r.appVersion || '?')} ? ${timeAgo(r.createdAt)}</small>
               ${r.resolutionNote ? `<div class="bug-report-resolution">${esc(r.resolutionNote)}</div>` : ''}
               <form data-form="update-bug-report" data-bug-id="${r.id}" class="bug-report-manage">
                 <select name="status" class="bug-report-status-select">
@@ -4586,7 +4665,7 @@ async function renderAdmin() {
             ${avatarHtml}
             <div class="admin-ucard-meta">
               <div class="admin-ucard-name" data-action="show-user-profile" data-user-id="${u.id}" style="cursor:pointer" title="View profile">${esc(u.displayName || u.username)}</div>
-              <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+              <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` ? ${esc(u.email)}` : ''}</div>
               <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
               <div class="admin-ucard-badges">${(userRoomMap[u.id] || []).map(id => {
                 const room = classrooms.find(c => Number(c.id) === Number(id));
@@ -4615,7 +4694,7 @@ async function renderAdmin() {
     </div>`;
 }
 
-/* ──── Settings (admin only) ──── */
+/* ???? Settings (admin only) ???? */
 
 function adminActivityBarHtml(label, widthPct) {
   const w = Math.min(100, Math.max(0, widthPct));
@@ -4735,7 +4814,7 @@ async function renderAdminTabbed() {
             <div class="bug-report-titleline"><strong>${esc(r.title || r.message || 'Untitled report')}</strong>${badge(bugStatus.find(s => s[0] === st)?.[1] || st, resolved ? 'green' : 'amber')}</div>
             <span>${esc(r.description || r.message || '')}</span>
             ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
-            <small>${esc(who?.displayName || who?.username || 'Unknown')} · ${esc(r.severity || r.kind || 'normal')} · v${esc(r.appVersion || '?')} · ${timeAgo(r.createdAt)}</small>
+            <small>${esc(who?.displayName || who?.username || 'Unknown')} ? ${esc(r.severity || r.kind || 'normal')} ? v${esc(r.appVersion || '?')} ? ${timeAgo(r.createdAt)}</small>
             <form data-form="update-bug-report" data-bug-id="${r.id}" class="bug-report-manage">
               <select name="status" class="bug-report-status-select">${bugStatus.map(s => `<option value="${s[0]}" ${s[0] === st ? 'selected' : ''}>${s[1]}</option>`).join('')}</select>
               <input type="url" name="githubIssueUrl" placeholder="GitHub issue URL" value="${esc(r.githubIssueUrl || '')}">
@@ -4758,7 +4837,7 @@ async function renderAdminTabbed() {
         return `<div class="admin-ucard">
           <div class="admin-ucard-header">${avatarHtml}<div class="admin-ucard-meta">
             <div class="admin-ucard-name">${esc(u.displayName || u.username)}</div>
-            <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+            <div class="admin-ucard-sub">@${esc(u.username)}${u.email ? ` ? ${esc(u.email)}` : ''}</div>
             <div class="admin-ucard-badges">${badge(u.role === 'admin' ? 'Admin' : 'Member', u.role === 'admin' ? 'purple' : 'blue')} ${departmentBadge(u.department || '')}</div>
             <div class="admin-personal-mini">${u.birthDate ? `<span>${ICONS.calendar} ${formatDateShort(u.birthDate)}</span>` : ''}${u.gender ? `<span>${esc(u.gender)}</span>` : ''}${u.hoursLoggedTotal ? `<span>${Number(u.hoursLoggedTotal).toFixed(1)}h</span>` : ''}</div>
           </div></div>
@@ -4813,7 +4892,7 @@ async function renderAdminTabbed() {
       <div class="section-body admin-hidden-doc-list">
         ${hiddenDocuments.length ? hiddenDocuments.slice(0, 30).map(doc => `<div class="admin-hidden-doc-row">
           <span>${ICONS.file}</span>
-          <div><strong>${esc(doc.fileName || 'Document')}</strong><small>${esc(doc.projectName || 'Project')} · hidden ${doc.deletedAt ? timeAgo(doc.deletedAt) : 'recently'}</small></div>
+          <div><strong>${esc(doc.fileName || 'Document')}</strong><small>${esc(doc.projectName || 'Project')} ? hidden ${doc.deletedAt ? timeAgo(doc.deletedAt) : 'recently'}</small></div>
           <em>${doc.deleteReason ? esc(doc.deleteReason) : 'Removed from normal view'}</em>
         </div>`).join('') : '<p class="text-muted text-sm">No hidden documents.</p>'}
       </div>
@@ -4834,6 +4913,46 @@ async function renderAdminTabbed() {
     ${body}`;
 }
 
+function renderAppearanceSettingsHtml() {
+  const mode = getThemeMode();
+  const variant = getThemeVariant();
+  const density = getUiDensity();
+  return `<section class="section-card settings-foundation-card">
+    <div class="section-header">
+      <div>
+        <h2>Appearance</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Day theme variants and card density for this device.</p>
+      </div>
+      ${badge(mode === 'black' ? 'Black' : DAY_THEME_VARIANTS[variant]?.label || 'Day', mode === 'black' ? 'muted' : 'blue')}
+    </div>
+    <div class="section-body settings-performance-grid">
+      <button type="button" class="settings-performance-option ${mode === 'black' ? 'active' : ''}" data-action="set-theme-mode" data-mode="black">
+        <strong>Black</strong>
+        <span>Dark workspace with high-contrast chrome.</span>
+        <small>Night mode</small>
+      </button>
+      ${Object.entries(DAY_THEME_VARIANTS).map(([key, meta]) => `<button type="button" class="settings-performance-option ${mode === 'normal' && variant === key ? 'active' : ''}" data-action="set-theme-variant" data-variant="${esc(key)}">
+        <strong>${esc(meta.label)}</strong>
+        <span>${esc(meta.description)}</span>
+        <small>Day theme</small>
+      </button>`).join('')}
+    </div>
+    <div class="section-header" style="border-top:1px solid var(--border-light)">
+      <div>
+        <h2>Card &amp; board size</h2>
+        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Make project cards and kanban boards smaller or roomier.</p>
+      </div>
+      ${badge(UI_DENSITIES[density].label, 'purple')}
+    </div>
+    <div class="section-body settings-performance-grid">
+      ${Object.entries(UI_DENSITIES).map(([key, meta]) => `<button type="button" class="settings-performance-option ${density === key ? 'active' : ''}" data-action="set-ui-density" data-density="${esc(key)}">
+        <strong>${esc(meta.label)}</strong>
+        <span>${esc(meta.description)}</span>
+      </button>`).join('')}
+    </div>
+  </section>`;
+}
+
 function renderPerformanceSettingsHtml({ compact = false } = {}) {
   const current = getPerformanceMode();
   return `<section class="section-card settings-foundation-card">
@@ -4848,7 +4967,7 @@ function renderPerformanceSettingsHtml({ compact = false } = {}) {
       ${Object.entries(PERFORMANCE_MODES).map(([key, mode]) => `<button type="button" class="settings-performance-option ${key === current ? 'active' : ''}" data-action="set-performance-mode" data-mode="${esc(key)}">
         <strong>${esc(mode.label)}</strong>
         <span>${esc(mode.description)}</span>
-        <small>${mode.realtime ? 'Realtime on' : 'Realtime quiet'} · ${mode.animation ? 'Motion on' : 'Static UI'} · ${mode.blur ? 'Blur on' : 'No blur'}</small>
+        <small>${mode.realtime ? 'Realtime on' : 'Realtime quiet'} ? ${mode.animation ? 'Motion on' : 'Static UI'} ? ${mode.blur ? 'Blur on' : 'No blur'}</small>
       </button>`).join('')}
     </div>
     ${compact ? '' : '<p class="text-muted text-sm" style="padding:0 20px 18px">Low Power also pauses the global realtime channel. Critical changes still sync on manual refresh and normal background pulls.</p>'}
@@ -4910,6 +5029,7 @@ async function renderPersonalSettings() {
       <div class="settings-category-card"><strong>Low Power</strong><span>Static UI, no blur, quieter realtime.</span></div>
       <div class="settings-category-card"><strong>Shortcuts</strong><span>Customize, disable, export, or reset key bindings.</span></div>
     </div>
+    ${renderAppearanceSettingsHtml()}
     ${renderPerformanceSettingsHtml()}
     ${renderShortcutSettingsHtml()}`;
 }
@@ -4942,7 +5062,7 @@ async function renderSettings() {
               <button type="button" class="btn-icon btn-icon-danger" data-action="delete-workflow-template" data-id="${t.id}" title="Delete template">${ICONS.trash}</button>
             </div>
             <input class="wf-tpl-desc" type="text" name="description" value="${esc(t.description || '')}" placeholder="Description (optional)">
-            <textarea class="wf-tpl-steps" name="steps" rows="${Math.max(3, (t.steps || []).length + 1)}" placeholder="One task per line…">${esc((t.steps || []).map(s => s.title).join('\n'))}</textarea>
+            <textarea class="wf-tpl-steps" name="steps" rows="${Math.max(3, (t.steps || []).length + 1)}" placeholder="One task per line?">${esc((t.steps || []).map(s => s.title).join('\n'))}</textarea>
             <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="Label | type | required | card">${esc((t.fields || []).map(f => `${f.label || ''} | ${f.type || 'text'} | ${f.required ? 'required' : 'optional'} | ${f.showOnCard ? 'card' : ''}`).join('\n'))}</textarea>
           </form>`).join('') || '<p class="text-muted text-sm">No templates yet. Create one below.</p>'}
         <form data-form="add-workflow-template" class="wf-tpl-card wf-tpl-card--add">
@@ -4952,7 +5072,7 @@ async function renderSettings() {
           </div>
           <input class="wf-tpl-desc" type="text" name="description" placeholder="Description (optional)">
           <textarea class="wf-tpl-fields" name="fields" rows="3" placeholder="Label | type | required | card"></textarea>
-          <textarea class="wf-tpl-steps" name="steps" rows="3" placeholder="One task per line…"></textarea>
+          <textarea class="wf-tpl-steps" name="steps" rows="3" placeholder="One task per line?"></textarea>
         </form>
       </div>
     </section>`;
@@ -5026,6 +5146,7 @@ async function renderSettings() {
       <div class="settings-category-card"><strong>Performance</strong><span>Full, Balanced, and Low Power modes.</span></div>
       <div class="settings-category-card"><strong>Administration</strong><span>Users, visibility, templates, and data tools.</span></div>
     </div>
+    ${renderAppearanceSettingsHtml()}
     ${renderPerformanceSettingsHtml({ compact: true })}
     ${renderShortcutSettingsHtml()}
     <section class="section-card" style="margin-bottom:24px">
@@ -5103,7 +5224,7 @@ async function renderSettings() {
     </section>`;
 }
 
-/* ──── Admin Dashboard ──── */
+/* ???? Admin Dashboard ???? */
 
 async function renderAdminDashboard() {
   if (!isAdmin()) { window.location.hash = '#/projects'; return; }
@@ -5149,11 +5270,11 @@ async function renderAdminDashboard() {
           ${departmentBadge(u.department || '')}
         </div>
         <div class="dash-user-stats">
-          <span>${pCnt}p</span><span class="dash-sep">·</span>
+          <span>${pCnt}p</span><span class="dash-sep">?</span>
           <span>${tCnt} tasks</span>
-          ${devCnt ? `<span class="dash-sep">·</span><span>${devCnt} devices</span>` : ''}
-          ${u.lastSeenAt ? `<span class="dash-sep">·</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
-          ${u.lastSeenIp ? `<span class="dash-sep">·</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
+          ${devCnt ? `<span class="dash-sep">?</span><span>${devCnt} devices</span>` : ''}
+          ${u.lastSeenAt ? `<span class="dash-sep">?</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
+          ${u.lastSeenIp ? `<span class="dash-sep">?</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
         </div>
       </div>
     </div>`;
@@ -5181,7 +5302,7 @@ async function renderAdminDashboard() {
     .slice(0, 5);
   const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
 
-  // ── Dashboard tool widgets: brainstorm tile, weekly metrics, quick note ──
+  // ?? Dashboard tool widgets: brainstorm tile, weekly metrics, quick note ??
   const within7 = (iso) => iso && (now - new Date(iso).getTime() < sevenDays);
   const tasksDone7 = tasks.filter(t => t.status === 'done' && within7(t.completedAt || t.updatedAt)).length;
   const newTasks7 = tasks.filter(t => within7(t.createdAt)).length;
@@ -5198,8 +5319,8 @@ async function renderAdminDashboard() {
     </div>
     <div class="dash-stats-row">
       ${sp(ICONS.user, users.length, 'Team', `${activeUsers.length} active this week`, 'purple')}
-      ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active · ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
-      ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done · ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
+      ${sp(ICONS.folder, projects.length, 'Projects', `${projects.filter(p=>p.status==='active').length} active ? ${projects.filter(p=>p.status==='on-hold').length} on hold`, 'blue')}
+      ${sp(ICONS.checkCircle, tasks.length, 'Tasks', `${tasks.filter(t=>t.status==='done').length} done ? ${tasks.filter(t=>t.status==='doing').length} in progress`, 'green')}
       ${sp(ICONS.clock, recentLogins.length, 'Logins', 'in last 30 audit entries', 'amber')}
     </div>
     <div class="dash-tools-row">
@@ -5273,9 +5394,9 @@ async function renderAdminDashboard() {
             return `<div class="dash-device-row">
               <div>
                 <strong class="text-sm">${esc(u?.displayName || u?.username || 'Unknown')}</strong>
-                <span class="text-muted" style="font-size:0.75rem"> · ${esc(row.deviceLabel || 'Unknown device')}</span>
+                <span class="text-muted" style="font-size:0.75rem"> ? ${esc(row.deviceLabel || 'Unknown device')}</span>
               </div>
-              <span class="text-muted" style="font-size:0.75rem;white-space:nowrap">${row.loginCount || 1}× · ${timeAgo(row.lastSeenAt)}</span>
+              <span class="text-muted" style="font-size:0.75rem;white-space:nowrap">${row.loginCount || 1}? ? ${timeAgo(row.lastSeenAt)}</span>
             </div>`;
           }).join('')}
         </div>` : ''}
@@ -5295,7 +5416,7 @@ async function renderAdminDashboard() {
   }
 }
 
-/* ──── Notifications dropdown ──── */
+/* ???? Notifications dropdown ???? */
 
 function buildMonthlyReportRows(projects, tasks, users, monthInput) {
   const { safe, start, end, label } = monthRange(monthInput);
@@ -5347,10 +5468,10 @@ function renderMonthlyReportTable(rows, { showOwner = false, showDepartment = fa
       ${rows.map(row => `<tr>
         <td><a href="#/projects/${row.project.id}" class="report-project-link">${esc(row.project.name)}</a></td>
         ${showOwner ? `<td>${esc(row.owner?.displayName || row.owner?.username || 'Unknown')}</td>` : ''}
-        <td>${(row.contributors && row.contributors.length) ? `<span class="report-coauthors">${row.contributors.map(n => `<span class="report-coauthor-chip">${esc(n)}</span>`).join('')}</span>` : '<span class="text-muted">—</span>'}</td>
+        <td>${(row.contributors && row.contributors.length) ? `<span class="report-coauthors">${row.contributors.map(n => `<span class="report-coauthor-chip">${esc(n)}</span>`).join('')}</span>` : '<span class="text-muted">?</span>'}</td>
         ${showDepartment ? `<td>${departmentBadge(row.department || '')}</td>` : ''}
-        <td>${row.project.createdAt ? formatDateShort(row.project.createdAt.split('T')[0]) : '—'}</td>
-        <td>${row.completedAt ? formatDateShort(row.completedAt.split('T')[0]) : '—'}</td>
+        <td>${row.project.createdAt ? formatDateShort(row.project.createdAt.split('T')[0]) : '?'}</td>
+        <td>${row.completedAt ? formatDateShort(row.completedAt.split('T')[0]) : '?'}</td>
         <td>${statusBadge(row.project.status)}</td>
         <td><span class="report-progress-cell">${progressBar(row.progress)}<span>${row.progress}%</span></span></td>
       </tr>`).join('')}
@@ -5466,7 +5587,7 @@ async function exportMonthlyReportPdf() {
   doc.text('PROGRESS BRIEF', 40, 24);
   doc.setTextColor(24, 27, 34);
   doc.setFontSize(18);
-  doc.text('Orbitrack — Monthly Report', 40, 35);
+  doc.text('Orbitrack ? Monthly Report', 40, 35);
   doc.setFontSize(12);
   doc.text(label, 40, 52);
 
@@ -5546,7 +5667,7 @@ async function generateAIReport() {
   const anonKey = window.WT_CONFIG?.supabaseAnonKey;
   if (!supabaseUrl) { showToast('Cloud mode required for AI reports', 'error'); return; }
 
-  showToast('Generating AI report… this may take 10–20 seconds', 'info');
+  showToast('Generating AI report? this may take 10?20 seconds', 'info');
   try {
     const resp = await fetch(`${supabaseUrl}/functions/v1/generate-report`, {
       method: 'POST',
@@ -5657,7 +5778,7 @@ async function showBugReportStatusModal(bugId) {
       </div>
       <p class="text-secondary text-sm" style="margin-bottom:12px">${esc(report.description)}</p>
       ${report.resolutionNote ? `<div class="bug-report-resolution" style="margin-bottom:12px"><strong>Resolution note</strong><p>${esc(report.resolutionNote)}</p></div>` : ''}
-      <p class="text-muted text-sm">Reported ${timeAgo(report.createdAt)} · ${esc(report.severity)} severity</p>
+      <p class="text-muted text-sm">Reported ${timeAgo(report.createdAt)} ? ${esc(report.severity)} severity</p>
     </div>
     <div class="form-actions"><button type="button" class="btn btn-primary" data-action="close-modal">Close</button></div>`);
 }
@@ -5674,16 +5795,16 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
-  const TYPE_ICON = { assignment: '👤', task_done: '✅', mention: '💬', update: '📋', access_request: '🔐', access_approved: '✅', access_declined: '⛔', bug_report: '⚠️', project_completed: '🏆' };
+  const TYPE_ICON = { assignment: '??', task_done: '?', mention: '??', update: '??', access_request: '??', access_approved: '?', access_declined: '?', bug_report: '??', project_completed: '??' };
   content.innerHTML = `
     <div class="projects-page-header">
-      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` · ${unread} unread` : ''}</span></div>
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` ? ${unread} unread` : ''}</span></div>
       ${unread ? `<button type="button" class="btn btn-ghost btn-sm" data-action="notif-mark-all">Mark all read</button>` : ''}
     </div>
     <div class="notif-page-list">
       ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
         : rows.map(n => {
-          const icon = TYPE_ICON[n.type] || '🔔';
+          const icon = TYPE_ICON[n.type] || '??';
           return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-page-icon">${icon}</span>
             <div class="notif-page-body">
@@ -5696,7 +5817,7 @@ async function renderNotificationsPage() {
     </div>`;
 }
 
-/* ──── Modal System ──── */
+/* ???? Modal System ???? */
 
 function formatDiagnosticsStatus(status) {
   if (!status) return 'Unknown';
@@ -5828,7 +5949,7 @@ async function renderDiagnosticsPage() {
         <strong>${esc(issue.message || 'Issue')}</strong>
         ${issueLevelBadge(issue.level)}
       </div>
-      <p class="text-muted text-sm">${esc(issue.source || 'app')} · ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} · ${esc(issue.route || 'no route')}</p>
+      <p class="text-muted text-sm">${esc(issue.source || 'app')} ? ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} ? ${esc(issue.route || 'no route')}</p>
       ${issue.details ? `<pre class="sync-diag-payload">${esc(issue.details)}</pre>` : ''}
     </article>`).join('')
     : '<p class="text-secondary text-sm">No warnings or errors have been shown to this user yet.</p>';
@@ -5838,7 +5959,7 @@ async function renderDiagnosticsPage() {
       <div class="projects-page-header diagnostics-page-header">
         <div class="projects-page-title">
           <h1>Diagnostics</h1>
-          <span class="projects-page-count">v${esc(getAppVersion())} · ${online ? 'Online' : 'Offline'}</span>
+          <span class="projects-page-count">v${esc(getAppVersion())} ? ${online ? 'Online' : 'Offline'}</span>
         </div>
         <div class="diagnostics-actions">
           <button type="button" class="btn btn-primary" data-action="reconnect-storage">${ICONS.refresh} Reconnect storage</button>
@@ -5857,10 +5978,10 @@ async function renderDiagnosticsPage() {
             <div><dt>Auth session</dt><dd>${auth.hasSession ? 'Present' : 'Missing'}</dd></div>
             ${auth.expiresAt ? `<div><dt>Session expires</dt><dd>${esc(timeAgo(auth.expiresAt))}</dd></div>` : ''}
             ${auth.authEmail ? `<div><dt>Signed in as</dt><dd>${esc(auth.authEmail)}</dd></div>` : ''}
-            <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched ✓' : `Mismatch (linked #${esc(String(auth.linkedUserId))}, you are #${esc(String(auth.appUserId))})`) : '—'}</dd></div>
+            <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched ?' : `Mismatch (linked #${esc(String(auth.linkedUserId))}, you are #${esc(String(auth.appUserId))})`) : '?'}</dd></div>
             <div><dt>Checked</dt><dd>${auth.checkedAt ? esc(timeAgo(auth.checkedAt)) : 'just now'}</dd></div>
           </dl>
-          ${auth.ok ? '' : '<p class="text-muted text-sm" style="padding:0 18px 4px">Try “Reconnect storage”. If it stays unauthorized, log out and back in once.</p>'}
+          ${auth.ok ? '' : '<p class="text-muted text-sm" style="padding:0 18px 4px">Try ?Reconnect storage?. If it stays unauthorized, log out and back in once.</p>'}
         </section>
         <section class="dash-panel diagnostics-card diagnostics-card--${syncStatus.failed ? 'warn' : 'ok'}">
           <div class="dash-panel-head"><h3>Cloud sync</h3>${badge(syncStatus.failed ? 'Issue' : 'Ready', syncStatus.failed ? 'red' : 'green')}</div>
@@ -5884,9 +6005,9 @@ async function renderDiagnosticsPage() {
           <dl class="diagnostics-meta">
             <div><dt>App version</dt><dd>v${esc(getAppVersion())}</dd></div>
             <div><dt>Build</dt><dd>${window.workTrackerDesktop?.isDesktop ? 'Desktop (Electron)' : 'Web'}</dd></div>
-            <div><dt>Signed-in user</dt><dd>${esc(getSession()?.displayName || getSession()?.username || '—')} (#${esc(String(actorId() || '—'))})</dd></div>
+            <div><dt>Signed-in user</dt><dd>${esc(getSession()?.displayName || getSession()?.username || '?')} (#${esc(String(actorId() || '?'))})</dd></div>
             <div><dt>Cloud mode</dt><dd>${isCloudMode() ? 'On' : 'Off (local only)'}</dd></div>
-            <div><dt>Storage endpoint</dt><dd class="diagnostics-mono">${esc(auth.functionsBase || '—')}</dd></div>
+            <div><dt>Storage endpoint</dt><dd class="diagnostics-mono">${esc(auth.functionsBase || '?')}</dd></div>
           </dl>
         </section>
       </div>
@@ -6011,7 +6132,7 @@ async function showProjectModal(editId = null) {
   const editIntent = Number.isFinite(parsedId) && parsedId > 0;
   const p = editIntent ? await DB.getProject(parsedId) : null;
   if (editIntent && !p) {
-    showToast('Could not open project for editing — refresh and try again.', 'error');
+    showToast('Could not open project for editing ? refresh and try again.', 'error');
     return;
   }
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
@@ -6031,7 +6152,7 @@ async function showProjectModal(editId = null) {
     .filter(u => u.id !== p?.ownerId)
     .map(u => `<label class="project-editor-option">
       <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
-      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</span>
     </label>`).join('');
 
   showModal(isE ? 'Edit Project' : 'New Project', `
@@ -6091,7 +6212,7 @@ async function showProjectModal(editId = null) {
         <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing?'checked':''}>
         <div class="pf-ongoing-text">
           <strong>Ongoing / recurring</strong>
-          <span>Maintenance, stock counts, upgrades — work without a fixed end date</span>
+          <span>Maintenance, stock counts, upgrades ? work without a fixed end date</span>
         </div>
         <select name="cadence" class="pf-meta-select" style="margin-left:auto;min-width:130px">
           <option value="" ${!p?.cadence?'selected':''}>No repeat</option>
@@ -6106,7 +6227,7 @@ async function showProjectModal(editId = null) {
       <div class="pf-tasks-block">
         <div class="pf-tasks-header">
           <span class="pf-tasks-title">Starting tasks</span>
-          <span class="pf-tasks-hint">Press ↵ to add next</span>
+          <span class="pf-tasks-hint">Press ? to add next</span>
         </div>
         <div id="bulk-task-list" class="bulk-task-list"></div>
         <button type="button" id="bulk-add-task-btn" class="pf-add-task-btn">
@@ -6135,7 +6256,7 @@ async function showProjectModal(editId = null) {
       const n = list.children.length + 1;
       const row = document.createElement('div');
       row.className = 'bulk-task-row';
-      row.innerHTML = `<span class="bulk-task-num">${n}</span><input type="text" name="bulk_task[]" class="bulk-task-input" placeholder="Task title…" autocomplete="off"><button type="button" class="btn-icon bulk-task-remove" title="Remove"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
+      row.innerHTML = `<span class="bulk-task-num">${n}</span><input type="text" name="bulk_task[]" class="bulk-task-input" placeholder="Task title?" autocomplete="off"><button type="button" class="btn-icon bulk-task-remove" title="Remove"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
       list.appendChild(row);
       if (focus) {
         const inp = row.querySelector('input');
@@ -6224,7 +6345,7 @@ function parseTaskTitleLines(raw) {
   return String(raw || '')
     .split(/\r?\n/)
     .map(line => line
-      .replace(/^\s*(?:[-*•]|\d+[.)]|#{1,6})\s+/u, '')
+      .replace(/^\s*(?:[-*?]|\d+[.)]|#{1,6})\s+/u, '')
       .replace(/^\s*\[[ xX]\]\s*/, '')
       .trim())
     .filter(Boolean)
@@ -6246,7 +6367,7 @@ async function showTaskModal(preId = null, defaultStatus = 'todo', preAssigneeId
   const defaultAssigneeId = preAssigneeId != null ? Number(preAssigneeId) : (lockedProject?.ownerId || editable[0]?.ownerId || meId);
   const sorted = [...users].sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0));
   const assigneeOptions = sorted
-    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' · project creator' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`)
+    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.id === defaultAssigneeId && u.id !== meId ? ' ? project creator' : ''}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</option>`)
     .join('');
   showModal('New Task', `
     <form data-form="task" data-auto-project-owner="1" class="quick-task-form">
@@ -6297,7 +6418,7 @@ async function showTaskImportModal(text = '', opts = {}) {
   const defaultAssigneeId = project?.ownerId || meId;
   const assigneeOptions = [...users]
     .sort((a, b) => (a.id === defaultAssigneeId ? -1 : b.id === defaultAssigneeId ? 1 : 0))
-    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.department ? ` · ${departmentLabel(u.department)}` : ''}</option>`)
+    .map(u => `<option value="${u.id}" ${u.id === defaultAssigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.id === meId ? ' (me)' : ''}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}</option>`)
     .join('');
   const sourceLabel = opts.source === 'note' ? 'from note' : 'from text';
   showModal(`Import Tasks ${sourceLabel}`, `
@@ -6438,8 +6559,8 @@ async function showCommandPalette(initialQuery = '') {
     ...(isAdmin() ? [{ label: 'Go to Admin', sub: 'Users, bugs, data, and workspace tools', route: '/admin' }] : [])
   ];
   const actionCommands = [
-    { label: 'Toggle low-power mode', sub: `Current: ${PERFORMANCE_MODES[getPerformanceMode()].label}`, action: 'command-toggle-performance', icon: ICONS.bolt || '⚡' },
-    { label: 'Open shortcut guide', sub: shortcutLabel(shortcutPref('shortcuts.open').keys), action: 'command-open-shortcuts', icon: ICONS.keyboard || '⌨' },
+    { label: 'Toggle low-power mode', sub: `Current: ${PERFORMANCE_MODES[getPerformanceMode()].label}`, action: 'command-toggle-performance', icon: ICONS.bolt || '?' },
+    { label: 'Open shortcut guide', sub: shortcutLabel(shortcutPref('shortcuts.open').keys), action: 'command-open-shortcuts', icon: ICONS.keyboard || '?' },
     { label: 'Open notifications', sub: 'Notification inbox', action: 'command-route', route: '/notifications', icon: ICONS.bell }
   ];
 
@@ -6497,7 +6618,7 @@ async function showCommandPalette(initialQuery = '') {
       ${!projectMatches.length && !taskMatches.length && !userMatches.length && !routeMatches.length && !actionMatches.length ? '<p class="command-empty">No matching command.</p>' : ''}
     `;
   };
-  // Keyboard navigation: ↑/↓ move the highlight, Enter runs it (cmdk feel).
+  // Keyboard navigation: ?/? move the highlight, Enter runs it (cmdk feel).
   let activeIdx = 0;
   const items = () => Array.from(results?.querySelectorAll('.command-item') || []);
   const highlight = () => {
@@ -6546,7 +6667,7 @@ function renderTaskChainTimelineHtml(tasks, uMap) {
         <div class="timeline-chain-node"><span>${index + 1}</span></div>
         <button type="button" class="timeline-chain-card" data-action="open-task-detail" data-id="${t.id}">
           <strong>${esc(t.title)}</strong>
-          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` · ${formatDateShort(t.dueDate)}` : ''}${od ? ' · overdue' : ''}</span>
+          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` ? ${formatDateShort(t.dueDate)}` : ''}${od ? ' ? overdue' : ''}</span>
           <small title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init} ${esc(assignee?.displayName || assignee?.username || 'Unassigned')}</small>
         </button>
       </div>`;
@@ -6584,12 +6705,12 @@ async function showProjectAccessModal(projectId) {
     .filter(u => u.id !== project.ownerId)
     .map(u => `<label class="project-editor-option">
       <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
-      <span>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</span>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</span>
     </label>`).join('');
   const pendingRows = requests.filter(r => r.status === 'pending').map(r => {
     const user = uMap[r.requesterId];
     return `<div class="access-request-row">
-      <div><strong>${esc(user?.displayName || user?.username || 'Unknown user')}</strong><span>${esc(r.message || 'No message')} · ${timeAgo(r.createdAt)}</span></div>
+      <div><strong>${esc(user?.displayName || user?.username || 'Unknown user')}</strong><span>${esc(r.message || 'No message')} ? ${timeAgo(r.createdAt)}</span></div>
       <div class="access-request-actions">
         <button type="button" class="btn btn-sm btn-primary" data-action="approve-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Approve</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="decline-project-access" data-request-id="${r.id}" data-project-id="${project.id}">Decline</button>
@@ -6752,7 +6873,7 @@ async function showAssignTaskModal(taskId) {
       <div class="form-group"><label>Assignee</label>
         <select name="assigneeId">
           <option value="">Unassigned</option>
-          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' · Admin' : ''}</option>`).join('')}
+          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</option>`).join('')}
         </select>
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save assignment</button></div>
@@ -6794,7 +6915,7 @@ function rankIcon(label, size = 18) {
 }
 
 // Orbitrack-themed rank tiers (score thresholds). Each tier spans five levels
-// (I–V) toward the next tier, matching the "Pawn V → Scout I" progression.
+// (I?V) toward the next tier, matching the "Pawn V ? Scout I" progression.
 const RANK_TIERS = [
   { label: 'Pawn', tone: 'muted', min: 0 },
   { label: 'Scout', tone: 'amber', min: 25 },
@@ -6913,7 +7034,7 @@ function userProfileStats(userOrId, projects = [], tasks = []) {
   };
 }
 
-// ── Player-card data helpers ─────────────────────────────────────────────
+// ?? Player-card data helpers ?????????????????????????????????????????????
 const STATUS_LABELS = { todo: 'To do', doing: 'In progress', done: 'Done', blocked: 'Blocked', review: 'In review' };
 
 // The user's single most relevant open task (prefer in-progress, then nearest due).
@@ -7014,7 +7135,7 @@ async function showUserProfileModal(userId) {
   const tagline = (user.tagline || '').trim();
   const aboutHtml = bio
     ? esc(bio)
-    : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet — ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, currently carrying ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+    : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet ? ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, currently carrying ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
 
   const actionsRight = isSelf
     ? `<button type="button" class="pcard-btn pcard-btn--primary" data-action="edit-my-profile">Edit profile</button>`
@@ -7035,7 +7156,7 @@ async function showUserProfileModal(userId) {
             <span class="pcard-presence ${online ? 'on' : 'off'}">${online ? 'Online' : 'Offline'}</span>
           </div>
           <span class="pcard-handle">@${esc(user.username)}</span>
-          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} · ${user.role === 'admin' ? 'Admin' : 'Member'}</span>
+          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} ? ${user.role === 'admin' ? 'Admin' : 'Member'}</span>
         </div>
       </div>
 
@@ -7045,7 +7166,7 @@ async function showUserProfileModal(userId) {
           <span class="pcard-xp">${stats.score} XP</span>
         </div>
         <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
-        <div class="pcard-rank-hint">${esc(stats.position)} · ${rankHint}</div>
+        <div class="pcard-rank-hint">${esc(stats.position)} ? ${rankHint}</div>
       </div>
 
       <div class="pcard-stats">
@@ -7066,14 +7187,14 @@ async function showUserProfileModal(userId) {
       </div>
 
       <div class="pcard-section">
-        <div class="pcard-section-h">Weekly activity${week.streak ? ` · ${week.streak}-day streak` : ''}</div>
+        <div class="pcard-section-h">Weekly activity${week.streak ? ` ? ${week.streak}-day streak` : ''}</div>
         <div class="pcard-week">
           ${week.days.map(d => `<span class="pcard-day ${d.active ? 'on' : ''} ${d.today ? 'today' : ''}"><i>${d.label}</i><b></b></span>`).join('')}
         </div>
       </div>
 
       ${userClassrooms.length ? `<div class="pcard-section pcard-spaces">
-        <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces · ${userClassrooms.length}<span class="pcard-caret">▸</span></button>
+        <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces ? ${userClassrooms.length}<span class="pcard-caret">?</span></button>
         <div class="pcard-spaces-list" data-spaces hidden>
           ${userClassrooms.map(c => `<button type="button" class="pcard-space" data-action="open-classroom" data-classroom-id="${c.id}">${esc(c.name)}</button>`).join('')}
         </div>
@@ -7158,7 +7279,7 @@ function showCredentialModal(username, tempPassword, { title = 'One-time passwor
     </div>`);
 }
 
-/* A user asks an admin to reset their password — notifies all admins. */
+/* A user asks an admin to reset their password ? notifies all admins. */
 async function requestPasswordChange(userId) {
   const uid = Number(userId);
   const me = await DB.getUser(uid).catch(() => null);
@@ -7235,7 +7356,7 @@ async function showAddUserModal() {
         <label>One-time password</label>
         <div class="temp-pw-row">
           <input name="password" type="text" value="${esc(tempPw)}" readonly required class="temp-pw-input">
-          <button type="button" class="btn btn-ghost btn-sm" data-action="regen-temp-pw">${ICONS.refresh || '↻'} New</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="regen-temp-pw">${ICONS.refresh || '?'} New</button>
         </div>
         <p class="text-muted text-sm" style="margin-top:6px">Auto-generated. The user must change it on first sign-in. You'll get a copyable copy after creating the account.</p>
       </div>
@@ -7427,7 +7548,7 @@ async function showUserClassroomsModal(uid) {
   ]);
   if (!user) { showToast('User not found', 'error'); return; }
   const selectedSet = new Set((selected || []).map(Number));
-  // Personal spaces are private to their owner — never managed/assigned here.
+  // Personal spaces are private to their owner ? never managed/assigned here.
   const shared = (classrooms || []).filter(c => !c.isPersonal);
   showModal('User Classrooms', `
     <form data-form="user-classrooms" data-user-id="${uid}">
@@ -7499,7 +7620,7 @@ async function showProfileModal() {
   const recentHtml = recent ? `<div class="pcard-recent">${formatActivityMessage(recent, uMap)}<small>${timeAgo(recent.createdAt)}</small></div>` : `<div class="pcard-recent pcard-recent--empty">No recent activity yet.</div>`;
   const bio = (user.bio || '').trim();
   const tagline = (user.tagline || '').trim();
-  const aboutHtml = bio ? esc(bio) : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet — ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+  const aboutHtml = bio ? esc(bio) : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet ? ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
 
   const avatarPreview = avatarUrl
     ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="pcard-avatar-img" alt="${esc(initials)}">`
@@ -7514,20 +7635,20 @@ async function showProfileModal() {
         <div class="pcard-id-meta">
           <div class="pcard-name-row"><h3>${esc(user.displayName || user.username)}</h3><span class="pcard-presence ${online ? 'on' : 'off'}">${online ? 'Online' : 'Offline'}</span></div>
           <span class="pcard-handle">@${esc(user.username)}</span>
-          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} · ${isAdm ? 'Admin' : 'Member'}</span>
+          <span class="pcard-sub">${esc(departmentLabel(user.department || '') || 'No department')} ? ${isAdm ? 'Admin' : 'Member'}</span>
         </div>
       </div>
       <div class="pcard-rank profile-rank--${esc(rk.tone)}">
         <div class="pcard-rank-top"><span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span><span class="pcard-xp">${stats.score} XP</span></div>
         <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
-        <div class="pcard-rank-hint">${esc(stats.position)} · ${rankHint}</div>
+        <div class="pcard-rank-hint">${esc(stats.position)} ? ${rankHint}</div>
       </div>
       <div class="pcard-stats">${statCell(stats.founded, 'Projects created')}${statCell(stats.completedFounded, 'Completed')}${statCell(stats.completedTasks, 'Tasks done')}${statCell(stats.coediting, 'Collaborations')}</div>
       <div class="pcard-section"><div class="pcard-section-h">Current activity</div>${activityHtml}</div>
       <div class="pcard-section"><div class="pcard-section-h">Recent contribution</div>${recentHtml}</div>
-      <div class="pcard-section"><div class="pcard-section-h">Weekly activity${week.streak ? ` · ${week.streak}-day streak` : ''}</div>
+      <div class="pcard-section"><div class="pcard-section-h">Weekly activity${week.streak ? ` ? ${week.streak}-day streak` : ''}</div>
         <div class="pcard-week">${week.days.map(d => `<span class="pcard-day ${d.active ? 'on' : ''} ${d.today ? 'today' : ''}"><i>${d.label}</i><b></b></span>`).join('')}</div></div>
-      ${userClassrooms.length ? `<div class="pcard-section"><div class="pcard-section-h">Spaces · ${userClassrooms.length}</div>
+      ${userClassrooms.length ? `<div class="pcard-section"><div class="pcard-section-h">Spaces ? ${userClassrooms.length}</div>
         <div class="pcard-spaces-list">${userClassrooms.map(c => `<span class="pcard-space pcard-space--ro">${esc(c.name)}</span>`).join('')}</div></div>` : ''}
       <div class="pcard-section"><div class="pcard-section-h">About</div><div class="pcard-about">${aboutHtml}</div></div>
     </div>
@@ -7616,15 +7737,15 @@ async function showProfileModal() {
       const file = e.target.files?.[0];
       if (!file) return;
       if (file.size > 3 * 1024 * 1024) { showToast('Image too large (max 3 MB)', 'warning'); return; }
-      if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready — try again in a moment.', 'error'); return; }
+      if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready ? try again in a moment.', 'error'); return; }
       const localUrl = URL.createObjectURL(file);
       setAvatarPreview(localUrl);
-      showToast('Uploading photo…');
+      showToast('Uploading photo?');
       try {
         const driveId = await window.DriveStorage.uploadAvatar(file);
         if (driveIdInput) driveIdInput.value = driveId;
         if (changedInput) changedInput.value = '1';
-        showToast('Photo ready — click Save profile to apply.', 'success');
+        showToast('Photo ready ? click Save profile to apply.', 'success');
       } catch (err) {
         setAvatarPreview(avatarUrl);
         showToast(err?.message || 'Photo upload failed.', 'error');
@@ -7681,14 +7802,14 @@ function showOnboardingModal(force = false) {
             <span class="howto-step-icon">${ICONS.user}</span>
             <div>
               <strong>Classrooms & your personal space</strong>
-              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> — anything there is hidden from others until you invite a collaborator.</p>
+              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> ? anything there is hidden from others until you invite a collaborator.</p>
             </div>
           </li>
           <li>
             <span class="howto-step-icon">${ICONS.user}</span>
             <div>
               <strong>See your teammates' work</strong>
-              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' — except for admins, who can see everything' : ''}.</p>
+              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' ? except for admins, who can see everything' : ''}.</p>
             </div>
           </li>
           <li>
@@ -7702,7 +7823,7 @@ function showOnboardingModal(force = false) {
         <p class="text-muted text-sm" style="margin-top:14px">Want the full picture? Open the <strong>User guide</strong> from Support any time.</p>
         <div class="form-actions">
           <a href="#/guide" class="btn btn-ghost" data-action="close-howto">${ICONS.file} Full guide</a>
-          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it — let's go</button>
+          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it ? let's go</button>
         </div>
       </div>
     </div>`;
@@ -7735,10 +7856,10 @@ const SUPPORT_CHANGELOG = [
     'Admins can trigger live announcements and active-session logout requests.',
   ] },
   { version: '3.3.3', date: '2026-06-25', highlights: [
-    'Fixed document storage staying "not authorized" after a password change — file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
+    'Fixed document storage staying "not authorized" after a password change ? file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
   ] },
   { version: '3.3.2', date: '2026-06-25', highlights: [
-    'Fixed Google Drive file access dropping to "not authorized" — sign-in sessions now stay valid across devices and app restarts.',
+    'Fixed Google Drive file access dropping to "not authorized" ? sign-in sessions now stay valid across devices and app restarts.',
     'More detailed Diagnostics: storage session state, environment panel, and a one-click "Reconnect storage" button.',
   ] },
   { version: '3.3.1', date: '2026-06-25', minor: true },
@@ -7760,7 +7881,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.2.0', date: '2026-06-24', highlights: [
     'One-time-password accounts with a forced first-login password change.',
     'Private personal spaces, hidden from others until you invite a collaborator.',
-    'Profile customization — avatar, tagline, and accent/cover colours.',
+    'Profile customization ? avatar, tagline, and accent/cover colours.',
     'A searchable in-app user guide.',
   ], adminNotes: [
     'Create users with a one-time password and assign their classrooms at creation.',
@@ -7776,7 +7897,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.1.2', date: '2026-06-20', minor: true },
   { version: '3.1.1', date: '2026-06-20', minor: true },
   { version: '3.1.0', date: '2026-06-19', highlights: [
-    'File storage moved to Google Drive — faster and more scalable; existing files were migrated automatically.',
+    'File storage moved to Google Drive ? faster and more scalable; existing files were migrated automatically.',
   ] },
   { version: '3.0.11', date: '2026-06-18', minor: true },
   { version: '3.0.10', date: '2026-06-18', minor: true },
@@ -7805,7 +7926,7 @@ async function renderSupportPage() {
   content.innerHTML = `
     <div class="view-page support-page">
       <div class="projects-page-header">
-        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help · Updates · About</span></div>
+        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help ? Updates ? About</span></div>
       </div>
       <div class="support-grid">
         <section class="dash-panel support-card">
@@ -7835,7 +7956,7 @@ async function renderSupportPage() {
         </section>
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
-          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace — projects, boards, notes, and documents in one app.</p>
+          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace ? projects, boards, notes, and documents in one app.</p>
           <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, Quill, jsPDF, SortableJS, and Electron. Made by Everlasting.</p>
         </section>
         <section class="dash-panel support-card support-card-wide">
@@ -7850,7 +7971,7 @@ const GUIDE_SECTIONS = [
   {
     id: 'start', icon: 'sparkles', title: 'Getting started',
     entries: [
-      { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password — pick something only you know.' },
+      { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password ? pick something only you know.' },
       { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar, Notifications and Support from the left rail. Your sync status shows live at the bottom.' },
       { t: 'Light & dark', d: 'Use the theme toggle to switch between the light and dark themes. Your choice is remembered on this device.' }
     ]
@@ -7858,8 +7979,8 @@ const GUIDE_SECTIONS = [
   {
     id: 'projects', icon: 'target', title: 'Projects & tasks',
     entries: [
-      { t: 'Create a project', d: 'Projects page → New Project. Give it a name, description, type and priority, then choose the classroom (or your personal space) it belongs to.' },
-      { t: 'Add tasks', d: 'Open a project → Add Task. Tasks can have assignees, due dates, priorities and a workflow step. New Task from the Tasks page lets you pick the project.' },
+      { t: 'Create a project', d: 'Projects page ? New Project. Give it a name, description, type and priority, then choose the classroom (or your personal space) it belongs to.' },
+      { t: 'Add tasks', d: 'Open a project ? Add Task. Tasks can have assignees, due dates, priorities and a workflow step. New Task from the Tasks page lets you pick the project.' },
       { t: 'Track progress', d: 'Each project shows completion, milestones and an activity log. Mark tasks done to move the progress bar.' },
       { t: 'Invite collaborators', d: 'As the owner, open a project\'s access controls to add editors. Editors can see and edit the project even if it lives in your private personal space.' }
     ]
@@ -7868,7 +7989,7 @@ const GUIDE_SECTIONS = [
     id: 'classrooms', icon: 'users', title: 'Classrooms & your personal space',
     entries: [
       { t: 'What is a classroom?', d: 'A classroom is a shared workspace grouping related projects. An admin decides which classrooms you can access.' },
-      { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else — until you add them as a collaborator.' },
+      { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else ? until you add them as a collaborator.' },
       { t: 'Sharing personal work', d: 'Add someone as an editor on a personal-space project to let just that person in. Remove them to make it private again.' }
     ]
   },
@@ -7882,23 +8003,23 @@ const GUIDE_SECTIONS = [
   {
     id: 'profile', icon: 'user', title: 'Profile & account',
     entries: [
-      { t: 'Customize your profile', d: 'My Profile → set an avatar, a tagline, and accent + cover colors. A live preview shows how your profile header will look.' },
+      { t: 'Customize your profile', d: 'My Profile ? set an avatar, a tagline, and accent + cover colors. A live preview shows how your profile header will look.' },
       { t: 'Change your password', d: 'Use "Request password change" in My Profile. An admin confirms it and issues a fresh one-time password for you to reset.' }
     ]
   },
   {
     id: 'diagnostics', icon: 'alertTriangle', title: 'Troubleshooting',
     entries: [
-      { t: 'Diagnostics tab', d: 'Support → Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
-      { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed — reconnect and it will retry automatically.' }
+      { t: 'Diagnostics tab', d: 'Support ? Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
+      { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed ? reconnect and it will retry automatically.' }
     ]
   },
   {
     id: 'admin', icon: 'crown', title: 'Admin tools', adminOnly: true,
     entries: [
-      { t: 'Create users', d: 'Admin → Add User. Pick the classrooms they can access; the app generates a one-time password to share. They set their own password on first sign-in.' },
+      { t: 'Create users', d: 'Admin ? Add User. Pick the classrooms they can access; the app generates a one-time password to share. They set their own password on first sign-in.' },
       { t: 'Issue a one-time password', d: 'Use "Send OTP" on a user to reset their password to a temp value they must change at next login. Handy when someone requests a reset.' },
-      { t: 'Manage classrooms', d: 'Settings → Classrooms to create, rename or remove shared classrooms. Personal spaces are private and never shown here.' }
+      { t: 'Manage classrooms', d: 'Settings ? Classrooms to create, rename or remove shared classrooms. Personal spaces are private and never shown here.' }
     ]
   }
 ];
@@ -7928,7 +8049,7 @@ async function renderGuidePage() {
         </div>
       </div>
       <div class="guide-search-wrap">
-        <input type="search" id="guide-search" class="guide-search" placeholder="Search the guide… (e.g. password, tasks, classroom)" autocomplete="off">
+        <input type="search" id="guide-search" class="guide-search" placeholder="Search the guide? (e.g. password, tasks, classroom)" autocomplete="off">
       </div>
       <div class="guide-body" id="guide-body">${sectionsHtml}</div>
       <p class="guide-empty text-muted hidden" id="guide-empty">No matches. Try another word.</p>
@@ -7970,7 +8091,7 @@ function _pentPoints(cx, cy, r, rot = -Math.PI / 2) {
   return pts.join(' ');
 }
 
-// Stable colour per department — used for both the map nodes and the legend.
+// Stable colour per department ? used for both the map nodes and the legend.
 const TEAM_DEPT_COLORS = ['#6366f1', '#06b6d4', '#f97316', '#22c55e', '#e11d48', '#a855f7', '#eab308', '#14b8a6', '#ec4899', '#3b82f6'];
 function teamMapDeptColor(dept) {
   const key = String(dept || 'general').toLowerCase();
@@ -8039,7 +8160,7 @@ function teamMemberCardHtml(member, { compact = false } = {}) {
     <span class="team-flow-avatar" ${userColorStyle(u)}>${avatar}</span>
     <span class="team-flow-main">
       <strong>${esc(name)}</strong>
-      <small>${esc(member.stats.position)}${u.department ? ` · ${esc(departmentLabel(u.department))}` : ''}</small>
+      <small>${esc(member.stats.position)}${u.department ? ` ? ${esc(departmentLabel(u.department))}` : ''}</small>
     </span>
     <span class="team-flow-presence">${presenceDotHtml(u)}</span>
     ${compact ? '' : `<span class="team-flow-work">
@@ -8108,7 +8229,7 @@ function renderProjectRoomsHtml(members, projects = [], tasks = []) {
     const nextTask = room.open.sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')))[0];
     return `<article class="team-room-card">
       <div class="team-room-head">
-        <div><strong>${esc(room.project.name)}</strong><small>${esc(STAT_CFG[room.project.status]?.l || room.project.status || 'Active')} · ${room.open.length} open task${room.open.length === 1 ? '' : 's'}</small></div>
+        <div><strong>${esc(room.project.name)}</strong><small>${esc(STAT_CFG[room.project.status]?.l || room.project.status || 'Active')} ? ${room.open.length} open task${room.open.length === 1 ? '' : 's'}</small></div>
         ${badge(`${room.people.length} ${room.people.length === 1 ? 'member' : 'members'}`, 'blue')}
       </div>
       <div class="team-room-progress">${progressBar(room.progress, 'sm')}<span>${room.progress}%</span></div>
@@ -8153,7 +8274,7 @@ async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
     <div class="dash-panel-head team-lite-head">
       <div>
         <h3>Team View</h3>
-        <span class="projects-page-count">${visibleUsers.length} visible · ${active} online · ${idle} idle · ${blocked} blocked</span>
+        <span class="projects-page-count">${visibleUsers.length} visible ? ${active} online ? ${idle} idle ? ${blocked} blocked</span>
       </div>
       <div class="team-lite-tabs" role="tablist" aria-label="Team view">
         ${tabs.map(([key, label]) => `<button type="button" class="team-lite-tab ${view === key ? 'active' : ''}" data-action="team-view-tab" data-team-view="${key}">${label}</button>`).join('')}
@@ -8372,7 +8493,7 @@ async function renderCalendarPage() {
               <button type="button" class="btn-icon" data-action="delete-calendar-event" data-id="${it.id}" title="Delete">${ICONS.trash}</button></div>`;
           }
           if (it.kind === 'due') {
-            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">Due · ${esc(it.projectName)}</span>
+            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">Due ? ${esc(it.projectName)}</span>
               <a href="#/projects/${it.projectId}" class="btn btn-sm btn-ghost">Open</a></div>`;
           }
           if (it.kind === 'birthday') {
@@ -8391,7 +8512,7 @@ async function renderCalendarPage() {
         <div class="cal-toolbar">
           <button type="button" class="btn btn-ghost" data-action="calendar-prev-month">${ICONS.arrowLeft}</button>
           <button type="button" class="btn btn-ghost" data-action="calendar-today">Today</button>
-          <button type="button" class="btn btn-ghost" data-action="calendar-next-month">→</button>
+          <button type="button" class="btn btn-ghost" data-action="calendar-next-month">?</button>
         </div>
       </div>
       <div class="calendar-summary-grid">${summaryCards}</div>
@@ -8433,7 +8554,7 @@ async function renderActivityPage() {
   const log = await DB.getActivityLog({ limit: 200 });
   const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  const ACTION_ICON = { created:'🟢', updated:'✏️', deleted:'🗑️', uploaded:'📎', logged_in:'🔑', logged_out:'🚪', noted:'📝', completed:'✅', assigned:'👤', task_done:'✅' };
+  const ACTION_ICON = { created:'??', updated:'??', deleted:'???', uploaded:'??', logged_in:'??', logged_out:'??', noted:'??', completed:'?', assigned:'??', task_done:'?' };
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Activity Log</h1><span class="projects-page-count">${log.length} entries</span></div>
@@ -8444,7 +8565,7 @@ async function renderActivityPage() {
         : log.map(entry => {
           const who = uMap[entry.userId];
           const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
-          const icon = ACTION_ICON[entry.action] || '●';
+          const icon = ACTION_ICON[entry.action] || '?';
           return `<div class="activity-page-row">
             <span class="activity-page-icon">${icon}</span>
             <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
@@ -8472,12 +8593,12 @@ async function renderAboutPage() {
     { version: '3.1.10', date: 'June 2026', features: ['Document storage sign-in fixed so users can open Drive-backed files reliably', 'Legacy Supabase documents remain available during Drive migration', 'Theme toggle added to login/recovery screens', 'Dark-mode contrast improved for login, cloud sync, and startup database-check messages', 'Projects sticky header clearance and dark frosted styling polished'] },
     { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme'] },
     { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map'] },
-    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed — always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
+    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed ? always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
     { version: '3.1.5', date: 'June 2026', features: ['Notebook-style Notes with titles, search, Quill formatting, autosave, and fallback editor', 'Quick task creation with multiline paste, advanced details on demand, and note/meeting-text task import', 'Momentum task header, focus filters, cleaner task cards, and stronger project brief/focus layout', 'Local vendor bundles for SortableJS, jsPDF, D3, Floating UI, and Quill'] },
-    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt — always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
+    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt ? always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
     { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
-    { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app — files now load from Google Drive'] },
-    { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) — existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
+    { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app ? files now load from Google Drive'] },
+    { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) ? existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
     { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
     { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
@@ -8518,37 +8639,37 @@ async function renderAboutPage() {
         <div class="dash-panel-head"><h3>Core Features</h3></div>
         <div class="features-grid">
           <div class="feature-card">
-            <div class="feature-icon">📁</div>
+            <div class="feature-icon">??</div>
             <strong>Projects</strong>
             <p>Create projects, track status from planning to completion, set milestones, and filter by department.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">✅</div>
+            <div class="feature-icon">?</div>
             <strong>Tasks</strong>
             <p>List, Board, Timeline, and Flow diagram views. Drag-to-reorder, priority sorting, and dependency tracking.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">📝</div>
+            <div class="feature-icon">??</div>
             <strong>Rich Notes</strong>
             <p>Add formatted notes to tasks with bold, italics, lists, and links. Persistent, auto-saved editing.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">📎</div>
+            <div class="feature-icon">??</div>
             <strong>File Attachments</strong>
             <p>Drag & drop files, image previews, and full document support on projects and individual tasks.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">📊</div>
+            <div class="feature-icon">??</div>
             <strong>Dashboard & Reports</strong>
             <p>Admin telemetry, monthly reports with PDF export, activity logs, and team analytics.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">👥</div>
+            <div class="feature-icon">??</div>
             <strong>Team Tiles</strong>
             <p>Tile-based team visibility with member status, contribution ranks, departments, and quick profile access.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">🔔</div>
+            <div class="feature-icon">??</div>
             <strong>Smart Notifications</strong>
             <p>Get notified of assignments, completions, and project updates with customizable preferences.</p>
           </div>
@@ -8562,7 +8683,7 @@ async function renderAboutPage() {
             <div class="release-item${i === 0 ? ' release-latest' : ''}">
               <div class="release-badge">v${r.version}</div>
               <div class="release-content">
-                <h4>${r.version} · ${r.date}</h4>
+                <h4>${r.version} ? ${r.date}</h4>
                 <ul>${r.features.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
               </div>
             </div>
@@ -8585,7 +8706,7 @@ async function renderAboutPage() {
         <div class="dash-panel-head"><h3>Credits</h3></div>
         <p><strong>Created by:</strong> Everlasting</p>
         <p><strong>Email:</strong> <a href="mailto:procurement@subzeromotors.com">procurement@subzeromotors.com</a></p>
-        <p><strong>Built with:</strong> ❤️ for teams that get things done</p>
+        <p><strong>Built with:</strong> ?? for teams that get things done</p>
       </section>
     </div>`;
 }
@@ -8605,21 +8726,21 @@ function showAboutModal() {
         </div>
         <div>
           <div class="about-app-name">Orbitrack</div>
-          <div class="about-version">Version ${esc(getAppVersion())} · Built by Everlasting</div>
+          <div class="about-version">Version ${esc(getAppVersion())} ? Built by Everlasting</div>
         </div>
       </div>
-      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports — all in one place.</p>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports ? all in one place.</p>
       <div class="about-features">
-        <div class="about-feature-row"><span class="about-feature-icon">📁</span><div><strong>Projects</strong><span> — Status tracking, milestones, activity, documents, and project details in a focused slide drawer.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">✅</span><div><strong>Tasks</strong><span> — List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📝</span><div><strong>Task Details</strong><span> — Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📎</span><div><strong>Files</strong><span> — Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📅</span><div><strong>Calendar</strong><span> — Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">📊</span><div><strong>Dashboard &amp; Reports</strong><span> — Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">🔔</span><div><strong>Notifications</strong><span> — Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Projects</strong><span> ? Status tracking, milestones, activity, documents, and project details in a focused slide drawer.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">?</span><div><strong>Tasks</strong><span> ? List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Task Details</strong><span> ? Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Files</strong><span> ? Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Calendar</strong><span> ? Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Dashboard &amp; Reports</strong><span> ? Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Notifications</strong><span> ? Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
       </div>
       <div class="about-footer">
-        <span class="text-muted text-sm">Local-first with secure cloud sync · Built with ❤️</span>
+        <span class="text-muted text-sm">Local-first with secure cloud sync ? Built with ??</span>
       </div>
       <div class="form-actions"><button class="btn btn-primary" data-action="close-modal">Close</button></div>
     </div>`);
@@ -8645,7 +8766,7 @@ async function showTaskDetailModal(taskId) {
     if (a.blob && url) blobUrls.push(url);
     return `<div class="td-file-card">
       <button type="button" class="td-file-preview" data-action="preview-attachment" data-id="${a.id}">
-        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span style="font-size:1.6rem">${a.mimeType === 'application/pdf' ? '📄' : '📎'}</span>`}
+        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span style="font-size:1.6rem">${a.mimeType === 'application/pdf' ? '??' : '??'}</span>`}
       </button>
       <span class="td-file-name">${esc(a.fileName)}</span>
       ${editable ? `<button class="btn-icon td-file-del" data-action="delete-attachment" data-id="${a.id}" title="Remove">${ICONS.trash}</button>` : ''}
@@ -8689,7 +8810,7 @@ async function showTaskDetailModal(taskId) {
       <div class="td-section">
         <span class="td-section-label">Notes</span>
         ${editable
-          ? `<textarea class="td-notes" data-td="notes" placeholder="Add notes, context, or any details…" rows="2">${esc(task.notes || '')}</textarea>`
+          ? `<textarea class="td-notes" data-td="notes" placeholder="Add notes, context, or any details?" rows="2">${esc(task.notes || '')}</textarea>`
           : `<p class="td-notes-view">${task.notes ? esc(task.notes) : '<span class="text-muted">No notes.</span>'}</p>`}
       </div>
       ${editable && siblingTasks.length ? `
@@ -8703,7 +8824,7 @@ async function showTaskDetailModal(taskId) {
               <span class="td-blocker-status td-blocker-status--${esc(st.status)}">${esc(st.status)}</span>
             </label>`).join('')}
         </div>
-        <p class="text-muted text-sm" style="margin-top:6px">Tick the tasks that must finish first — they appear as links on the Map.</p>
+        <p class="text-muted text-sm" style="margin-top:6px">Tick the tasks that must finish first ? they appear as links on the Map.</p>
       </div>` : ''}
       ${editable ? `
       <div class="td-section" id="td-custom-fields-section">
@@ -8783,17 +8904,28 @@ async function showTaskDetailModal(taskId) {
   if (fileInput) {
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
+      e.target.value = '';
       const pid = Number(fileInput.dataset.projectId);
       const tid = Number(fileInput.dataset.taskId);
       const s = getSession();
       const max = 10 * 1024 * 1024;
-      for (const file of files) {
-        if (file.size > max) { showToast(`${file.name} too large (max 10 MB)`, 'warning'); continue; }
-        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
-      }
-      bustWorkspaceCache();
-      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
-      await showTaskDetailModal(tid);
+      const validFiles = files.filter(f => f.size <= max);
+      files.filter(f => f.size > max).forEach(f => showToast(`${f.name} too large (max 10 MB)`, 'warning'));
+      if (!validFiles.length) return;
+      const { uploaded, failed, errors } = await uploadFilesWithProgress({
+        projectId: pid,
+        taskId: tid,
+        files: validFiles,
+        uploadedBy: s.userId,
+        onAfterUpload: async () => {
+          await refreshProjectAttachmentsUI(pid);
+          bustWorkspaceCache();
+          blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+          await showTaskDetailModal(tid);
+        }
+      });
+      if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
+      if (failed) showToast(errors[0]?.error?.message || 'Upload failed', 'error');
     });
   }
 
@@ -8809,13 +8941,23 @@ async function showTaskDetailModal(taskId) {
       const tid = Number(dz.dataset.taskId);
       const s = getSession();
       const max = 10 * 1024 * 1024;
-      for (const file of files) {
-        if (file.size > max) { showToast(`${file.name} too large`, 'warning'); continue; }
-        await DB.addAttachment({ projectId: pid, taskId: tid, uploadedBy: s.userId, fileName: file.name, mimeType: file.type || 'application/octet-stream', blob: file });
-      }
-      bustWorkspaceCache();
-      blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
-      await showTaskDetailModal(tid);
+      const validFiles = files.filter(f => f.size <= max);
+      files.filter(f => f.size > max).forEach(f => showToast(`${f.name} too large`, 'warning'));
+      if (!validFiles.length) return;
+      const { uploaded, failed, errors } = await uploadFilesWithProgress({
+        projectId: pid,
+        taskId: tid,
+        files: validFiles,
+        uploadedBy: s.userId,
+        onAfterUpload: async () => {
+          await refreshProjectAttachmentsUI(pid);
+          bustWorkspaceCache();
+          blobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(_) {} });
+          await showTaskDetailModal(tid);
+        }
+      });
+      if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
+      if (failed) showToast(errors[0]?.error?.message || 'Upload failed', 'error');
     });
   }
 }
@@ -8838,7 +8980,7 @@ async function handleFormSubmit(e) {
         isOngoing: fd.get('isOngoing') === '1',
         cadence: fd.get('cadence') || ''
       };
-      // Custom templates only seed editable starting tasks — they are not a
+      // Custom templates only seed editable starting tasks ? they are not a
       // persisted workflow type, so don't store the "tpl:<id>" sentinel.
       if (typeof data.workflowTemplate === 'string' && data.workflowTemplate.startsWith('tpl:')) data.workflowTemplate = '';
       if (form.querySelector('[name="editorIds"]')) {
@@ -8849,7 +8991,7 @@ async function handleFormSubmit(e) {
       const editId = form.dataset.editId;
       const _submitBtn = form.querySelector('[type=submit]');
       if (_submitBtn?.disabled) return;
-      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving…' : 'Creating…'; }
+      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving?' : 'Creating?'; }
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
         const existing = await DB.getProject(Number(editId));
@@ -8878,7 +9020,7 @@ async function handleFormSubmit(e) {
         const created = await DB.getProject(nid);
         const isLogisticsCreate = (created?.workflowTemplate || data.workflowTemplate) === 'logistics-shipment';
         await ensureProjectWorkflowTasks(created, uid);
-        // Logistics workflow tasks are created with workflowStepKey above — skip
+        // Logistics workflow tasks are created with workflowStepKey above ? skip
         // generic bulk rows so steps are not duplicated without step keys.
         const bulkTitles = isLogisticsCreate ? [] : [...document.querySelectorAll('input[name="bulk_task[]"]')]
           .map(i => i.value.trim()).filter(Boolean);
@@ -9009,7 +9151,7 @@ async function handleFormSubmit(e) {
       const reqId = await DB.requestProjectAccess({ projectId, requesterId: uid, message });
       const requester = await DB.getUser(uid);
       const who = requester?.displayName || requester?.username || 'Someone';
-      const msgSnippet = message ? `: "${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"` : '';
+      const msgSnippet = message ? `: "${message.slice(0, 120)}${message.length > 120 ? '?' : ''}"` : '';
       await notifyUser({
         userId: project.ownerId,
         type: 'access_request',
@@ -9105,7 +9247,7 @@ async function handleFormSubmit(e) {
       const newAssignee = newAssigneeId ? await DB.getUser(newAssigneeId) : null;
       await recordProjectActivity({
         userId: uid, projectId: project.id, action: 'updated', entityType: 'task', entityId: taskId,
-        details: `${task.title}${newAssignee ? ` → ${newAssignee.displayName || newAssignee.username}` : ' → unassigned'}`,
+        details: `${task.title}${newAssignee ? ` ? ${newAssignee.displayName || newAssignee.username}` : ' ? unassigned'}`,
         discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} reassigned task "${task.title}" in "${project.name}"${newAssignee ? ` to ${newAssignee.displayName || newAssignee.username}` : ' to nobody'}.`
       });
       showToast('Task reassigned', 'success');
@@ -9134,7 +9276,7 @@ async function handleFormSubmit(e) {
       await recordProjectActivity({
         userId: uid, projectId: data.projectId, action: 'noted', entityType: 'update',
         details: data.content.slice(0, 200),
-        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '…' : ''}`
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '?' : ''}`
       });
     } else if (type === 'add-user') {
       const username = fd.get('username')?.trim();
@@ -9158,7 +9300,7 @@ async function handleFormSubmit(e) {
       // the cloud id-remap and produced mis-owned / duplicate personal spaces.
       bustWorkspaceCache();
       await router(); // refresh the admin user list behind the modal
-      showCredentialModal(username, password, { title: 'User created — share these' });
+      showCredentialModal(username, password, { title: 'User created ? share these' });
       return;
     } else if (type === 'add-calendar-event') {
       const dayKey = form.dataset.day;
@@ -9195,7 +9337,7 @@ async function handleFormSubmit(e) {
       const role = fd.get('role');
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2–32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
+      if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2?32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
       const changes = { username, displayName, email, department, color, birthDate, gender, phone, address, hoursLoggedTotal };
@@ -9316,7 +9458,7 @@ async function handleFormSubmit(e) {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       const targetId = Number(form.dataset.userId);
       const selectedIds = fd.getAll('classroomIds').map(Number).filter(Boolean);
-      // setUserClassrooms replaces all memberships — keep the private personal space.
+      // setUserClassrooms replaces all memberships ? keep the private personal space.
       let personalId = null;
       try { const tu = await DB.getUser(targetId); personalId = await DB.ensurePersonalClassroom?.(targetId, tu?.displayName || tu?.username); } catch (_) {}
       await DB.setUserClassrooms(targetId, [...new Set([...selectedIds, personalId].filter(Boolean))]);
@@ -9346,11 +9488,11 @@ async function handleFormSubmit(e) {
     }
     console.error(err);
     const msg = err?.message || err?.details || 'Something went wrong';
-    showToast(msg.includes('duplicate key') ? 'Could not save — try refreshing the page' : msg, 'error');
+    showToast(msg.includes('duplicate key') ? 'Could not save ? try refreshing the page' : msg, 'error');
   }
 }
 
-/* ──── Actions ──── */
+/* ???? Actions ???? */
 
 const actions = {
   'add-project': () => showProjectModal(),
@@ -9392,6 +9534,20 @@ const actions = {
   'set-performance-mode': async (b) => {
     const mode = b.dataset.mode || 'balanced';
     setPerformanceMode(mode);
+    await router();
+  },
+  'set-theme-mode': async (b) => {
+    applyTheme(b.dataset.mode === 'black' ? 'black' : 'normal');
+    updateSidebarUser();
+    await router();
+  },
+  'set-theme-variant': async (b) => {
+    setThemeVariant(b.dataset.variant || 'vivid');
+    updateSidebarUser();
+    await router();
+  },
+  'set-ui-density': async (b) => {
+    setUiDensity(b.dataset.density || 'compact');
     await router();
   },
   'toggle-shortcut-enabled': async (b) => {
@@ -9750,7 +9906,7 @@ const actions = {
   'check-updates': () => {
     closeUserMenu();
     if (window.workTrackerDesktop?.checkForUpdates) {
-      showToast('Checking for updates…', 'info');
+      showToast('Checking for updates?', 'info');
       window.workTrackerDesktop.checkForUpdates();
     } else {
       showToast('Updates are managed in the installed desktop app.', 'info');
@@ -9767,12 +9923,12 @@ const actions = {
     if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
   },
   'reconnect-storage': async (b) => {
-    if (b) { b.disabled = true; b.textContent = 'Reconnecting…'; }
+    if (b) { b.disabled = true; b.textContent = 'Reconnecting?'; }
     let recovered = false;
     try { recovered = await window.DriveStorage?.recoverSession?.(); } catch (_) {}
     const status = await runStorageAuthHealthCheck({ notify: false, force: true });
     if (status.ok) showToast('Document storage reconnected.', 'success');
-    else showToast('Could not reconnect automatically — log out and back in once to restore file access.', 'warning');
+    else showToast('Could not reconnect automatically ? log out and back in once to restore file access.', 'warning');
     if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
   },
   'diagnostics-copy': async () => {
@@ -9851,7 +10007,7 @@ const actions = {
       showToast('You are offline. Sync will run when the connection returns.', 'warning');
       return;
     }
-    showToast('Syncing…', 'info');
+    showToast('Syncing?', 'info');
     try {
       if (window.SyncEngine) {
         await SyncEngine.pull();
@@ -9881,7 +10037,7 @@ const actions = {
   },
   'sync-retry-now': async () => {
     if (window.SyncEngine && SyncEngine.retry) {
-      showToast('Retrying sync…', 'info');
+      showToast('Retrying sync?', 'info');
       try {
         await SyncEngine.pull();
         await SyncEngine.retry();
@@ -9909,7 +10065,7 @@ const actions = {
     bustWorkspaceCache();
     hideModal();
     if (window.SyncEngine) await SyncEngine.pull();
-    showToast('Cache cleared — reloading fresh data from the cloud…', 'info');
+    showToast('Cache cleared ? reloading fresh data from the cloud?', 'info');
     await router();
   },
   'sync-copy-errors': async () => {
@@ -9923,7 +10079,7 @@ const actions = {
       await navigator.clipboard.writeText(text);
       showToast('Errors copied to clipboard', 'success');
     } catch (_) {
-      showToast('Could not copy — see browser console (F12)', 'warning');
+      showToast('Could not copy ? see browser console (F12)', 'warning');
       console.log(text);
     }
   },
@@ -9950,12 +10106,12 @@ const actions = {
       : (DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : []);
     const job = jobs[idx];
     if (!job?.lastError) return;
-    const description = `[${job.type}] ${job.summary || '—'}\nAttempts: ${job.attempts || 0}\n\n${job.lastError}`;
+    const description = `[${job.type}] ${job.summary || '?'}\nAttempts: ${job.attempts || 0}\n\n${job.lastError}`;
     try {
       const title = await fileSyncErrorReport(description);
-      showToast(`Report "${title}" sent — error copied to clipboard`, 'success');
+      showToast(`Report "${title}" sent ? error copied to clipboard`, 'success');
     } catch (_) {
-      showToast('Could not send report — try using the Report a Bug button instead', 'warning');
+      showToast('Could not send report ? try using the Report a Bug button instead', 'warning');
     }
   },
   'sync-report-all': async () => {
@@ -9967,9 +10123,9 @@ const actions = {
     const description = `Cloud sync diagnostics (${lines.length} issue${lines.length === 1 ? '' : 's'})\n\n${lines.join('\n\n')}`;
     try {
       const title = await fileSyncErrorReport(description);
-      showToast(`Report "${title}" sent — errors copied to clipboard`, 'success');
+      showToast(`Report "${title}" sent ? errors copied to clipboard`, 'success');
     } catch (_) {
-      showToast('Could not send report — try using the Report a Bug button instead', 'warning');
+      showToast('Could not send report ? try using the Report a Bug button instead', 'warning');
     }
   },
   'user-logout': async () => {
@@ -9986,7 +10142,7 @@ const actions = {
   'show-about': () => { closeUserMenu(); window.location.hash = '#/support'; },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
-    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving?';
     try {
       const taskId = Number(b.dataset.id);
       const title = document.querySelector('[data-td="title"]')?.value?.trim();
@@ -10070,7 +10226,7 @@ const actions = {
     form.dataset.projectId = String(projectId);
     form.dataset.after = afterId || '';
     form.dataset.status = status;
-    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name…" maxlength="200" autocomplete="off">
+    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name?" maxlength="200" autocomplete="off">
       <div class="task-qaf-btns">
         <button class="btn btn-sm btn-primary" data-action="confirm-quick-task" data-project-id="${projectId}" data-after="${afterId || ''}" data-status="${status}">Add</button>
         <button class="btn btn-sm btn-ghost" data-action="cancel-quick-task" data-project-id="${projectId}">Cancel</button>
@@ -10178,7 +10334,7 @@ const actions = {
   'copy-credentials': async (b) => {
     const text = `Username: ${b.dataset.username}\nTemp password: ${b.dataset.password}`;
     try { await navigator.clipboard.writeText(text); showToast('Credentials copied', 'success'); }
-    catch (_) { showToast('Copy failed — select the text manually', 'warning'); }
+    catch (_) { showToast('Copy failed ? select the text manually', 'warning'); }
   },
   'request-password-change': async () => {
     const s = getSession(); if (!s) return;
@@ -10215,34 +10371,74 @@ const actions = {
       confirmLabel: 'Remove file',
       tone: 'danger'
     })) return;
-    await DB.deleteAttachment(row.id, actorId());
-    if (isLogisticsWorkflow(p) && row.documentType) {
-      const tasks = await DB.getTasks({ projectId: p.id });
-      const workflowTask = tasks.find(task =>
-        (row.documentType === 'shipping-list' && task.workflowStepKey === 'shipping-list') ||
-        (row.documentType === 'waybill' && task.workflowStepKey === 'waybill-tracking')
-      );
-      if (workflowTask?.status === 'done') {
-        await DB.updateTask(workflowTask.id, { status: 'doing' }, actorId());
-        const workflowProjectStatus = await syncWorkflowProjectStatus(p, actorId());
-        if (workflowProjectStatus) {
-          await recordProjectActivity({
-            userId: actorId(), projectId: p.id, action: 'updated', entityType: 'project',
-            details: `moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} (document removed)`,
-            discordLine: `"${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} because a required logistics document was removed.`
-          });
+    setUploadProgress({
+      title: 'Removing file?',
+      detail: row.fileName || '',
+      percent: 18,
+      state: 'uploading'
+    });
+    try {
+      await DB.deleteAttachment(row.id, actorId());
+      setUploadProgress({
+        title: 'Removing file?',
+        detail: row.fileName || '',
+        percent: 55,
+        state: 'uploading'
+      });
+      if (isLogisticsWorkflow(p) && row.documentType) {
+        const tasks = await DB.getTasks({ projectId: p.id });
+        const workflowTask = tasks.find(task =>
+          (row.documentType === 'shipping-list' && task.workflowStepKey === 'shipping-list') ||
+          (row.documentType === 'waybill' && task.workflowStepKey === 'waybill-tracking')
+        );
+        if (workflowTask?.status === 'done') {
+          await DB.updateTask(workflowTask.id, { status: 'doing' }, actorId());
+          const workflowProjectStatus = await syncWorkflowProjectStatus(p, actorId());
+          if (workflowProjectStatus) {
+            await recordProjectActivity({
+              userId: actorId(), projectId: p.id, action: 'updated', entityType: 'project',
+              details: `moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} (document removed)`,
+              discordLine: `"${p.name}" automatically moved to ${STAT_CFG[workflowProjectStatus]?.l || workflowProjectStatus} because a required logistics document was removed.`
+            });
+          }
         }
       }
+      await recordProjectActivity({
+        userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'attachment',
+        details: row.fileName,
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`
+      });
+      setUploadProgress({
+        title: 'Updating documents?',
+        detail: row.fileName || '',
+        percent: 82,
+        state: 'uploading'
+      });
+      bustWorkspaceCache();
+      await refreshProjectAttachmentsUI(p.id);
+      // If delete happened from an open task modal, soft-reopen it without a full route flash.
+      const openTaskId = Number(document.querySelector('.td-file-input')?.dataset?.taskId || 0);
+      if (openTaskId) {
+        try { await showTaskDetailModal(openTaskId); } catch (_) {}
+      }
+      setUploadProgress({
+        title: 'File removed',
+        detail: row.fileName || '',
+        percent: 100,
+        state: 'complete'
+      });
+      hideUploadProgress(1100);
+      showToast('File removed', 'success');
+    } catch (err) {
+      setUploadProgress({
+        title: 'Remove failed',
+        detail: err?.message || 'Could not remove file',
+        percent: 0,
+        state: 'error'
+      });
+      hideUploadProgress(2400);
+      showToast('Remove error: ' + (err?.message || 'Unknown error'), 'error');
     }
-    await recordProjectActivity({
-      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'attachment',
-      details: row.fileName,
-      discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`
-    });
-    showToast('File removed', 'success');
-    bustWorkspaceCache();
-    await router();
-    if (state.projectPanelOpen) { try { await renderDocumentPanel(p.id, canEdit(p)); } catch (_) {} }
   },
   'add-user': () => showAddUserModal(),
   'edit-user': (b) => showEditUserModalBlack(Number(b.dataset.id)),
@@ -10410,11 +10606,190 @@ window.WTTasks = {
   showQuickCreate: showTaskModal
 };
 
-/* ──── Toast ──── */
+/* ???? Toast ???? */
 
-const TOAST_ICONS = { success: '✓', error: '✕', warning: '!', info: 'i' };
+const TOAST_ICONS = { success: '?', error: '?', warning: '!', info: 'i' };
 
 const TOAST_MAX_VISIBLE = 3;
+
+/* ???? Upload progress (Drive-style status card) ???? */
+
+let _uploadProgressHideTimer = null;
+
+function formatUploadBytes(n) {
+  const bytes = Math.max(0, Number(n) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function setUploadProgress({
+  title = 'Uploading?',
+  detail = '',
+  percent = null,
+  indeterminate = false,
+  state = 'uploading'
+} = {}) {
+  const bar = document.getElementById('upload-progress-bar');
+  if (!bar) return;
+  const fill = document.getElementById('upload-progress-fill');
+  const pctEl = document.getElementById('upload-progress-pct');
+  const detailEl = document.getElementById('upload-progress-detail');
+  const titleEl = bar.querySelector('.upload-progress-title');
+  clearTimeout(_uploadProgressHideTimer);
+  bar.classList.remove('hidden', 'is-indeterminate', 'is-complete', 'is-error');
+  if (state === 'complete') bar.classList.add('is-complete');
+  if (state === 'error') bar.classList.add('is-error');
+  if (state === 'uploading' && (indeterminate || percent == null)) bar.classList.add('is-indeterminate');
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) {
+    detailEl.textContent = detail;
+    detailEl.hidden = !detail;
+  }
+  const clamped = percent == null ? null : Math.max(0, Math.min(100, Math.round(percent)));
+  if (fill) fill.style.width = clamped == null ? '36%' : `${clamped}%`;
+  if (pctEl) {
+    if (state === 'complete') pctEl.textContent = 'Done';
+    else if (state === 'error') pctEl.textContent = 'Failed';
+    else if (clamped == null) pctEl.textContent = '?';
+    else pctEl.textContent = `${clamped}%`;
+  }
+}
+
+function hideUploadProgress(delay = 0) {
+  const bar = document.getElementById('upload-progress-bar');
+  if (!bar) return;
+  clearTimeout(_uploadProgressHideTimer);
+  _uploadProgressHideTimer = setTimeout(() => {
+    bar.classList.add('hidden');
+    bar.classList.remove('is-indeterminate', 'is-complete', 'is-error');
+  }, delay);
+}
+
+/**
+ * Upload one or more files with a Google Drive-style status card.
+ * Progress stays open through an optional post-upload UI refresh phase.
+ * Returns { uploaded, failed, errors }.
+ */
+async function uploadFilesWithProgress({
+  projectId,
+  taskId = null,
+  files = [],
+  documentType = '',
+  uploadedBy = null,
+  activity = null,
+  onAfterUpload = null
+} = {}) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!projectId || !list.length) return { uploaded: 0, failed: 0, errors: [] };
+
+  const total = list.length;
+  const errors = [];
+  let uploaded = 0;
+  const driveProgress = !!window.DriveStorage?.enabled?.();
+  // Leave the last ~18% for local UI refresh / sync lag after the network upload.
+  const uploadShare = 0.82;
+
+  const updateForFile = (index, fileProgress = 0, file) => {
+    const overall = ((index + Math.max(0, Math.min(1, fileProgress))) / total) * uploadShare * 100;
+    const countLabel = total === 1 ? 'Uploading 1 file' : `Uploading ${index + 1} of ${total}`;
+    const sizeLabel = file?.size != null
+      ? (driveProgress && fileProgress > 0 && fileProgress < 1
+        ? `${formatUploadBytes(file.size * fileProgress)} / ${formatUploadBytes(file.size)}`
+        : formatUploadBytes(file.size))
+      : '';
+    setUploadProgress({
+      title: countLabel,
+      detail: [file?.name, sizeLabel].filter(Boolean).join(' ? '),
+      percent: driveProgress ? overall : (fileProgress >= 1 ? ((index + 1) / total) * uploadShare * 100 : null),
+      indeterminate: !driveProgress && fileProgress < 1,
+      state: 'uploading'
+    });
+  };
+
+  setUploadProgress({
+    title: total === 1 ? 'Uploading 1 file' : `Uploading ${total} files`,
+    detail: list[0]?.name || '',
+    percent: 0,
+    indeterminate: !driveProgress,
+    state: 'uploading'
+  });
+
+  for (let i = 0; i < list.length; i++) {
+    const file = list[i];
+    updateForFile(i, 0, file);
+    try {
+      await DB.addAttachment({
+        projectId,
+        taskId,
+        uploadedBy,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        documentType,
+        blob: file
+      }, (ratio) => updateForFile(i, ratio, file));
+      uploaded++;
+      if (typeof activity === 'function') {
+        try { await activity(file, i); } catch (err) { console.warn('[upload] activity hook failed', err); }
+      }
+      updateForFile(i, 1, file);
+    } catch (err) {
+      errors.push({ fileName: file.name, error: err });
+      console.warn('[upload] failed', file.name, err);
+    }
+  }
+
+  if (uploaded) {
+    setUploadProgress({
+      title: 'Updating documents?',
+      detail: uploaded === 1 ? (list[0]?.name || '') : `${uploaded} file${uploaded === 1 ? '' : 's'} uploaded`,
+      percent: Math.round(uploadShare * 100),
+      state: 'uploading'
+    });
+    if (typeof onAfterUpload === 'function') {
+      try {
+        await onAfterUpload({ uploaded, failed: errors.length, errors });
+      } catch (err) {
+        console.warn('[upload] UI refresh failed', err);
+      }
+    }
+    setUploadProgress({
+      title: 'Refreshing?',
+      detail: 'Finishing up',
+      percent: 96,
+      state: 'uploading'
+    });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+
+  if (uploaded && !errors.length) {
+    setUploadProgress({
+      title: uploaded === 1 ? 'Uploaded 1 file' : `Uploaded ${uploaded} files`,
+      detail: list.length === 1 ? (list[0]?.name || '') : `${uploaded} of ${total} complete`,
+      percent: 100,
+      state: 'complete'
+    });
+    hideUploadProgress(1200);
+  } else if (uploaded && errors.length) {
+    setUploadProgress({
+      title: `Uploaded ${uploaded} of ${total}`,
+      detail: `${errors.length} failed`,
+      percent: Math.round((uploaded / total) * 100),
+      state: 'error'
+    });
+    hideUploadProgress(2400);
+  } else {
+    setUploadProgress({
+      title: 'Upload failed',
+      detail: errors[0]?.error?.message || 'Could not upload files',
+      percent: 0,
+      state: 'error'
+    });
+    hideUploadProgress(2400);
+  }
+
+  return { uploaded, failed: errors.length, errors };
+}
 
 function showToast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
@@ -10447,7 +10822,7 @@ function showToast(msg, type = 'info') {
   t._toastDismiss = dismiss;
   t.querySelector('.toast-close')?.addEventListener('click', dismiss);
   c.appendChild(t);
-  // Cap the number of visible toasts — drop the oldest beyond the limit.
+  // Cap the number of visible toasts ? drop the oldest beyond the limit.
   const all = c.querySelectorAll('.toast');
   for (let i = 0; i < all.length - TOAST_MAX_VISIBLE; i++) all[i]._toastDismiss?.();
   requestAnimationFrame(() => t.classList.add('toast-visible'));
@@ -10506,7 +10881,7 @@ async function reportClientError(kind, error, context = {}) {
 
   const message = String(error?.message || error || 'Unknown error').slice(0, 1000);
   // The same error re-firing (e.g. a retried sync op) should not file a new
-  // report every few minutes — it buries real issues and spams admins.
+  // report every few minutes ? it buries real issues and spams admins.
   if (_autoErrorSeenRecently(`${kind}|${message.slice(0, 200)}`)) return;
 
   const session = getSession?.();
@@ -10599,9 +10974,9 @@ function revokeLibraryPreviewUrls() {
   }
 }
 
-/* ──── Router ──── */
+/* ???? Router ???? */
 
-/* ──── Presence (Phase 4) ──── */
+/* ???? Presence (Phase 4) ???? */
 
 const ROUTE_SCROLL_KEY = 'wt-route-scroll-v1';
 
@@ -10684,7 +11059,7 @@ function startPresenceHeartbeat() {
   try { window.workTrackerDesktop?.onIdleState?.((p) => { _idleSeconds = Number(p?.idleSeconds) || 0; }); } catch (_) {}
   const beat = () => {
     if (document.visibilityState === 'hidden') return;
-    if (window.workTrackerDesktop && _idleSeconds >= 90) return; // idle/away → let presence age
+    if (window.workTrackerDesktop && _idleSeconds >= 90) return; // idle/away ? let presence age
     const uid = actorId();
     if (uid && DB.touchLastSeen) DB.touchLastSeen(uid).catch(() => {});
   };
@@ -10741,7 +11116,7 @@ function presenceDotHtml(user) {
   return `<span class="presence-wave presence-wave--${st}${staticClass}" title="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 28 16" aria-hidden="true"><path d="${path}"></path></svg></span>`;
 }
 
-/* ──── Ranking explanation (Phase 4) ──── */
+/* ???? Ranking explanation (Phase 4) ???? */
 
 function rankingExplanationBodyHtmlV2() {
   const tiers = RANK_TIERS.map((tier, idx) => {
@@ -10789,12 +11164,12 @@ function rankingExplanationBodyHtmlV2() {
 function rankingExplanationBodyHtml() {
   return rankingExplanationBodyHtmlV2();
   const tiers = [
-    { l: 'Pawn', r: '0 – 24', tone: 'muted' },
-    { l: 'Scout', r: '25 – 59', tone: 'amber' },
-    { l: 'Pilot', r: '60 – 109', tone: 'green' },
-    { l: 'Navigator', r: '110 – 179', tone: 'blue' },
-    { l: 'Commander', r: '180 – 299', tone: 'purple' },
-    { l: 'Architect', r: '300 – 459', tone: 'purple' },
+    { l: 'Pawn', r: '0 ? 24', tone: 'muted' },
+    { l: 'Scout', r: '25 ? 59', tone: 'amber' },
+    { l: 'Pilot', r: '60 ? 109', tone: 'green' },
+    { l: 'Navigator', r: '110 ? 179', tone: 'blue' },
+    { l: 'Commander', r: '180 ? 299', tone: 'purple' },
+    { l: 'Architect', r: '300 ? 459', tone: 'purple' },
     { l: 'Orbital', r: '460+', tone: 'purple' },
   ];
   const milestones = [
@@ -10883,7 +11258,7 @@ async function renderUsers() {
       </div>
       <div class="user-card-info">
         <div class="user-card-name">${esc(u.displayName || u.username)}</div>
-        <div class="user-card-sub">@${esc(u.username)}${u.department ? ` · ${departmentLabel(u.department)}` : ''}</div>
+        <div class="user-card-sub">@${esc(u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}</div>
         <div class="user-card-badges">
           <span class="profile-rank profile-rank--${esc(stats.rank.tone)}"><span class="rank-label">${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}</span><strong>${stats.score}</strong></span>
           ${badge(stats.position, 'accent')}
@@ -10903,7 +11278,7 @@ async function renderUsers() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} · ranked by contribution</p></div>
+      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} ? ranked by contribution</p></div>
       <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
     </div>
     <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
@@ -10993,7 +11368,7 @@ function updateNav(route) {
   });
 }
 
-/* ──── Export / Import ──── */
+/* ???? Export / Import ???? */
 
 async function exportData() {
   try {
@@ -11038,7 +11413,7 @@ function setupImport() {
   });
 }
 
-/* ──── Routing (login / recovery / app) ──── */
+/* ???? Routing (login / recovery / app) ???? */
 
 async function applyRoute() {
   const raw = window.location.hash.slice(1) || '';
@@ -11127,7 +11502,7 @@ async function applyRoute() {
   requestSplashDismiss();
 }
 
-/* ──── Realtime event handlers ──── */
+/* ???? Realtime event handlers ???? */
 
 function runShortcutAction(id) {
   if (id === 'command.open') return showCommandPalette().catch(err => console.error('[command]', err));
@@ -11324,14 +11699,14 @@ function onSyncPulled() {
   router().catch(() => {});
 }
 
-/* ──── Init ──── */
+/* ???? Init ???? */
 
 async function init() {
   try {
     installGlobalErrorReporting();
     applyPerformanceMode();
     if (window.WT_SUPABASE_ERROR) {
-      showToast('Cloud database unavailable — using browser-only storage for now.', 'warning');
+      showToast('Cloud database unavailable ? using browser-only storage for now.', 'warning');
     }
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
     window.addEventListener('wt-sync-status', () => {
@@ -11342,7 +11717,7 @@ async function init() {
     window.addEventListener('wt-sync-error', (e) => {
       const { summary, error } = e.detail || {};
       const label = summary ? `"${summary}"` : 'A change';
-      const hint = error ? ` — ${error.slice(0, 120)}` : '';
+      const hint = error ? ` ? ${error.slice(0, 120)}` : '';
       showToast(`Cloud sync failed: ${label} couldn't be saved${hint}`, 'error');
       updateOfflineSyncBanner();
     });
@@ -11490,41 +11865,31 @@ async function init() {
       const validFiles = fileList.filter(f => f.size <= max);
       fileList.filter(f => f.size > max).forEach(f => showToast(`${f.name} is over 10 MB`, 'warning'));
       if (!validFiles.length) return;
-      const _upBar = document.getElementById('upload-progress-bar');
-      const _upFill = document.getElementById('upload-progress-fill');
-      const _upLabel = _upBar?.querySelector('.upload-progress-label');
-      let _hideTimer = null;
-      const hideBar = (delay = 0) => {
-        if (_upBar) { clearTimeout(_hideTimer); _hideTimer = setTimeout(() => _upBar.classList.add('hidden'), delay); }
-      };
-      if (_upBar) { _upBar.classList.remove('hidden'); if (_upFill) _upFill.style.width = '0%'; if (_upLabel) _upLabel.textContent = `Uploading 0 / ${validFiles.length}…`; }
-      let uploaded = 0;
       try {
-        for (const file of validFiles) {
-          await DB.addAttachment({
-            projectId: pid,
-            uploadedBy: s.userId,
-            fileName: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            documentType,
-            blob: file
-          });
-          await recordProjectActivity({
-            userId: s.userId, projectId: pid, action: 'uploaded', entityType: 'attachment',
-            details: file.name,
-            discordLine: `${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`
-          });
-          uploaded++;
-          if (_upFill) _upFill.style.width = `${Math.round((uploaded / validFiles.length) * 100)}%`;
-          if (_upLabel) _upLabel.textContent = `Uploading ${uploaded} / ${validFiles.length}…`;
-        }
-        if (_upBar) { if (_upFill) _upFill.style.width = '100%'; if (_upLabel) _upLabel.textContent = `Uploaded ${uploaded} file${uploaded !== 1 ? 's' : ''}`; }
+        const { uploaded, failed, errors } = await uploadFilesWithProgress({
+          projectId: pid,
+          files: validFiles,
+          documentType,
+          uploadedBy: s.userId,
+          activity: async (file) => {
+            await recordProjectActivity({
+              userId: s.userId, projectId: pid, action: 'uploaded', entityType: 'attachment',
+              details: file.name,
+              discordLine: `${s.displayName || s.username || 'Someone'} uploaded ${documentType ? documentTypeLabel(documentType).toLowerCase() : 'a file'} "${file.name}" to "${project.name}".`
+            });
+          },
+          onAfterUpload: async () => {
+            await refreshProjectAttachmentsUI(pid);
+          }
+        });
         if (uploaded) showToast(uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`, 'success');
-        await router();
+        if (failed) {
+          const first = errors[0]?.error?.message || 'Unknown error';
+          showToast(failed === 1 ? `Upload error: ${first}` : `${failed} files failed to upload`, 'error');
+        }
       } catch (err) {
         showToast('Upload error: ' + (err?.message || 'Unknown error'), 'error');
-      } finally {
-        hideBar(uploaded > 0 ? 1400 : 0);
+        hideUploadProgress(0);
       }
     });
     setupImport();
@@ -11547,6 +11912,10 @@ async function init() {
     });
     backdrop?.addEventListener('click', closeSidebar);
     document.querySelectorAll('.nav-item').forEach(i => i.addEventListener('click', () => { closeSidebar(); closeUserMenu(); }));
+    document.getElementById('sidebar-collapse-btn')?.addEventListener('click', () => {
+      toggleSidebarCollapsed();
+    });
+    applySidebarCollapsed();
     window.addEventListener('hashchange', closeSidebar);
     window.addEventListener('hashchange', () => { applyRoute(); });
 

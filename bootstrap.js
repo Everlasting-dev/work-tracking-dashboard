@@ -4,8 +4,13 @@
 setTimeout(() => { if (!_splashReady) { _splashReady = true; hideSplash(); } }, 12000);
 
 applyTheme();
+applyUiDensity();
+applySidebarCollapsed();
 document.documentElement.classList.add('splash-lock');
 document.getElementById('splash')?.classList.add('is-visible');
+window.addEventListener('resize', () => {
+  try { syncSidebarDockMetrics(); } catch (_) {}
+});
 
 (async () => {
   try {

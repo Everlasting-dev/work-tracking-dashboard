@@ -1124,7 +1124,7 @@ const LocalDB = {
    * device, so files are fetched on demand instead of downloaded to every PC.
    * Offline / local mode: the blob is stored locally and flagged for upload so
    * the sync engine can push it once the device is back online. */
-  async addAttachment(data) {
+  async addAttachment(data, onProgress) {
     const now = new Date().toISOString();
     const fileName = data.fileName || 'file';
 
@@ -1132,7 +1132,11 @@ const LocalDB = {
     // metadata → project_files. Returns the new project_files row id (uuid).
     if (window.DriveStorage?.enabled?.() && data.blob) {
       const file = new File([data.blob], fileName, { type: data.mimeType || 'application/octet-stream' });
-      const rec = await window.DriveStorage.upload(data.projectId, { file, taskId: data.taskId || null, description: data.documentType || '' });
+      const rec = await window.DriveStorage.upload(
+        data.projectId,
+        { file, taskId: data.taskId || null, description: data.documentType || '' },
+        typeof onProgress === 'function' ? onProgress : null
+      );
       await db.projects.update(data.projectId, { updatedAt: now });
       if (data.uploadedBy) await LocalDB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: rec.id, details: fileName });
       return rec.id;
@@ -1140,6 +1144,7 @@ const LocalDB = {
 
     if (attachmentsCloudReady() && data.blob) {
       try {
+        if (typeof onProgress === 'function') onProgress(0);
         const meta = await window.SupabaseDB.addAttachment(data);
         const rec = {
           id: meta.id,
@@ -1154,12 +1159,14 @@ const LocalDB = {
         };
         await db.attachments.put(rec);
         await db.projects.update(data.projectId, { updatedAt: now });
+        if (typeof onProgress === 'function') onProgress(1);
         return meta.id;
       } catch (err) {
         console.warn('[attachments] cloud upload failed, keeping a local copy to retry:', err);
       }
     }
 
+    if (typeof onProgress === 'function') onProgress(0);
     const id = await db.attachments.add({
       projectId: data.projectId,
       taskId: data.taskId || null,
@@ -1173,6 +1180,7 @@ const LocalDB = {
     });
     await db.projects.update(data.projectId, { updatedAt: now });
     if (data.uploadedBy) await LocalDB.logActivity({ userId: data.uploadedBy, projectId: data.projectId, action: 'uploaded', entityType: 'attachment', entityId: id, details: fileName });
+    if (typeof onProgress === 'function') onProgress(1);
     return id;
   },
 

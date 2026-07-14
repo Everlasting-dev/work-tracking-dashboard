@@ -1,10 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const PKG_VERSION = process.env.npm_package_version || '3.5.3';
+const PKG_VERSION = process.env.npm_package_version || '3.5.5';
 
 contextBridge.exposeInMainWorld('workTrackerDesktop', {
   isDesktop: true,
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
   onUpdateStatus: (callback) => {

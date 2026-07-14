@@ -6,12 +6,14 @@ backup-pre-server.bundle
 config.local.js
 node_modules/
 release/
+release-executive/
 dist/
 out/
 .tools/
 
 # Local data exports / backups
 worktracker-*.json
+rollback-backups/
 node_modules
 release-build/
 release-build2/
