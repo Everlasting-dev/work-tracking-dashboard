@@ -32,6 +32,7 @@ alter table public.wt_users add column if not exists gender text not null defaul
 alter table public.wt_users add column if not exists phone text not null default '';
 alter table public.wt_users add column if not exists address text not null default '';
 alter table public.wt_users add column if not exists hours_logged_total numeric not null default 0;
+alter table public.wt_users add column if not exists hide_score boolean not null default false;
 -- Trophy shelf (earned achievements) + team-map blob emoji decorations, both jsonb arrays.
 alter table public.wt_users add column if not exists trophies jsonb not null default '[]'::jsonb;
 alter table public.wt_users add column if not exists blob_reactions jsonb not null default '[]'::jsonb;

@@ -3,10 +3,6 @@
 (function () {
   const Floating = window.FloatingUIDOM;
   const ICON_TOOLTIP_SELECTOR = [
-    '.sidebar-notif-btn',
-    '.theme-toggle-btn',
-    '.sidebar-action-btn[data-action="toggle-route-settings"]',
-    '.sidebar-action-btn[data-action="toggle-route-admin"]',
     '.notes-dock-launcher',
     '.chat-dock-launcher'
   ].join(',');

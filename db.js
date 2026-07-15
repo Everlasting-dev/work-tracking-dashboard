@@ -974,6 +974,7 @@ const LocalDB = {
       hoursLoggedTotal: Number(data.hoursLoggedTotal || 0),
       avatarBase64: data.avatarBase64 || '',
       color: data.color || '',
+      hideScore: !!data.hideScore,
       mustChangePassword: !!data.mustChangePassword,
       createdAt: now
     });

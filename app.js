@@ -89,7 +89,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.6'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.7'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -451,7 +451,9 @@ function sessionPayload(u) {
     color: u.color || '',
     bio: u.bio || '',
     avatarBase64: u.avatarBase64 || '',
-    avatarDriveId: u.avatarDriveId || null
+    avatarDriveId: u.avatarDriveId || null,
+    hideScore: !!u.hideScore,
+    hideFromTeamMap: !!u.hideFromTeamMap
   };
 }
 function getActiveSession() {
@@ -563,6 +565,8 @@ function mapRestUser(row) {
     bio: row.bio || '',
     avatarBase64: row.avatar_base64 || '',
     avatarDriveId: row.avatar_drive_id || null,
+    hideScore: !!row.hide_score,
+    hideFromTeamMap: !!row.hide_from_team_map,
     lastSeenAt: row.last_seen_at || null,
     lastSeenIp: row.last_seen_ip || null,
     createdAt: row.created_at || new Date().toISOString()
@@ -664,6 +668,9 @@ function loadPersistedWorkspaceCache() {
 }
 
 function resetClientState() {
+  clearInterval(priorityEventPollTimer);
+  priorityEventPollTimer = null;
+  handledPriorityEvents.clear();
   bustWorkspaceCache();
   stopPresenceHeartbeat();
   state.notesSearch = '';
@@ -854,6 +861,56 @@ async function notifyUser({ userId, type, message, projectId = null, entityType 
     }).catch(() => {});
   }
   refreshNotificationBadge().catch(() => {});
+}
+
+async function processPriorityNotification(n = {}) {
+  if (!n || !PRIORITY_EVENT_TYPES.has(n.type)) return false;
+  const notificationKey = n.id != null ? `notification:${n.id}` : `${n.type}:${n.message || ''}`;
+  if (handledPriorityEvents.has(notificationKey)) return true;
+  if (n.type === 'priority_announcement') {
+    const payload = parsePriorityAnnouncementMessage(n.message);
+    const announcementKey = payload.id ? `announcement:${payload.id}` : '';
+    if (announcementKey && handledPriorityEvents.has(announcementKey)) {
+      if (!n.readAt && n.id != null) await DB.markNotificationRead?.(n.id).catch(() => {});
+      return true;
+    }
+    handledPriorityEvents.add(notificationKey);
+    if (announcementKey) handledPriorityEvents.add(announcementKey);
+    NotificationSounds?.play?.('notification');
+    showAnnouncementOverlay(payload);
+    if (!n.readAt && n.id != null) await DB.markNotificationRead?.(n.id).catch(() => {});
+    refreshNotificationBadge().catch(() => {});
+    return true;
+  }
+  handledPriorityEvents.add(notificationKey);
+  if (n.type === 'priority_force_logout') {
+    const reason = n.message || 'You were signed out by an admin.';
+    if (!n.readAt && n.id != null) await DB.markNotificationRead?.(n.id).catch(() => {});
+    showToast(reason, 'warning');
+    setTimeout(() => {
+      performLogout({ reason: 'forced by admin' }).catch(() => {});
+    }, 250);
+    return true;
+  }
+  return false;
+}
+
+async function pollPriorityEventsOnce() {
+  const uid = actorId();
+  if (!uid || !isCloudMode() || isOffline() || !DB.getNotifications) return;
+  const rows = await DB.getNotifications(uid, { unreadOnly: true, limit: 30 }).catch(() => []);
+  for (const n of rows.filter(row => PRIORITY_EVENT_TYPES.has(row.type))) {
+    await processPriorityNotification(n);
+  }
+}
+
+function startPriorityEventPoller() {
+  clearInterval(priorityEventPollTimer);
+  if (!isCloudMode()) return;
+  priorityEventPollTimer = setInterval(() => {
+    pollPriorityEventsOnce().catch(err => console.warn('[priority-events] poll failed', err));
+  }, PRIORITY_EVENT_POLL_MS);
+  setTimeout(() => pollPriorityEventsOnce().catch(() => {}), 1500);
 }
 
 async function notifyNewCoEditors(project, prevEditorIds, nextEditorIds, actorUserId) {
@@ -1205,8 +1262,10 @@ const state = {
   _scrollPositions: {},
   _scrollManagerInstalled: false,
   adminTab: 'overview',
+  settingsTab: 'customize',
   adminBugTab: 'open',
   teamView: localStorage.getItem('wt-team-view-v1') || 'flow',
+  userCardView: localStorage.getItem('wt-user-card-view-v1') || 'full',
   shortcutPrefix: null,
   shortcutPrefixAt: 0
 };
@@ -1237,7 +1296,7 @@ const PERFORMANCE_MODES = {
   },
   'low-power': {
     label: 'Low Power',
-    description: 'No decorative animation, no blur, static workspace surfaces, slower refresh, and no global realtime.',
+    description: 'No decorative animation, no blur, static workspace surfaces, slower refresh, and no global realtime except priority admin alerts.',
     realtime: false,
     blur: false,
     animation: false
@@ -1293,7 +1352,10 @@ const SHORTCUT_DEFAULTS = [
   { id: 'search.focus', category: 'Search', action: 'Focus page search', description: 'Focus the current page search field.', keys: ['/'] },
   { id: 'form.save', category: 'Creation', action: 'Save current form', description: 'Submit the focused form when possible.', keys: ['Mod+S'] },
   { id: 'performance.toggle', category: 'Settings', action: 'Toggle low-power mode', description: 'Switch between Balanced and Low Power.', keys: ['Mod+Shift+P'] },
-  { id: 'notes.toggle', category: 'Creation', action: 'Toggle notes', description: 'Open or close personal notes.', keys: ['Alt+N'] }
+  { id: 'notes.toggle', category: 'Creation', action: 'Toggle notes', description: 'Open or close personal notes.', keys: ['Alt+N'] },
+  { id: 'admin.announce', category: 'Admin', action: 'Send announcement', description: 'Open the admin announcement composer.', keys: ['Mod+Alt+A'], hidden: true },
+  { id: 'nav.admin', category: 'Admin', action: 'Admin', description: 'Open admin tools.', keys: ['G M'], hidden: true },
+  { id: 'users.toggleCompact', category: 'Navigation', action: 'Toggle user mini view', description: 'Switch Users between mini and expanded cards.', keys: ['V U'], hidden: true }
 ];
 
 function loadShortcutOverrides() {
@@ -1381,27 +1443,34 @@ function resetShortcutOverride(id = null) {
 
 function getThemeMode() {
   const saved = localStorage.getItem(THEME_KEY);
-  return saved === 'black' ? 'black' : 'normal';
+  return saved === 'black' || saved === 'ink-invert' ? saved : 'normal';
 }
 
 const DAY_THEME_VARIANTS = {
-  vivid: { label: 'Vivid', description: 'Blue and red accents on a soft cool background.' },
+  arcade: { label: 'Arcade', description: 'Clean green and white workspace with no gradients.' },
   ink: { label: 'Ink', description: 'Pure white surfaces with pure black type and chrome.' }
 };
 
+function normalizeThemeVariant(variant) {
+  if (variant === 'vivid') return 'arcade';
+  return DAY_THEME_VARIANTS[variant] ? variant : 'arcade';
+}
+
 function getThemeVariant() {
   const saved = localStorage.getItem(THEME_VARIANT_KEY);
-  return DAY_THEME_VARIANTS[saved] ? saved : 'vivid';
+  return normalizeThemeVariant(saved);
 }
 
 function applyTheme(mode = getThemeMode(), variant = getThemeVariant()) {
-  const next = mode === 'black' ? 'black' : 'normal';
-  const nextVariant = DAY_THEME_VARIANTS[variant] ? variant : 'vivid';
-  document.body.classList.toggle('theme-black', next === 'black');
-  document.body.classList.toggle('theme-normal', next !== 'black');
+  const next = mode === 'black' || mode === 'ink-invert' ? mode : 'normal';
+  const nextVariant = normalizeThemeVariant(variant);
+  document.body.classList.toggle('theme-black', next === 'black' || next === 'ink-invert');
+  document.body.classList.toggle('theme-ink-invert', next === 'ink-invert');
+  document.body.classList.toggle('theme-normal', next === 'normal');
+  document.body.classList.toggle('theme-day-arcade', next === 'normal' && nextVariant === 'arcade');
   document.body.classList.toggle('theme-day-ink', next === 'normal' && nextVariant === 'ink');
   document.documentElement.dataset.theme = next;
-  if (next === 'black') delete document.documentElement.dataset.themeVariant;
+  if (next !== 'normal') delete document.documentElement.dataset.themeVariant;
   else document.documentElement.dataset.themeVariant = nextVariant;
   localStorage.setItem(THEME_KEY, next);
   localStorage.setItem(THEME_VARIANT_KEY, nextVariant);
@@ -1415,14 +1484,14 @@ function applyTheme(mode = getThemeMode(), variant = getThemeVariant()) {
 }
 
 function setThemeVariant(variant) {
-  const next = DAY_THEME_VARIANTS[variant] ? variant : 'vivid';
+  const next = normalizeThemeVariant(variant);
   applyTheme('normal', next);
   showToast(`Day theme: ${DAY_THEME_VARIANTS[next].label}`, 'success');
   return next;
 }
 
 function toggleThemeMode() {
-  return applyTheme(getThemeMode() === 'black' ? 'normal' : 'black');
+  return applyTheme(getThemeMode() === 'normal' ? 'black' : 'normal');
 }
 
 const UI_DENSITIES = {
@@ -1469,9 +1538,11 @@ function applySidebarCollapsed(collapsed = isSidebarCollapsed()) {
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
   const btn = document.getElementById('sidebar-collapse-btn');
   if (btn) {
+    const label = next ? 'Expand navigation' : 'Collapse navigation';
     btn.setAttribute('aria-pressed', next ? 'true' : 'false');
-    btn.title = next ? 'Expand navigation' : 'Collapse navigation';
-    btn.setAttribute('aria-label', next ? 'Expand navigation' : 'Collapse navigation');
+    btn.dataset.tooltipTitle = label;
+    btn.removeAttribute('title');
+    btn.setAttribute('aria-label', label);
   }
   // Refresh icon tooltips so collapsed nav still has readable labels.
   try { window.WTUi?.refreshIconTooltips?.(); } catch (_) {}
@@ -1481,6 +1552,160 @@ function applySidebarCollapsed(collapsed = isSidebarCollapsed()) {
 function toggleSidebarCollapsed() {
   return applySidebarCollapsed(!isSidebarCollapsed());
 }
+
+const SIDEBAR_TOOLTIP_SELECTOR = '.sidebar-action-btn, .sidebar-collapse-btn, .sidebar-footer-user, .nav-item';
+let iconTooltipState = null;
+
+function iconTooltipEligible(el) {
+  if (!el || !el.matches?.(SIDEBAR_TOOLTIP_SELECTOR)) return false;
+  if (el.classList.contains('nav-item') && !document.body.classList.contains('sidebar-collapsed')) return false;
+  return !!(el.dataset.tooltipTitle || el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent?.trim());
+}
+
+function tooltipAnchorFrom(target) {
+  const el = target?.closest?.(SIDEBAR_TOOLTIP_SELECTOR);
+  return iconTooltipEligible(el) ? el : null;
+}
+
+function tooltipTextFor(anchor) {
+  const title = anchor.dataset.tooltipTitle || anchor.getAttribute('title') || anchor.getAttribute('aria-label') || anchor.textContent?.trim() || '';
+  if (anchor.getAttribute('title')) {
+    anchor.dataset.tooltipTitle = title;
+    anchor.removeAttribute('title');
+  }
+  if (!anchor.getAttribute('aria-label') && title) anchor.setAttribute('aria-label', title);
+  return title.trim();
+}
+
+function ensureIconTooltip() {
+  let tip = document.getElementById('wt-floating-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'wt-floating-tooltip';
+    tip.className = 'wt-floating-tooltip';
+    tip.setAttribute('role', 'tooltip');
+    tip.innerHTML = '<span class="wt-floating-tooltip-label"></span><span class="wt-floating-arrow" data-tooltip-arrow></span>';
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function placeIconTooltip(anchor, tip) {
+  const arrowEl = tip.querySelector('[data-tooltip-arrow]');
+  const floating = window.FloatingUIDOM;
+  const applyFallback = () => {
+    const r = anchor.getBoundingClientRect();
+    tip.style.left = `${Math.min(window.innerWidth - tip.offsetWidth - 8, r.right + 10)}px`;
+    tip.style.top = `${Math.max(8, r.top + (r.height - tip.offsetHeight) / 2)}px`;
+    if (arrowEl) {
+      arrowEl.style.left = '-4px';
+      arrowEl.style.top = `${Math.max(8, tip.offsetHeight / 2 - 4)}px`;
+    }
+  };
+  if (!floating?.computePosition) {
+    applyFallback();
+    return null;
+  }
+  const update = () => floating.computePosition(anchor, tip, {
+    placement: anchor.closest('.sidebar') ? 'right' : 'top',
+    middleware: [
+      floating.offset?.(10),
+      floating.flip?.(),
+      floating.shift?.({ padding: 8 }),
+      arrowEl && floating.arrow ? floating.arrow({ element: arrowEl, padding: 6 }) : null
+    ].filter(Boolean)
+  }).then(({ x, y, placement, middlewareData }) => {
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+    const arrow = middlewareData.arrow || {};
+    if (arrowEl) {
+      arrowEl.style.left = arrow.x != null ? `${arrow.x}px` : '';
+      arrowEl.style.top = arrow.y != null ? `${arrow.y}px` : '';
+      arrowEl.dataset.placement = placement.split('-')[0];
+    }
+  }).catch(applyFallback);
+  update();
+  return floating.autoUpdate ? floating.autoUpdate(anchor, tip, update) : null;
+}
+
+function hideIconTooltip({ immediate = false } = {}) {
+  if (!iconTooltipState) return;
+  clearTimeout(iconTooltipState.hideTimer);
+  const finish = () => {
+    iconTooltipState?.cleanup?.();
+    iconTooltipState = null;
+    document.getElementById('wt-floating-tooltip')?.classList.remove('is-visible');
+  };
+  if (immediate) finish();
+  else iconTooltipState.hideTimer = setTimeout(finish, 90);
+}
+
+function showIconTooltip(anchor) {
+  const text = tooltipTextFor(anchor);
+  if (!text) return;
+  if (iconTooltipState?.anchor === anchor) {
+    clearTimeout(iconTooltipState.hideTimer);
+    return;
+  }
+  hideIconTooltip({ immediate: true });
+  const tip = ensureIconTooltip();
+  tip.querySelector('.wt-floating-tooltip-label').textContent = text;
+  tip.classList.add('is-visible');
+  iconTooltipState = { anchor, hideTimer: null, cleanup: placeIconTooltip(anchor, tip) };
+}
+
+function refreshIconTooltips() {
+  document.querySelectorAll(SIDEBAR_TOOLTIP_SELECTOR).forEach(el => {
+    const title = el.getAttribute('title');
+    if (title) {
+      el.dataset.tooltipTitle = title;
+      el.removeAttribute('title');
+      if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', title);
+    }
+  });
+  if (iconTooltipState?.anchor && !iconTooltipEligible(iconTooltipState.anchor)) {
+    hideIconTooltip({ immediate: true });
+  }
+}
+
+function installIconTooltips() {
+  if (window._wtIconTooltipsInstalled) return;
+  window._wtIconTooltipsInstalled = true;
+  const onOver = (e) => {
+    const anchor = tooltipAnchorFrom(e.target);
+    if (!anchor) return;
+    showIconTooltip(anchor);
+  };
+  const onOut = (e) => {
+    const anchor = iconTooltipState?.anchor;
+    if (!anchor) return;
+    if (e.relatedTarget && anchor.contains(e.relatedTarget)) return;
+    hideIconTooltip();
+  };
+  document.addEventListener('pointerover', onOver, true);
+  document.addEventListener('pointerout', onOut, true);
+  document.addEventListener('focusin', (e) => {
+    const anchor = tooltipAnchorFrom(e.target);
+    if (anchor) showIconTooltip(anchor);
+  }, true);
+  document.addEventListener('focusout', (e) => {
+    const anchor = iconTooltipState?.anchor;
+    if (!anchor || (e.relatedTarget && anchor.contains(e.relatedTarget))) return;
+    hideIconTooltip();
+  }, true);
+  window.addEventListener('scroll', () => hideIconTooltip({ immediate: true }), true);
+  window.addEventListener('resize', () => {
+    refreshIconTooltips();
+    hideIconTooltip({ immediate: true });
+  });
+  refreshIconTooltips();
+}
+
+window.WTUi = {
+  ...(window.WTUi || {}),
+  refreshIconTooltips,
+  hideIconTooltip
+};
 
 const RECOVERY_TTL_MS = 10 * 60 * 1000;
 
@@ -1621,8 +1846,8 @@ async function ensureDriveStorageSession(user, password) {
     }), 3500, null);
   } catch (err) {
     console.warn('[storage] Drive auth session failed:', err?.message || err);
-    recordUserIssue({ level: 'warning', source: 'storage_auth', message: 'Document storage sign-in needs a refresh. Sign out and back in if files do not open.', details: err?.stack || err });
-    showToast('Document storage sign-in needs a refresh. Sign out and back in if files do not open.', 'warning');
+    recordUserIssue({ level: 'warning', source: 'storage_auth', message: 'Document storage sign-in needs a refresh. Use Reconnect storage if files do not open.', details: err?.stack || err });
+    showToast('Document storage sign-in needs a refresh. Use Reconnect storage if files do not open.', 'warning');
     return null;
   }
 }
@@ -1830,6 +2055,7 @@ async function showApp() {
   if (isCloudMode() && window.RealtimeSync && shouldUseRealtime()) {
     RealtimeSync.init(s.userId).catch(() => {});
   }
+  startPriorityEventPoller();
   if (window.SyncEngine) SyncEngine.flush().catch(() => {});
   else DB.flushPendingSync?.().catch(() => {});
   // Push any locally-known users that never made it to Supabase (prevents FK sync errors)
@@ -2114,12 +2340,57 @@ const USER_ISSUE_LOG_LIMIT = 80;
 const STORAGE_AUTH_NOTIFY_KEY = 'wt-storage-auth-last-notify-v1';
 const STORAGE_AUTH_NOTIFY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const STORAGE_AUTH_CHECK_COOLDOWN_MS = 2 * 60 * 1000;
+const PRIORITY_EVENT_POLL_MS = 7000;
+const PRIORITY_EVENT_TYPES = new Set(['priority_announcement', 'priority_force_logout']);
+const PRIORITY_ANNOUNCEMENT_PREFIX = '[orbitrack-announcement] ';
+
+let priorityEventPollTimer = null;
+const handledPriorityEvents = new Set();
+
+function encodePriorityAnnouncement(payload = {}) {
+  return `${PRIORITY_ANNOUNCEMENT_PREFIX}${JSON.stringify({
+    id: payload.id || '',
+    title: payload.title || 'Announcement',
+    message: payload.message || '',
+    fromName: payload.fromName || 'Team',
+    fromUserId: payload.fromUserId || null,
+    createdAt: payload.createdAt || new Date().toISOString()
+  })}`;
+}
+
+function parsePriorityAnnouncementMessage(message = '') {
+  const text = String(message || '');
+  if (!text.startsWith(PRIORITY_ANNOUNCEMENT_PREFIX)) {
+    return { title: 'Announcement', message: text, fromName: 'Team' };
+  }
+  try {
+    const parsed = JSON.parse(text.slice(PRIORITY_ANNOUNCEMENT_PREFIX.length));
+    return { title: parsed.title || 'Announcement', message: parsed.message || '', fromName: parsed.fromName || 'Team', ...parsed };
+  } catch (_) {
+    return { title: 'Announcement', message: text.replace(PRIORITY_ANNOUNCEMENT_PREFIX, ''), fromName: 'Team' };
+  }
+}
+
+function notificationDisplayMessage(n = {}) {
+  if (n.type === 'priority_announcement') {
+    const payload = parsePriorityAnnouncementMessage(n.message);
+    return `${payload.title}: ${payload.message}`.slice(0, 220);
+  }
+  return n.message || '';
+}
+
+function redactSensitiveText(value) {
+  return String(value || '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+    .replace(/\b(access_token|refresh_token|id_token|authorization|apikey|api_key|secret|password|token)\b\s*[:=]\s*["']?[^"',\s}\]]+/gi, '$1=[redacted]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]');
+}
 
 function sanitizeIssueDetails(details) {
   if (details == null) return '';
-  if (typeof details === 'string') return details.slice(0, 1800);
-  try { return JSON.stringify(details, null, 2).slice(0, 1800); }
-  catch (_) { return String(details).slice(0, 1800); }
+  if (typeof details === 'string') return redactSensitiveText(details).slice(0, 1800);
+  try { return redactSensitiveText(JSON.stringify(details, null, 2)).slice(0, 1800); }
+  catch (_) { return redactSensitiveText(details).slice(0, 1800); }
 }
 
 function getUserIssueLog() {
@@ -2136,7 +2407,7 @@ function clearUserIssueLog() {
 }
 
 function recordUserIssue({ level = 'info', source = 'app', message = '', details = null } = {}) {
-  const text = String(message || '').trim();
+  const text = redactSensitiveText(message).trim();
   if (!text) return;
   try {
     const rows = getUserIssueLog();
@@ -2165,6 +2436,21 @@ window.WTDiagnostics = {
   buildReport: buildDiagnosticsText
 };
 
+function rememberStorageAuthFailure(message, code = 'storage_request_failed', details = {}) {
+  const status = {
+    ...(state._storageAuthStatus || {}),
+    ...details,
+    ok: false,
+    code,
+    message: message || 'Document storage authorization has an issue.',
+    checkedAt: new Date().toISOString(),
+  };
+  state._storageAuthStatus = status;
+  state._storageAuthCheckedAt = Date.now();
+  recordUserIssue({ level: 'warning', source: 'storage_auth', message: status.message, details: status });
+  return status;
+}
+
 async function getStorageAuthStatusSafe({ force = false } = {}) {
   const now = Date.now();
   if (!force && state._storageAuthStatus && now - (state._storageAuthCheckedAt || 0) < STORAGE_AUTH_CHECK_COOLDOWN_MS) {
@@ -2185,6 +2471,7 @@ async function getStorageAuthStatusSafe({ force = false } = {}) {
   }
 
   state._storageAuthStatus = {
+    ...(status || {}),
     ok: !!status?.ok,
     code: status?.code || (status?.ok ? 'ok' : 'unknown'),
     message: status?.message || (status?.ok ? 'Document storage authorization is valid.' : 'Document storage authorization has an issue.'),
@@ -2245,22 +2532,22 @@ function renderSyncStatusIndicator() {
   el.classList.remove('hidden');
   if (status.failed) {
     const n = status.failed;
-    el.textContent = n > 1 ? ` ? Sync issue (${n})` : ' ? Sync issue';
+    el.textContent = n > 1 ? ` Sync issue (${n})` : ' Sync issue';
     el.className = 'sync-status-label is-failed is-clickable';
     const errorHint = status.lastError ? `\n${status.lastError.slice(0, 160)}` : '';
-    el.title = `Cloud sync failed ? click for details.${errorHint}`;
+    el.title = `Cloud sync failed. Click for details.${errorHint}`;
     el.setAttribute('aria-label', `${n} failed cloud sync job${n > 1 ? 's' : ''}. Click for details.`);
     return;
   }
   if (offline) {
-    el.textContent = status.pending ? ` ? Offline (${status.pending})` : ' ? Offline';
+    el.textContent = status.pending ? ` Offline (${status.pending})` : ' Offline';
     el.className = 'sync-status-label is-pending is-clickable';
     el.title = 'Offline. Changes are saved locally and will sync when internet returns.';
     el.setAttribute('aria-label', 'Offline. Click for cloud sync details.');
     return;
   }
   if (status.syncing) {
-    el.textContent = status.pending > 1 ? ` ? Syncing (${status.pending})` : ' ? Syncing';
+    el.textContent = status.pending > 1 ? ` Syncing (${status.pending})` : ' Syncing';
     el.className = 'sync-status-label is-pending is-clickable';
     el.title = 'Click for sync queue details';
     el.setAttribute('aria-label', 'Cloud sync in progress. Click for details.');
@@ -2268,13 +2555,13 @@ function renderSyncStatusIndicator() {
   }
   if (!status.pending) {
     const live = window.RealtimeSync?.isConnected?.();
-    el.textContent = live ? ' ? Live' : ' ? Sync';
+    el.textContent = live ? ' Live' : ' Sync';
     el.className = live ? 'sync-status-label is-live is-clickable' : 'sync-status-label is-clickable';
-    el.title = live ? 'Realtime connected ? click to sync now' : 'Sync now';
+    el.title = live ? 'Realtime connected. Click to sync now' : 'Sync now';
     el.setAttribute('aria-label', live ? 'Realtime connected. Click to sync now.' : 'Sync now.');
     return;
   }
-  el.textContent = status.pending === 1 ? ' ? 1 pending sync' : ` ? ${status.pending} pending sync`;
+  el.textContent = status.pending === 1 ? ' 1 pending sync' : ` ${status.pending} pending sync`;
   el.className = 'sync-status-label is-pending is-clickable';
   el.title = 'Click for sync queue details';
   el.setAttribute('aria-label', `${status.pending} change(s) waiting to sync. Click for details.`);
@@ -2305,7 +2592,7 @@ function updateSidebarUser() {
   const footerActions = document.getElementById('sidebar-footer-actions');
   if (footerActions) {
     const bellBtn = `
-        <button type="button" class="sidebar-action-btn sidebar-notif-btn" data-action="toggle-route-notifications" data-nav="notifications" title="Notifications" aria-label="Notifications">
+        <button type="button" class="sidebar-action-btn sidebar-notif-btn" data-action="toggle-route-notifications" data-nav="notifications" data-tooltip-title="Notifications" aria-label="Notifications">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span class="nav-item-badge hidden" id="notif-badge">0</span>
         </button>`;
@@ -2313,26 +2600,27 @@ function updateSidebarUser() {
       ? '<svg class="theme-toggle-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>'
       : '<svg class="theme-toggle-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
     const themeBtn = `
-        <button type="button" class="sidebar-action-btn theme-toggle-btn" data-action="toggle-theme-mode" title="${themeMode === 'black' ? 'Switch to Normal mode' : 'Switch to Black mode'}" aria-label="Switch theme">
+        <button type="button" class="sidebar-action-btn theme-toggle-btn" data-action="toggle-theme-mode" data-tooltip-title="${themeMode === 'black' ? 'Switch to Normal mode' : 'Switch to Black mode'}" aria-label="Switch theme">
           ${themeIcon}
         </button>`;
     const settingsBtn = `
-        <button type="button" class="sidebar-action-btn" data-action="toggle-route-settings" data-nav="settings" title="Settings" aria-label="Settings">
+        <button type="button" class="sidebar-action-btn" data-action="toggle-route-settings" data-nav="settings" data-tooltip-title="Settings" aria-label="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>`;
     const adminBtn = isAdm ? `
-        <button type="button" class="sidebar-action-btn" data-action="toggle-route-admin" data-nav="admin" title="Admin" aria-label="Admin">
+        <button type="button" class="sidebar-action-btn" data-action="toggle-route-admin" data-nav="admin" data-tooltip-title="Admin" aria-label="Admin">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
         </button>` : '';
     footerActions.innerHTML = bellBtn + themeBtn + settingsBtn + adminBtn;
     footerActions.style.display = '';
+    try { window.WTUi?.refreshIconTooltips?.(); } catch (_) {}
   }
   const adminNav  = document.getElementById('nav-admin');
   const dashNav   = document.getElementById('nav-dashboard');
   const reportNav = document.getElementById('nav-reports');
-  if (adminNav)  adminNav.style.display  = isAdm ? '' : 'none';
-  if (dashNav)   dashNav.style.display   = isAdm ? '' : 'none';
-  if (reportNav) reportNav.style.display = isAdm ? '' : 'none';
+  if (adminNav)  adminNav.style.display  = 'none';
+  if (dashNav)   dashNav.style.display   = 'none';
+  if (reportNav) reportNav.style.display = 'none';
   const hash = window.location.hash.slice(1) || '/projects';
   updateNav(hash);
   renderSyncStatusIndicator();
@@ -3883,7 +4171,14 @@ async function openFilePreview(attachmentId, list = null) {
     // Stream from Google Drive through the authenticated backend, into an object
     // URL (revoked on close/next like any blob URL).
     try { url = await window.DriveStorage.objectUrl(item.id, driveImg ? { thumb: true, size: 1280 } : {}); isBlobUrl = true; }
-    catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
+    catch (e) {
+      const message = e.message || 'Could not load file.';
+      if (/document storage authorization|storage sign-in expired|storage session expired/i.test(message)) {
+        rememberStorageAuthFailure(message, message.includes('central Google Drive') ? 'drive_auth_revoked' : 'storage_session_expired', { fileRecordId: item.id });
+      }
+      showToast(message, 'error');
+      return;
+    }
   } else if (item.storagePath && DB.getAttachmentUrl) {
     const directUrl = DB.getAttachmentUrl(item.storagePath);
     if (directUrl) {
@@ -4740,6 +5035,8 @@ async function renderAdminTabbed() {
   }).length;
   const tabs = [
     ['overview', 'Overview'],
+    ['dashboard', 'Dashboard'],
+    ['reports', 'Reports'],
     ['bugs', `Bugs${openBugCount ? ` (${openBugCount})` : ''}`],
     ['users', `Users (${users.length})`],
     ['workspace', 'Workspace'],
@@ -4812,10 +5109,14 @@ async function renderAdminTabbed() {
         const who = uMap[r.userId];
         const st = r.status || 'open';
         const resolved = resolvedBugStatuses.has(st);
-        return `<div class="bug-report-row ${resolved ? 'bug-report-row--resolved' : ''}">
+        return `<details class="bug-report-row bug-report-row--collapsed ${resolved ? 'bug-report-row--resolved' : ''}">
+          <summary class="bug-report-summary">
+            <span class="bug-report-summary-title">${esc(r.title || r.message || 'Untitled report')}</span>
+            <span class="bug-report-summary-meta">${esc(who?.displayName || who?.username || 'Unknown')} &middot; ${esc(formatDateShort(r.createdAt) || timeAgo(r.createdAt))} &middot; ${esc(r.severity || r.kind || 'normal')}</span>
+            ${badge(bugStatus.find(s => s[0] === st)?.[1] || st, resolved ? 'green' : 'amber')}
+          </summary>
           <div class="bug-report-main">
-            <div class="bug-report-titleline"><strong>${esc(r.title || r.message || 'Untitled report')}</strong>${badge(bugStatus.find(s => s[0] === st)?.[1] || st, resolved ? 'green' : 'amber')}</div>
-            <span>${esc(r.description || r.message || '')}</span>
+            <span class="bug-report-description">${esc(r.description || r.message || '')}</span>
             ${r.screenshots?.length ? `<div class="bug-report-thumbs">${r.screenshots.slice(0, 3).map(img => `<img src="${esc(img.dataUrl)}" alt="${esc(img.name || 'screenshot')}">`).join('')}</div>` : ''}
             <small>${esc(who?.displayName || who?.username || 'Unknown')} ? ${esc(r.severity || r.kind || 'normal')} ? v${esc(r.appVersion || '?')} ? ${timeAgo(r.createdAt)}</small>
             <form data-form="update-bug-report" data-bug-id="${r.id}" class="bug-report-manage">
@@ -4825,7 +5126,7 @@ async function renderAdminTabbed() {
               <button type="submit" class="btn btn-sm btn-primary">Update</button>
             </form>
           </div>
-        </div>`;
+        </details>`;
       }).join('') : `<p class="text-muted text-sm" style="padding:16px 20px">No ${activeBugTab === 'fixed' ? 'fixed' : 'open'} bug reports.</p>`}
     </div>
   </section>`;
@@ -4901,7 +5202,19 @@ async function renderAdminTabbed() {
       </div>
     </section>
   </div>`;
-  const body = active === 'bugs' ? bugsHtml : active === 'users' ? usersHtml : active === 'workspace' ? workspaceHtml : active === 'data' ? dataHtml : overviewHtml;
+  const body = active === 'dashboard'
+    ? await renderAdminDashboard({ embedded: true })
+    : active === 'reports'
+      ? await renderReportsPage({ embedded: true })
+      : active === 'bugs'
+        ? bugsHtml
+        : active === 'users'
+          ? usersHtml
+          : active === 'workspace'
+            ? workspaceHtml
+            : active === 'data'
+              ? dataHtml
+              : overviewHtml;
   content.innerHTML = `
     <div class="admin-sticky-head">
       <div class="view-header admin-suite-header">
@@ -4914,25 +5227,56 @@ async function renderAdminTabbed() {
       ${tabsHtml}
     </div>
     ${body}`;
+  if (active === 'dashboard') mountDashboardQuickNote(window._pendingDashQuickNote || null);
+}
+
+function settingsVisualRangeHtml({ kind, current, options }) {
+  const index = Math.max(0, options.findIndex(opt => opt.key === current));
+  const value = index < 0 ? 0 : index;
+  const left = kind === 'performance' ? '&#9711;' : 'S';
+  const right = kind === 'performance' ? '&#9889;' : 'L';
+  return `<div class="settings-visual-range settings-visual-range--compact" data-settings-visual="${esc(kind)}">
+    <div class="settings-range-labels" aria-hidden="true">
+      <span>${left}</span>
+      <strong>${esc(options[value]?.label || current)}</strong>
+      <span>${right}</span>
+    </div>
+    <div class="settings-visual-track">
+      <input type="range" min="0" max="${options.length - 1}" step="1" value="${value}" data-settings-range="${esc(kind)}" aria-label="${esc(kind)} setting">
+    </div>
+    <div class="settings-range-ticks" aria-hidden="true">
+      ${options.map((opt, idx) => `<i class="${idx === value ? 'active' : ''}"></i>`).join('')}
+    </div>
+  </div>`;
 }
 
 function renderAppearanceSettingsHtml() {
   const mode = getThemeMode();
   const variant = getThemeVariant();
   const density = getUiDensity();
+  const themeLabel = mode === 'black' ? 'Black' : mode === 'ink-invert' ? 'Ink Invert' : (DAY_THEME_VARIANTS[variant]?.label || 'Day');
+  const densityOptions = [
+    { key: 'comfortable', label: UI_DENSITIES.comfortable.label },
+    { key: 'compact', label: UI_DENSITIES.compact.label },
+    { key: 'tiny', label: UI_DENSITIES.tiny.label }
+  ];
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
       <div>
         <h2>Theme</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Choose how Orbitrack looks on this device.</p>
       </div>
-      ${badge(mode === 'black' ? 'Black' : DAY_THEME_VARIANTS[variant]?.label || 'Day', mode === 'black' ? 'muted' : 'blue')}
+      ${badge(themeLabel, mode === 'normal' ? 'blue' : 'muted')}
     </div>
     <div class="section-body settings-performance-grid">
       <button type="button" class="settings-performance-option ${mode === 'black' ? 'active' : ''}" data-action="set-theme-mode" data-mode="black">
         <strong>Black</strong>
         <span>Dark workspace with high-contrast chrome.</span>
         <small>Night mode</small>
+      </button>
+      <button type="button" class="settings-performance-option ${mode === 'ink-invert' ? 'active' : ''}" data-action="set-theme-mode" data-mode="ink-invert">
+        <strong>Ink Invert</strong>
+        <span>Full black surfaces with white text, lines, and controls.</span>
+        <small>Pure contrast</small>
       </button>
       ${Object.entries(DAY_THEME_VARIANTS).map(([key, meta]) => `<button type="button" class="settings-performance-option ${mode === 'normal' && variant === key ? 'active' : ''}" data-action="set-theme-variant" data-variant="${esc(key)}">
         <strong>${esc(meta.label)}</strong>
@@ -4943,35 +5287,31 @@ function renderAppearanceSettingsHtml() {
     <div class="section-header" style="border-top:1px solid var(--border-light)">
       <div>
         <h2>View orientation</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Scale project cards and boards to fit how you work.</p>
       </div>
       ${badge(UI_DENSITIES[density].label, 'purple')}
     </div>
-    <div class="section-body settings-performance-grid">
-      ${Object.entries(UI_DENSITIES).map(([key, meta]) => `<button type="button" class="settings-performance-option ${density === key ? 'active' : ''}" data-action="set-ui-density" data-density="${esc(key)}">
-        <strong>${esc(meta.label)}</strong>
-        <span>${esc(meta.description)}</span>
-      </button>`).join('')}
+    <div class="section-body">
+      ${settingsVisualRangeHtml({ kind: 'density', current: density, options: densityOptions })}
     </div>
   </section>`;
 }
 
 function renderPerformanceSettingsHtml({ compact = false } = {}) {
   const current = getPerformanceMode();
+  const performanceOptions = [
+    { key: 'low-power', label: PERFORMANCE_MODES['low-power'].label },
+    { key: 'balanced', label: PERFORMANCE_MODES.balanced.label },
+    { key: 'full', label: PERFORMANCE_MODES.full.label }
+  ];
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
       <div>
         <h2>Performance</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">Control animation, blur, realtime, and background activity on this device.</p>
       </div>
       ${badge(PERFORMANCE_MODES[current].label, current === 'low-power' ? 'amber' : current === 'full' ? 'purple' : 'green')}
     </div>
-    <div class="section-body settings-performance-grid">
-      ${Object.entries(PERFORMANCE_MODES).map(([key, mode]) => `<button type="button" class="settings-performance-option ${key === current ? 'active' : ''}" data-action="set-performance-mode" data-mode="${esc(key)}">
-        <strong>${esc(mode.label)}</strong>
-        <span>${esc(mode.description)}</span>
-        <small>${mode.realtime ? 'Realtime on' : 'Realtime quiet'} ? ${mode.animation ? 'Motion on' : 'Static UI'} ? ${mode.blur ? 'Blur on' : 'No blur'}</small>
-      </button>`).join('')}
+    <div class="section-body">
+      ${settingsVisualRangeHtml({ kind: 'performance', current, options: performanceOptions })}
     </div>
     ${compact ? '' : '<p class="text-muted text-sm" style="padding:0 20px 18px">Low Power also pauses the global realtime channel. Critical changes still sync on manual refresh and normal background pulls.</p>'}
   </section>`;
@@ -4979,7 +5319,7 @@ function renderPerformanceSettingsHtml({ compact = false } = {}) {
 
 function renderShortcutSettingsHtml({ readonly = false } = {}) {
   const conflicts = shortcutConflicts();
-  const rows = SHORTCUT_DEFAULTS.map(def => {
+  const rows = SHORTCUT_DEFAULTS.filter(def => !def.hidden).map(def => {
     const pref = shortcutPref(def.id);
     const hasConflict = conflicts.has(def.id);
     return `<tr>
@@ -5020,25 +5360,146 @@ function renderShortcutSettingsHtml({ readonly = false } = {}) {
   </section>`;
 }
 
+function settingsTabsHtml(active) {
+  const tabs = [
+    ['customize', 'Customize'],
+    ['support', 'Support'],
+    ['diagnostics', 'Diagnostics'],
+    ['shortcuts', 'Shortcuts'],
+  ];
+  if (isAdmin()) tabs.push(['workspace', 'Workspace']);
+  return `<div class="tab-bar settings-tab-bar">
+    ${tabs.map(([key, label]) => `<button type="button" class="tab-btn ${active === key ? 'active' : ''}" data-action="settings-tab" data-tab="${key}">${label}</button>`).join('')}
+  </div>`;
+}
+
+function normalizeSettingsTab(tab) {
+  const allowed = new Set(['customize', 'support', 'diagnostics', 'shortcuts']);
+  if (isAdmin()) allowed.add('workspace');
+  return allowed.has(tab) ? tab : 'customize';
+}
+
+function settingsShellHtml({ active, title = 'Settings', subtitle = 'Customize this device and get support.', body }) {
+  return `
+    <div class="view-header">
+      <div><h1>${esc(title)}</h1><p class="view-subtitle">${esc(subtitle)}</p></div>
+    </div>
+    ${settingsTabsHtml(active)}
+    ${body}`;
+}
+
+function renderCustomizeSettingsHtml() {
+  return `
+    <div class="settings-cute-strip"><span>Theme</span><span>Size</span><span>Speed</span></div>
+    ${renderAppearanceSettingsHtml()}
+    ${renderPerformanceSettingsHtml({ compact: true })}`;
+}
+
+async function renderDiagnosticsSettingsHtml() {
+  const auth = await getStorageAuthStatusSafe();
+  const syncStatus = _getSyncStatus();
+  const jobs = getSyncQueueDetails();
+  const issues = getUserIssueLog();
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+  const failedJobs = jobs.filter(j => j.lastError || j.status === 'failed');
+  const storageHealthPending = auth.code === 'health_check_unavailable';
+  const storageBadgeLabel = auth.ok ? 'Authorized' : storageHealthPending ? 'Session valid' : 'Not authorized';
+  const storageBadgeTone = auth.ok ? 'green' : storageHealthPending ? 'amber' : 'red';
+  const issuePreview = issues.slice(0, 5).map(issue => `
+    <article class="diagnostics-issue diagnostics-issue--${esc(issue.level || 'info')}">
+      <div class="diagnostics-issue-head"><strong>${esc(issue.message || 'Issue')}</strong>${issueLevelBadge(issue.level)}</div>
+      <p class="text-muted text-sm">${esc(issue.source || 'app')} &middot; ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} &middot; ${esc(issue.route || 'no route')}</p>
+      ${issue.details ? `<pre class="sync-diag-payload">${esc(issue.details)}</pre>` : ''}
+    </article>`).join('') || '<p class="text-secondary text-sm">No warnings or errors have been shown to this user yet.</p>';
+
+  return `<div class="diagnostics-grid settings-diagnostics-grid">
+    <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
+      <div class="dash-panel-head"><h3>Document storage</h3>${badge(storageBadgeLabel, storageBadgeTone)}</div>
+      <p class="diagnostics-big">${esc(auth.message || '')}</p>
+      <dl class="diagnostics-meta">
+        <div><dt>Provider</dt><dd>${window.DriveStorage?.enabled?.() ? 'Google Drive' : 'Default / local'}</dd></div>
+        <div><dt>Status code</dt><dd>${esc(auth.code || 'unknown')}</dd></div>
+        <div><dt>Auth session</dt><dd>${auth.hasSession ? 'Present' : 'Missing'}</dd></div>
+        <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched' : 'Mismatch') : 'Not linked'}</dd></div>
+        ${auth.centralStorageOk != null ? `<div><dt>Central Drive</dt><dd>${auth.centralStorageOk ? 'Reachable' : 'Needs reconnect'}</dd></div>` : ''}
+        ${auth.rootFolderName ? `<div><dt>Drive folder</dt><dd>${esc(auth.rootFolderName)}</dd></div>` : ''}
+      </dl>
+      <div class="diagnostics-actions diagnostics-actions-inline">
+        <button type="button" class="btn btn-primary btn-sm storage-reconnect-btn" data-action="reconnect-storage">${ICONS.refresh} Reconnect storage</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="check-storage-auth">${ICONS.refresh} Re-check</button>
+      </div>
+    </section>
+    <section class="dash-panel diagnostics-card diagnostics-card--${syncStatus.failed ? 'warn' : 'ok'}">
+      <div class="dash-panel-head"><h3>Cloud sync</h3>${badge(syncStatus.failed ? 'Issue' : 'Ready', syncStatus.failed ? 'red' : 'green')}</div>
+      <div class="diagnostics-kpis">
+        <span><strong>${Number(syncStatus.pending || 0)}</strong><small>Pending</small></span>
+        <span><strong>${Number(syncStatus.failed || 0)}</strong><small>Failed</small></span>
+        <span><strong>${syncStatus.syncing ? 'Yes' : 'No'}</strong><small>Syncing</small></span>
+      </div>
+      ${syncStatus.lastError ? `<pre class="sync-diag-error">${esc(syncStatus.lastError)}</pre>` : '<p class="text-muted text-sm">No current sync error.</p>'}
+    </section>
+    <section class="dash-panel diagnostics-card">
+      <div class="dash-panel-head"><h3>Environment</h3>${badge(online ? 'Online' : 'Offline', online ? 'green' : 'amber')}</div>
+      <dl class="diagnostics-meta">
+        <div><dt>App version</dt><dd>v${esc(getAppVersion())}</dd></div>
+        <div><dt>Build</dt><dd>${window.workTrackerDesktop?.isDesktop ? 'Desktop (Electron)' : 'Web'}</dd></div>
+        <div><dt>Cloud mode</dt><dd>${isCloudMode() ? 'On' : 'Off (local only)'}</dd></div>
+      </dl>
+      <div class="diagnostics-actions diagnostics-actions-inline">
+        <button type="button" class="btn btn-ghost btn-sm" data-action="diagnostics-copy">${ICONS.file} Copy report</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="diagnostics-report">${ICONS.send || ''} Send to admin</button>
+      </div>
+    </section>
+    <section class="dash-panel diagnostics-card diagnostics-card--${failedJobs.length || issues.length ? 'warn' : 'ok'}">
+      <div class="dash-panel-head"><h3>Issue log</h3>${badge(String(issues.length), issues.length ? 'amber' : 'green')}</div>
+      <div class="diagnostics-issue-list">${issuePreview}</div>
+      <div class="diagnostics-actions diagnostics-actions-inline">
+        <button type="button" class="btn btn-ghost btn-sm" data-action="diagnostics-clear"${issues.length ? '' : ' disabled'}>${ICONS.trash} Clear log</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="open-sync-diagnostics">${ICONS.refresh} Sync modal</button>
+      </div>
+    </section>
+  </div>`;
+}
+
 async function renderPersonalSettings() {
   const content = document.getElementById('content');
   if (!content) return;
-  content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Settings</h1><p class="view-subtitle">Personal look, view size, and shortcut reference for this device.</p></div>
-    </div>
-    <div class="settings-category-grid">
-      <div class="settings-category-card"><strong>Theme</strong><span>Black, Vivid, or Ink day themes.</span></div>
-      <div class="settings-category-card"><strong>View orientation</strong><span>Comfortable, Compact, or Tiny boards.</span></div>
-      <div class="settings-category-card"><strong>Shortcuts</strong><span>View keyboard shortcuts (read-only).</span></div>
-    </div>
-    ${renderAppearanceSettingsHtml()}
-    ${renderShortcutSettingsHtml({ readonly: true })}`;
+  const active = normalizeSettingsTab(state.settingsTab || 'customize');
+  state.settingsTab = active;
+  let body = renderCustomizeSettingsHtml();
+  let subtitle = 'Personal look, view size, and support tools.';
+  if (active === 'support') body = renderSupportSettingsHtml();
+  else if (active === 'diagnostics') {
+    body = await renderDiagnosticsSettingsHtml();
+    subtitle = 'Storage, sync, and app health on this device.';
+  } else if (active === 'shortcuts') {
+    body = renderShortcutSettingsHtml({ readonly: true });
+    subtitle = 'Keyboard shortcut reference for this device.';
+  }
+  content.innerHTML = settingsShellHtml({ active, subtitle, body });
 }
 
 async function renderSettings() {
   if (!isAdmin()) { await renderPersonalSettings(); return; }
   const content = document.getElementById('content');
+  const active = normalizeSettingsTab(state.settingsTab || 'customize');
+  state.settingsTab = active;
+  if (active === 'customize') {
+    content.innerHTML = settingsShellHtml({ active, subtitle: 'Personal look, card size, and performance for this device.', body: renderCustomizeSettingsHtml() });
+    return;
+  }
+  if (active === 'support') {
+    content.innerHTML = settingsShellHtml({ active, subtitle: 'Help, updates, reports, and app information.', body: renderSupportSettingsHtml() });
+    return;
+  }
+  if (active === 'diagnostics') {
+    content.innerHTML = settingsShellHtml({ active, subtitle: 'Storage, sync, and app health on this device.', body: await renderDiagnosticsSettingsHtml() });
+    return;
+  }
+  if (active === 'shortcuts') {
+    content.innerHTML = settingsShellHtml({ active, subtitle: 'Local command and navigation shortcuts.', body: renderShortcutSettingsHtml() });
+    return;
+  }
   await ensureDepartmentCfg();
   const [{ users, projects }, departments, classrooms, workflowTemplates] = await Promise.all([
     getWorkspaceData(),
@@ -5138,19 +5599,7 @@ async function renderSettings() {
       </div>
     </section>`;
 
-  content.innerHTML = `
-    <div class="view-header">
-      <div><h1>Settings</h1><p class="view-subtitle">Workspace configuration, shortcuts, and performance.</p></div>
-    </div>
-    <div class="settings-category-grid">
-      <div class="settings-category-card"><strong>General</strong><span>Workspace, classroom, and department defaults.</span></div>
-      <div class="settings-category-card"><strong>Shortcuts</strong><span>Local command and navigation shortcuts.</span></div>
-      <div class="settings-category-card"><strong>Performance</strong><span>Full, Balanced, and Low Power modes.</span></div>
-      <div class="settings-category-card"><strong>Administration</strong><span>Users, visibility, templates, and data tools.</span></div>
-    </div>
-    ${renderAppearanceSettingsHtml()}
-    ${renderPerformanceSettingsHtml({ compact: true })}
-    ${renderShortcutSettingsHtml()}
+  const workspaceBody = `
     <section class="section-card" style="margin-bottom:24px">
       <div class="section-header">
         <div>
@@ -5224,12 +5673,30 @@ async function renderSettings() {
         <button class="btn btn-ghost btn-danger-text" data-action="reset-sample-data">${ICONS.trash} Reset to Sample Data</button>
       </div>
     </section>`;
+  content.innerHTML = settingsShellHtml({
+    active,
+    subtitle: 'Workspace setup, classrooms, visibility, templates, and data tools.',
+    body: workspaceBody
+  });
 }
 
 /* ???? Admin Dashboard ???? */
 
-async function renderAdminDashboard() {
-  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+function mountDashboardQuickNote(quickNote) {
+  if (quickNote && window.WTNotes?.mountEditor) {
+    const el = document.getElementById('dash-quick-note');
+    if (el) {
+      try { window._dashNoteHandle?.unmount?.(); } catch (_) {}
+      window._dashNoteHandle = window.WTNotes.mountEditor(el, quickNote.content || '', (html) => {
+        clearTimeout(window._dashNoteTimer);
+        window._dashNoteTimer = setTimeout(() => { DB.updatePersonalNote?.(Number(quickNote.id), { content: html }); }, 500);
+      });
+    }
+  }
+}
+
+async function renderAdminDashboard({ embedded = false } = {}) {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return ''; }
   const content = document.getElementById('content');
   const { users, projects, tasks } = await getWorkspaceData();
   const log = await DB.getActivityLog({ limit: 25 });
@@ -5242,6 +5709,7 @@ async function renderAdminDashboard() {
   const projectByOwner = projects.reduce((m, p) => { m[p.ownerId] = (m[p.ownerId] || 0) + 1; return m; }, {});
   const tasksByAssignee = tasks.reduce((m, t) => { if (t.assigneeId != null) m[t.assigneeId] = (m[t.assigneeId] || 0) + 1; return m; }, {});
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const scoreViewer = users.find(u => Number(u.id) === Number(actorId())) || getSession();
   const sessionsByUser = sessions.reduce((m, row) => { (m[row.userId] ||= []).push(row); return m; }, {});
 
   const sp = (icon, val, label, sub, color) => `
@@ -5300,9 +5768,13 @@ async function renderAdminDashboard() {
   ];
   const topContributors = users
     .map(u => ({ user: u, stats: userProfileStats(u, projects, tasks) }))
-    .sort((a, b) => b.stats.score - a.stats.score)
+    .sort((a, b) => {
+      if (canSeeScore(a.user, scoreViewer) && canSeeScore(b.user, scoreViewer)) return b.stats.score - a.stats.score;
+      return String(a.user.displayName || a.user.username || '').localeCompare(String(b.user.displayName || b.user.username || ''));
+    })
     .slice(0, 5);
-  const maxContributorScore = Math.max(1, ...topContributors.map(r => r.stats.score));
+  const visibleContributorScores = topContributors.filter(r => canSeeScore(r.user, scoreViewer)).map(r => r.stats.score);
+  const maxContributorScore = Math.max(1, ...visibleContributorScores);
 
   // ?? Dashboard tool widgets: brainstorm tile, weekly metrics, quick note ??
   const within7 = (iso) => iso && (now - new Date(iso).getTime() < sevenDays);
@@ -5315,7 +5787,7 @@ async function renderAdminDashboard() {
     quickNote = myNotes.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
   } catch (_) {}
 
-  content.innerHTML = `
+  const dashboardHtml = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Dashboard</h1><span class="projects-page-count">Admin</span></div>
     </div>
@@ -5362,8 +5834,8 @@ async function renderAdminDashboard() {
         <div class="dash-bars">
           ${topContributors.map(({ user, stats }) => `<div class="dash-bar-row dash-bar-row-user">
             <span>${esc(user.displayName || user.username)}</span>
-            <div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill--purple" style="width:${Math.max(5, Math.round((stats.score / maxContributorScore) * 100))}%"></div></div>
-            <strong class="rank-label">${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}</strong>
+            <div class="dash-bar-track ${canSeeScore(user, scoreViewer) ? '' : 'dash-bar-track--hidden'}"><div class="dash-bar-fill dash-bar-fill--purple" style="width:${canSeeScore(user, scoreViewer) ? Math.max(5, Math.round((stats.score / maxContributorScore) * 100)) : 100}%"></div></div>
+            <strong class="rank-label">${canSeeScore(user, scoreViewer) ? `${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}` : scoreHtml(user, stats, scoreViewer)}</strong>
           </div>`).join('') || '<p class="text-muted text-sm">No ranked activity yet.</p>'}
         </div>
       </div>
@@ -5404,18 +5876,15 @@ async function renderAdminDashboard() {
         </div>` : ''}
       </div>
     </div>`;
+  if (embedded) {
+    window._pendingDashQuickNote = quickNote || null;
+    return dashboardHtml;
+  }
+  if (!content) return '';
+  content.innerHTML = dashboardHtml;
 
   // Mount the inline quick-note editor (same reliable editor as the notes panel).
-  if (quickNote && window.WTNotes?.mountEditor) {
-    const el = document.getElementById('dash-quick-note');
-    if (el) {
-      try { window._dashNoteHandle?.unmount?.(); } catch (_) {}
-      window._dashNoteHandle = window.WTNotes.mountEditor(el, quickNote.content || '', (html) => {
-        clearTimeout(window._dashNoteTimer);
-        window._dashNoteTimer = setTimeout(() => { DB.updatePersonalNote?.(Number(quickNote.id), { content: html }); }, 500);
-      });
-    }
-  }
+  mountDashboardQuickNote(quickNote);
 }
 
 /* ???? Notifications dropdown ???? */
@@ -5481,8 +5950,8 @@ function renderMonthlyReportTable(rows, { showOwner = false, showDepartment = fa
   </table></div>`;
 }
 
-async function renderReportsPage() {
-  if (!isAdmin()) { window.location.hash = '#/projects'; return; }
+async function renderReportsPage({ embedded = false } = {}) {
+  if (!isAdmin()) { window.location.hash = '#/projects'; return ''; }
   const content = document.getElementById('content');
   const { users, projects, tasks } = await getWorkspaceData();
   const { rows, label, safe } = buildMonthlyReportRows(projects, tasks, users, state.reportMonth);
@@ -5538,7 +6007,7 @@ async function renderReportsPage() {
     .filter(Boolean)
     .join('');
 
-  content.innerHTML = `
+  const reportsHtml = `
     <div class="view-header">
       <div><h1>Monthly Reports</h1><p class="view-subtitle">Start, completion, and live status snapshots for ${esc(label)}</p></div>
       <div class="view-actions">
@@ -5564,6 +6033,9 @@ async function renderReportsPage() {
       <div class="section-header"><h2>Departments</h2></div>
       <div class="section-body report-stack">${departmentSections || `<p class="text-muted text-sm">No departmental report data for ${esc(label)} yet.</p>`}</div>
     </section>`;
+  if (embedded) return reportsHtml;
+  if (!content) return '';
+  content.innerHTML = reportsHtml;
 }
 
 async function exportMonthlyReportPdf() {
@@ -5725,8 +6197,15 @@ async function refreshNotificationBadge() {
     for (const id of ['notif-badge', 'mobile-notif-badge']) {
       const badge = document.getElementById(id);
       if (!badge) continue;
-      if (count > 0) { badge.textContent = label; badge.classList.remove('hidden'); }
-      else { badge.classList.add('hidden'); }
+      if (count > 0) {
+        badge.textContent = label;
+        badge.classList.remove('hidden');
+        badge.setAttribute('aria-label', `${count} unread notification${count === 1 ? '' : 's'}`);
+      } else {
+        badge.textContent = '';
+        badge.classList.add('hidden');
+        badge.removeAttribute('aria-label');
+      }
     }
   } catch (_) {}
 }
@@ -5749,7 +6228,7 @@ async function renderNotificationPanel() {
           return `<li><button type="button" class="notif-item ${n.readAt ? '' : 'unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-dot"></span>
             <span class="notif-body">
-              <span class="notif-msg">${esc(n.message)}</span>
+              <span class="notif-msg">${esc(notificationDisplayMessage(n))}</span>
               <span class="notif-meta">${timeAgo(n.createdAt)}</span>
             </span>
           </button></li>`;
@@ -5787,9 +6266,10 @@ async function showBugReportStatusModal(bugId) {
 
 function notifButtonAttrs(n) {
   const href = n.projectId ? `#/projects/${n.projectId}` : '#/projects';
+  const type = n.type ? ` data-type="${esc(n.type)}"` : '';
   const entityType = n.entityType ? ` data-entity-type="${esc(n.entityType)}"` : '';
   const entityId = n.entityId != null ? ` data-entity-id="${n.entityId}"` : '';
-  return `data-action="notif-open" data-id="${n.id}" data-href="${href}"${entityType}${entityId}`;
+  return `data-action="notif-open" data-id="${n.id}" data-href="${href}"${type}${entityType}${entityId}`;
 }
 
 async function renderNotificationsPage() {
@@ -5797,7 +6277,7 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
-  const TYPE_ICON = { assignment: '??', task_done: '?', mention: '??', update: '??', access_request: '??', access_approved: '?', access_declined: '?', bug_report: '??', project_completed: '??' };
+  const TYPE_ICON = { assignment: '??', task_done: '?', mention: '??', update: '??', access_request: '??', access_approved: '?', access_declined: '?', bug_report: '??', project_completed: '??', priority_announcement: '!!', priority_force_logout: '!!' };
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` ? ${unread} unread` : ''}</span></div>
@@ -5810,7 +6290,7 @@ async function renderNotificationsPage() {
           return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-page-icon">${icon}</span>
             <div class="notif-page-body">
-              <span class="notif-page-msg">${esc(n.message)}</span>
+              <span class="notif-page-msg">${esc(notificationDisplayMessage(n))}</span>
               <span class="notif-page-time">${timeAgo(n.createdAt)}</span>
             </div>
             ${!n.readAt ? '<span class="notif-unread-dot"></span>' : ''}
@@ -5892,7 +6372,13 @@ async function buildDiagnosticsText({ forceAuth = false } = {}) {
     lines.push('No visible issues captured.');
   }
 
-  return lines.join('\n');
+  return redactSensitiveText(lines.join('\n'));
+}
+
+async function rerenderDiagnosticsSurface() {
+  const route = (window.location.hash || '').slice(1);
+  if (route === '/settings' && state.settingsTab === 'diagnostics') await renderSettings();
+  else if (route === '/diagnostics') await renderDiagnosticsPage();
 }
 
 async function fileDiagnosticsReport(description) {
@@ -5932,6 +6418,9 @@ async function renderDiagnosticsPage() {
   const issues = getUserIssueLog();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
   const failedJobs = jobs.filter(j => j.lastError || j.status === 'failed');
+  const storageHealthPending = auth.code === 'health_check_unavailable';
+  const storageBadgeLabel = auth.ok ? 'Authorized' : storageHealthPending ? 'Session valid' : 'Not authorized';
+  const storageBadgeTone = auth.ok ? 'green' : storageHealthPending ? 'amber' : 'red';
 
   const jobsHtml = jobs.length ? jobs.map((j, i) => `
     <article class="sync-diag-row sync-diag-row--${esc(j.status || 'pending')}">
@@ -5951,7 +6440,7 @@ async function renderDiagnosticsPage() {
         <strong>${esc(issue.message || 'Issue')}</strong>
         ${issueLevelBadge(issue.level)}
       </div>
-      <p class="text-muted text-sm">${esc(issue.source || 'app')} ? ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} ? ${esc(issue.route || 'no route')}</p>
+      <p class="text-muted text-sm">${esc(issue.source || 'app')} &middot; ${issue.at ? esc(timeAgo(issue.at)) : 'unknown time'} &middot; ${esc(issue.route || 'no route')}</p>
       ${issue.details ? `<pre class="sync-diag-payload">${esc(issue.details)}</pre>` : ''}
     </article>`).join('')
     : '<p class="text-secondary text-sm">No warnings or errors have been shown to this user yet.</p>';
@@ -5961,10 +6450,10 @@ async function renderDiagnosticsPage() {
       <div class="projects-page-header diagnostics-page-header">
         <div class="projects-page-title">
           <h1>Diagnostics</h1>
-          <span class="projects-page-count">v${esc(getAppVersion())} ? ${online ? 'Online' : 'Offline'}</span>
+          <span class="projects-page-count">v${esc(getAppVersion())} &middot; ${online ? 'Online' : 'Offline'}</span>
         </div>
         <div class="diagnostics-actions">
-          <button type="button" class="btn btn-primary" data-action="reconnect-storage">${ICONS.refresh} Reconnect storage</button>
+          <button type="button" class="btn btn-primary storage-reconnect-btn" data-action="reconnect-storage">${ICONS.refresh} Reconnect storage</button>
           <button type="button" class="btn btn-ghost" data-action="check-storage-auth">${ICONS.refresh} Re-check</button>
           <button type="button" class="btn btn-ghost" data-action="diagnostics-copy">${ICONS.file} Copy report</button>
           <button type="button" class="btn btn-ghost" data-action="diagnostics-report">${ICONS.send || ''} Send to admin</button>
@@ -5972,18 +6461,19 @@ async function renderDiagnosticsPage() {
       </div>
       <div class="diagnostics-grid">
         <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
-          <div class="dash-panel-head"><h3>Document storage</h3>${badge(auth.ok ? 'Authorized' : 'Not authorized', auth.ok ? 'green' : 'red')}</div>
+          <div class="dash-panel-head"><h3>Document storage</h3>${badge(storageBadgeLabel, storageBadgeTone)}</div>
           <p class="diagnostics-big">${esc(auth.message || '')}</p>
           <dl class="diagnostics-meta">
             <div><dt>Provider</dt><dd>${window.DriveStorage?.enabled?.() ? 'Google Drive' : 'Default / local'}</dd></div>
             <div><dt>Status code</dt><dd>${esc(auth.code || 'unknown')}</dd></div>
             <div><dt>Auth session</dt><dd>${auth.hasSession ? 'Present' : 'Missing'}</dd></div>
             ${auth.expiresAt ? `<div><dt>Session expires</dt><dd>${esc(timeAgo(auth.expiresAt))}</dd></div>` : ''}
-            ${auth.authEmail ? `<div><dt>Signed in as</dt><dd>${esc(auth.authEmail)}</dd></div>` : ''}
-            <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched ?' : `Mismatch (linked #${esc(String(auth.linkedUserId))}, you are #${esc(String(auth.appUserId))})`) : '?'}</dd></div>
+            <div><dt>Account link</dt><dd>${auth.linkedUserId != null ? (Number(auth.linkedUserId) === Number(auth.appUserId) ? 'Matched' : `Mismatch (linked #${esc(String(auth.linkedUserId))}, you are #${esc(String(auth.appUserId))})`) : 'Not linked'}</dd></div>
+            ${auth.centralStorageOk != null ? `<div><dt>Central Drive</dt><dd>${auth.centralStorageOk ? 'Reachable' : 'Needs reconnect'}</dd></div>` : ''}
+            ${auth.rootFolderName ? `<div><dt>Drive folder</dt><dd>${esc(auth.rootFolderName)}</dd></div>` : ''}
             <div><dt>Checked</dt><dd>${auth.checkedAt ? esc(timeAgo(auth.checkedAt)) : 'just now'}</dd></div>
           </dl>
-          ${auth.ok ? '' : '<p class="text-muted text-sm" style="padding:0 18px 4px">Try ?Reconnect storage?. If it stays unauthorized, log out and back in once.</p>'}
+          ${auth.ok ? '' : '<p class="text-muted text-sm" style="padding:0 18px 4px">Try "Reconnect storage". If this says the central Google Drive account expired, the storage account OAuth token must be renewed and the Edge Function secrets redeployed.</p>'}
         </section>
         <section class="dash-panel diagnostics-card diagnostics-card--${syncStatus.failed ? 'warn' : 'ok'}">
           <div class="dash-panel-head"><h3>Cloud sync</h3>${badge(syncStatus.failed ? 'Issue' : 'Ready', syncStatus.failed ? 'red' : 'green')}</div>
@@ -6022,6 +6512,27 @@ async function renderDiagnosticsPage() {
         <div class="diagnostics-issue-list">${issuesHtml}</div>
       </section>
     </div>`;
+}
+
+function showStorageReconnectModal() {
+  const s = getSession();
+  showModal('Reconnect document storage', `
+    <form data-form="storage-reconnect" class="storage-reconnect-form">
+      <p class="text-muted text-sm">Enter your Orbitrack password to rebuild the private document-storage session on this device.</p>
+      <div class="form-group">
+        <label>Account</label>
+        <input type="text" value="${esc(s?.displayName || s?.username || 'Current user')}" disabled>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input name="password" type="password" required autocomplete="current-password">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">${ICONS.refresh} Reconnect</button>
+      </div>
+    </form>`);
+  setTimeout(() => document.querySelector('.storage-reconnect-form input[name="password"]')?.focus(), 40);
 }
 
 function showModal(title, body, opts = {}) {
@@ -6813,6 +7324,10 @@ function showBugReportModal() {
 }
 
 function announcementTargetsMe(payload = {}) {
+  if (Array.isArray(payload.targetUserIds)) {
+    if (!payload.targetUserIds.length) return true;
+    return payload.targetUserIds.map(Number).includes(Number(actorId()));
+  }
   const target = payload.targetUserId;
   if (target == null || target === '' || target === 'all') return true;
   return Number(target) === Number(actorId());
@@ -6850,14 +7365,29 @@ function showAnnouncementOverlay(payload = {}) {
 async function showAnnouncementModal(targetUserId = null) {
   const users = await DB.getUsers().catch(() => []);
   const selected = targetUserId != null ? Number(targetUserId) : null;
-  const targetOptions = [
-    `<option value="all" ${selected == null ? 'selected' : ''}>Everyone</option>`,
-    ...users.map(u => `<option value="${u.id}" ${Number(u.id) === selected ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` - ${departmentLabel(u.department)}` : ''}</option>`)
-  ].join('');
+  const departments = [...new Set(users.map(u => u.department || '').filter(Boolean))].sort((a, b) => departmentLabel(a).localeCompare(departmentLabel(b)));
+  const userChecks = users.map(u => `<label class="announcement-target-user">
+    <input type="checkbox" name="targetUserIds" value="${u.id}" ${selected === Number(u.id) ? 'checked' : ''}>
+    <span>${avatarSrc(u) ? `<img src="${esc(avatarSrc(u))}" alt="">` : `<i ${userColorStyle(u)}>${esc((u.displayName || u.username || '?').charAt(0).toUpperCase())}</i>`}</span>
+    <strong>${esc(u.displayName || u.username)}</strong>
+    <small>${esc(u.department ? departmentLabel(u.department) : 'No department')}</small>
+  </label>`).join('');
   showModal('Send Announcement', `
-    <form data-form="announcement">
-      <p class="text-muted text-sm" style="margin-bottom:14px">Show a full-screen message immediately to everyone or one teammate.</p>
-      <div class="form-group"><label>Target</label><select name="targetUserId">${targetOptions}</select></div>
+    <form data-form="announcement" class="announcement-form">
+      <p class="text-muted text-sm" style="margin-bottom:14px">Show a full-screen message immediately. Priority delivery stays active even in Low Power mode.</p>
+      <div class="form-group"><label>Send to</label><select name="targetMode" data-announcement-target-mode>
+        <option value="all" ${selected == null ? 'selected' : ''}>Everyone</option>
+        <option value="department">Department</option>
+        <option value="users" ${selected != null ? 'selected' : ''}>Selected people</option>
+      </select></div>
+      <div class="form-group announcement-target-panel" data-announcement-panel="department" ${selected == null ? 'hidden' : 'hidden'}>
+        <label>Department</label>
+        <select name="department">${departments.map(d => `<option value="${esc(d)}">${esc(departmentLabel(d))}</option>`).join('') || '<option value="">No departments</option>'}</select>
+      </div>
+      <div class="form-group announcement-target-panel" data-announcement-panel="users" ${selected != null ? '' : 'hidden'}>
+        <label>People</label>
+        <div class="announcement-target-list">${userChecks}</div>
+      </div>
       <div class="form-group"><label>Title</label><input name="title" type="text" maxlength="90" value="Announcement" required autofocus></div>
       <div class="form-group"><label>Message</label><textarea name="message" rows="5" class="fixed-textarea" maxlength="600" required placeholder="Write the message to show on screen."></textarea></div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${ICONS.send} Send now</button></div>
@@ -7036,6 +7566,44 @@ function userProfileStats(userOrId, projects = [], tasks = []) {
   };
 }
 
+const SCORE_MASK_CHARS = ['#', '%', '?', '*', '+', '=', '~', '&'];
+
+function userHidesScore(user = null) {
+  return !!(user?.hideScore || user?.hide_score);
+}
+
+function scoreMaskFor(targetUser = {}, viewerUser = null) {
+  const raw = `${targetUser?.id || 0}:${viewerUser?.id || viewerUser?.userId || 0}:${targetUser?.username || ''}:score`;
+  let seed = 0;
+  for (let i = 0; i < raw.length; i++) seed = ((seed << 5) - seed + raw.charCodeAt(i)) >>> 0;
+  const len = 4 + (seed % 2);
+  let out = '';
+  for (let i = 0; i < len; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    out += SCORE_MASK_CHARS[seed % SCORE_MASK_CHARS.length];
+  }
+  return out;
+}
+
+function canSeeScore(targetUser = {}, viewerUser = getSession()) {
+  return !userHidesScore(viewerUser) && !userHidesScore(targetUser);
+}
+
+function scoreText(targetUser, stats, viewerUser = getSession(), suffix = '') {
+  return canSeeScore(targetUser, viewerUser) ? `${stats.score}${suffix}` : scoreMaskFor(targetUser, viewerUser);
+}
+
+function scoreHtml(targetUser, stats, viewerUser = getSession(), suffix = '') {
+  const visible = canSeeScore(targetUser, viewerUser);
+  return `<span class="${visible ? 'score-value' : 'score-mask'}">${esc(scoreText(targetUser, stats, viewerUser, suffix))}</span>`;
+}
+
+function scorePrivacyHint(targetUser = {}, viewerUser = getSession()) {
+  if (userHidesScore(viewerUser)) return 'Your scores are hidden, so all scores are scrambled for you.';
+  if (userHidesScore(targetUser)) return 'This member has hidden their score.';
+  return '';
+}
+
 // ?? Player-card data helpers ?????????????????????????????????????????????
 const STATUS_LABELS = { todo: 'To do', doing: 'In progress', done: 'Done', blocked: 'Blocked', review: 'In review' };
 
@@ -7095,15 +7663,17 @@ async function showUserProfileModal(userId) {
   ]);
   const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
   const uMap = Object.fromEntries((allUsers || []).map(u => [u.id, u]));
+  const viewer = (allUsers || []).find(u => Number(u.id) === Number(actorId())) || getSession();
   const current = pcardCurrentActivity(user.id, projects, tasks);
   const week = pcardWeekly(activityDaily);
 
   const rk = stats.rank;
-  const rankName = `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}`;
+  const scoreVisible = canSeeScore(user, viewer);
+  const rankName = scoreVisible ? `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}` : 'Score hidden';
   const progressPct = rk.next != null
     ? Math.max(6, Math.min(97, Math.round((stats.score / (stats.score + rk.next)) * 100)))
     : 100;
-  const rankHint = rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached';
+  const rankHint = scoreVisible ? (rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached') : scorePrivacyHint(user, viewer);
 
   const statCell = (val, label, extraAttrs = '') => `<button type="button" class="pcard-stat ${val ? '' : 'is-zero'}" ${extraAttrs}><b>${val}</b><span>${label}</span></button>`;
 
@@ -7164,10 +7734,10 @@ async function showUserProfileModal(userId) {
 
       <div class="pcard-rank profile-rank--${esc(rk.tone)}">
         <div class="pcard-rank-top">
-          <span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span>
-          <span class="pcard-xp">${stats.score} XP</span>
+          <span class="pcard-rank-name">${scoreVisible ? rankIcon(rk.label, 16) : ''}${esc(rankName)}</span>
+          <span class="pcard-xp">${scoreHtml(user, stats, viewer, ' XP')}</span>
         </div>
-        <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
+        <div class="pcard-rank-track ${scoreVisible ? '' : 'pcard-rank-track--hidden'}"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${scoreVisible ? progressPct : 100}"></div></div>
         <div class="pcard-rank-hint">${esc(stats.position)} ? ${rankHint}</div>
       </div>
 
@@ -7599,12 +8169,14 @@ async function showProfileModal() {
   ]);
   const userClassrooms = allClassrooms.filter(c => userClassroomIds.includes(Number(c.id)));
   const uMap = Object.fromEntries((allUsers || []).map(u => [u.id, u]));
+  const viewer = user;
   const current = pcardCurrentActivity(user.id, projects, tasks);
   const week = pcardWeekly(activityDaily);
   const rk = stats.rank;
-  const rankName = `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}`;
+  const scoreVisible = canSeeScore(user, viewer);
+  const rankName = scoreVisible ? `${rk.label}${rk.level ? ' ' + rk.levelRoman : ''}` : 'Score hidden';
   const progressPct = rk.next != null ? Math.max(6, Math.min(97, Math.round((stats.score / (stats.score + rk.next)) * 100))) : 100;
-  const rankHint = rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached';
+  const rankHint = scoreVisible ? (rk.next != null ? `${rk.next} point${rk.next === 1 ? '' : 's'} until ${esc(rk.nextLabel)}` : 'Top rank reached') : 'Your score is scrambled while score privacy is on.';
   const statCell = (val, label) => `<div class="pcard-stat ${val ? '' : 'is-zero'}"><b>${val}</b><span>${label}</span></div>`;
 
   let activityHtml;
@@ -7641,8 +8213,8 @@ async function showProfileModal() {
         </div>
       </div>
       <div class="pcard-rank profile-rank--${esc(rk.tone)}">
-        <div class="pcard-rank-top"><span class="pcard-rank-name">${rankIcon(rk.label, 16)}${esc(rankName)}</span><span class="pcard-xp">${stats.score} XP</span></div>
-        <div class="pcard-rank-track"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${progressPct}"></div></div>
+        <div class="pcard-rank-top"><span class="pcard-rank-name">${scoreVisible ? rankIcon(rk.label, 16) : ''}${esc(rankName)}</span><span class="pcard-xp">${scoreHtml(user, stats, viewer, ' XP')}</span></div>
+        <div class="pcard-rank-track ${scoreVisible ? '' : 'pcard-rank-track--hidden'}"><div class="pcard-rank-fill" data-rank-fill style="width:0%" data-target="${scoreVisible ? progressPct : 100}"></div></div>
         <div class="pcard-rank-hint">${esc(stats.position)} ? ${rankHint}</div>
       </div>
       <div class="pcard-stats">${statCell(stats.founded, 'Projects created')}${statCell(stats.completedFounded, 'Completed')}${statCell(stats.completedTasks, 'Tasks done')}${statCell(stats.coediting, 'Collaborations')}</div>
@@ -7701,6 +8273,7 @@ async function showProfileModal() {
         ${isAdm ? `<div class="form-group"><label>Department</label><select name="department"><option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>${departmentOptionsHtml(user.department || '')}</select></div>` : `<div class="form-group"><label>Department</label><div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div></div>`}
         <input name="color" type="hidden" value="#000000">
         <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide my tile from the team view</strong></span></label>
+        <label class="profile-toggle-row"><input type="checkbox" name="hideScore" ${user.hideScore ? 'checked' : ''}> <span><strong>Hide my score</strong><small>Your score becomes scrambled, and other people's scores are scrambled for you too.</small></span></label>
         <div class="profile-security-row"><div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from Admin.' : 'Ask an admin for a one-time password.'}</p></div>
           ${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}</div>
       </div>
@@ -7835,6 +8408,13 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.7', date: '2026-07-15', highlights: [
+    'Settings were simplified with smaller customization controls and cleaner support/update alignment.',
+    'Score privacy is now available from your profile; hiding your score also scrambles other scores for you.',
+    'Tooltip, update-notice, Arcade, and Invert Ink theme polish for clearer day and dark modes.',
+  ], adminNotes: [
+    'Deploy the score privacy migration before relying on the cloud toggle for all users.',
+  ] },
   { version: '3.5.3', date: '2026-07-12', highlights: [
     'Teams now opens directly to the member cards and status view.',
     'Removed the extra Team Flow / Project Rooms panel from above the cards.',
@@ -7910,7 +8490,70 @@ const SUPPORT_CHANGELOG = [
   ] },
 ];
 
+function renderSupportSettingsHtml() {
+  const isDesktop = !!window.workTrackerDesktop?.isDesktop;
+  const isAdm = isAdmin();
+  const changelogHtml = SUPPORT_CHANGELOG.map(rel => {
+    const head = `<div class="support-changelog-head"><strong>v${esc(rel.version)}</strong><span class="text-muted text-sm">${esc(rel.date)}</span></div>`;
+    if (rel.minor) {
+      return `<div class="support-changelog-item support-changelog-minor">${head}<p class="text-muted text-sm">Minor fixes &amp; improvements.</p></div>`;
+    }
+    const hi = (rel.highlights || []).map(i => `<li>${esc(i)}</li>`).join('');
+    const adm = (isAdm && Array.isArray(rel.adminNotes) && rel.adminNotes.length)
+      ? `<p class="support-changelog-admin-label">${ICONS.crown || ''} Admin</p><ul class="support-changelog-admin">${rel.adminNotes.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
+      : '';
+    return `<div class="support-changelog-item">${head}<ul>${hi}</ul>${adm}</div>`;
+  }).join('');
+
+  return `<div class="support-grid settings-support-grid">
+    <section class="dash-panel support-card">
+      <div class="dash-panel-head"><h3>Help</h3></div>
+      <p class="text-muted text-sm">Guides and onboarding for Orbitrack.</p>
+      <div class="support-actions">
+        <a href="#/guide" class="btn btn-primary">${ICONS.book || ICONS.file} User guide</a>
+        <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
+      </div>
+    </section>
+    <section class="dash-panel support-card">
+      <div class="dash-panel-head"><h3>Feedback</h3></div>
+      <p class="text-muted text-sm">Report issues or request improvements.</p>
+      <div class="support-actions">
+        <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
+        ${isAdm ? `<button type="button" class="btn btn-ghost" data-action="send-announcement">${ICONS.send} Announcement</button>` : ''}
+        <button type="button" class="btn btn-ghost" data-action="settings-tab" data-tab="diagnostics">${ICONS.file} Diagnostics</button>
+      </div>
+    </section>
+    <section class="dash-panel support-card">
+      <div class="dash-panel-head"><h3>Updates</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
+      <p class="text-muted text-sm">${isDesktop ? 'Check for desktop app updates.' : 'Install the desktop app for automatic updates.'}</p>
+      <div class="support-actions">
+        <button type="button" class="btn btn-primary" data-action="check-updates">${ICONS.refresh} Check for updates</button>
+        ${isAdm ? '<a href="#/activity" class="btn btn-ghost">Activity log</a>' : ''}
+      </div>
+    </section>
+    <section class="dash-panel support-card">
+      <div class="dash-panel-head"><h3>Personal reports</h3></div>
+      <p class="text-muted text-sm">Generate your own progress report with tasks, activity, and remarks.</p>
+      <div class="support-actions">
+        <button type="button" class="btn btn-primary" data-action="generate-my-report">${ICONS.download} Generate My Report</button>
+      </div>
+    </section>
+    <section class="dash-panel support-card support-card-wide">
+      <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
+      <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace: projects, boards, notes, and documents in one app.</p>
+      <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, Quill, jsPDF, SortableJS, and Electron.</p>
+    </section>
+    <section class="dash-panel support-card support-card-wide">
+      <div class="dash-panel-head"><h3>Release notes</h3></div>
+      <div class="support-changelog support-changelog-scroll">${changelogHtml}</div>
+    </section>
+  </div>`;
+}
+
 async function renderSupportPage() {
+  state.settingsTab = 'support';
+  await renderSettings();
+  return;
   const content = document.getElementById('content');
   const isDesktop = !!window.workTrackerDesktop?.isDesktop;
   const isAdm = isAdmin();
@@ -7945,7 +8588,7 @@ async function renderSupportPage() {
           <div class="support-actions">
             <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
             <button type="button" class="btn btn-ghost" data-action="send-announcement">${ICONS.send} Announcement</button>
-            <a href="#/diagnostics" class="btn btn-ghost">${ICONS.file} Diagnostics</a>
+            <button type="button" class="btn btn-ghost" data-action="settings-tab" data-tab="diagnostics">${ICONS.file} Diagnostics</button>
           </div>
         </section>
         <section class="dash-panel support-card">
@@ -7974,7 +8617,7 @@ const GUIDE_SECTIONS = [
     id: 'start', icon: 'sparkles', title: 'Getting started',
     entries: [
       { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password ? pick something only you know.' },
-      { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar, Notifications and Support from the left rail. Your sync status shows live at the bottom.' },
+      { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar and Notifications from the left rail. Settings contains support and diagnostics. Your sync status shows live at the bottom.' },
       { t: 'Light & dark', d: 'Use the theme toggle to switch between the light and dark themes. Your choice is remembered on this device.' }
     ]
   },
@@ -7999,7 +8642,7 @@ const GUIDE_SECTIONS = [
     id: 'files', icon: 'file', title: 'Files & documents',
     entries: [
       { t: 'Upload files', d: 'Open a project\'s Documents panel and drag in PDFs or images. They\'re stored against the project for everyone with access.' },
-      { t: 'Previews', d: 'Images and PDFs preview inline. If a file won\'t open, check Diagnostics for storage authorization status.' }
+      { t: 'Previews', d: 'Images and PDFs preview inline. If a file won\'t open, check Settings > Diagnostics for storage authorization status.' }
     ]
   },
   {
@@ -8012,7 +8655,7 @@ const GUIDE_SECTIONS = [
   {
     id: 'diagnostics', icon: 'alertTriangle', title: 'Troubleshooting',
     entries: [
-      { t: 'Diagnostics tab', d: 'Support ? Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
+      { t: 'Diagnostics tab', d: 'Settings > Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
       { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed ? reconnect and it will retry automatically.' }
     ]
   },
@@ -8585,6 +9228,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.5.7', date: 'July 2026', features: ['Score privacy toggle with scrambled score display', 'Simpler settings landing page with compact controls', 'Single custom sidebar tooltip behavior', 'Arcade green/white theme and Invert Ink contrast polish', 'Dark-mode desktop update notice contrast fixed'] },
     { version: '3.5.3', date: 'July 2026', features: ['Team page simplified to member cards', 'Less team summary loading', 'Minor Lite polish'] },
     { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
     { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
@@ -8970,6 +9614,40 @@ async function handleFormSubmit(e) {
   const fd = new FormData(form); const type = form.dataset.form;
   try {
     const uid = actorId();
+    if (type === 'storage-reconnect') {
+      const password = (fd.get('password') || '').toString();
+      if (!password) { showToast('Enter your password to reconnect storage.', 'warning'); return; }
+      const btn = form.querySelector('[type="submit"]');
+      const oldText = btn?.textContent || 'Reconnect';
+      let keepOpen = true;
+      if (btn) { btn.disabled = true; btn.textContent = 'Reconnecting...'; }
+      try {
+        const user = uid && DB.getUser ? (await DB.getUser(uid).catch(() => null)) : getSession();
+        await window.DriveStorage?.resetSession?.();
+        await ensureDriveStorageSession(user || getSession(), password);
+        const status = await runStorageAuthHealthCheck({ notify: false, force: true });
+        if (status.ok) {
+          keepOpen = false;
+          hideModal();
+          showToast('Document storage reconnected.', 'success');
+        } else if (status.code === 'health_check_unavailable') {
+          keepOpen = false;
+          hideModal();
+          showToast(status.message || 'Storage sign-in is valid. Redeploy the files-content function to verify central Drive health.', 'warning');
+        } else if (status.code === 'drive_auth_revoked') {
+          showToast('The central Google Drive storage account still needs OAuth renewal.', 'warning');
+        } else {
+          showToast(status.message || 'Document storage is still not authorized.', 'warning');
+        }
+        await rerenderDiagnosticsSurface();
+      } finally {
+        if (keepOpen && btn?.isConnected) {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+      }
+      return;
+    }
     if (type === 'project') {
       const data = {
         name: fd.get('name')?.trim(),
@@ -9203,24 +9881,47 @@ async function handleFormSubmit(e) {
       hideModal();
       showToast('Bug report sent', 'success');
     } else if (type === 'announcement') {
+      if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       const sender = getSession();
-      const targetRaw = fd.get('targetUserId') || 'all';
+      const mode = fd.get('targetMode') || 'all';
       const title = (fd.get('title') || '').trim();
       const message = (fd.get('message') || '').trim();
       if (!title || !message) { showToast('Title and message are required', 'warning'); return; }
+      const users = await DB.getUsers().catch(() => []);
+      let targetIds = [];
+      if (mode === 'department') {
+        const dept = fd.get('department') || '';
+        targetIds = users.filter(u => (u.department || '') === dept).map(u => Number(u.id));
+      } else if (mode === 'users') {
+        targetIds = fd.getAll('targetUserIds').map(Number).filter(Boolean);
+      } else {
+        targetIds = users.map(u => Number(u.id)).filter(Boolean);
+      }
+      targetIds = [...new Set(targetIds)].filter(Boolean);
+      if (!targetIds.length) { showToast('Choose at least one recipient.', 'warning'); return; }
       const payload = {
         id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         fromUserId: sender?.userId || uid,
         fromName: sender?.displayName || sender?.username || 'Someone',
-        targetUserId: targetRaw === 'all' ? null : Number(targetRaw),
+        targetUserIds: targetIds,
         title,
         message,
         createdAt: new Date().toISOString()
       };
+      const encoded = encodePriorityAnnouncement(payload);
+      for (const userId of targetIds) {
+        await DB.createNotification?.({
+          userId,
+          type: 'priority_announcement',
+          message: encoded,
+          entityType: 'priority_announcement',
+          actorUserId: sender?.userId || uid
+        }).catch(err => console.warn('[announcement] fallback notify failed', err));
+      }
       const sent = await window.RealtimeSync?.broadcastAnnouncement?.(payload);
       if (announcementTargetsMe(payload)) showAnnouncementOverlay(payload);
       hideModal();
-      showToast(sent ? 'Announcement sent' : 'Announcement shown here. Realtime is offline.', sent ? 'success' : 'warning');
+      showToast(sent ? `Announcement sent to ${targetIds.length}` : `Announcement queued for ${targetIds.length}. Realtime is offline.`, sent ? 'success' : 'warning');
     } else if (type === 'update-bug-report') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       if (!DB.updateBugReport) { showToast('Bug ticket management needs the latest database update', 'warning'); return; }
@@ -9373,8 +10074,9 @@ async function handleFormSubmit(e) {
       const accentColor = (fd.get('accentColor') || '').toString().trim();
       const coverColor = (fd.get('coverColor') || '').toString().trim();
       const hideFromTeamMap = !!fd.get('hideFromTeamMap');
+      const hideScore = !!fd.get('hideScore');
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      const profileData = { displayName, email, bio, birthDate, gender, phone, address, tagline, accentColor, coverColor, hideFromTeamMap, ...(color && { color }) };
+      const profileData = { displayName, email, bio, birthDate, gender, phone, address, tagline, accentColor, coverColor, hideFromTeamMap, hideScore, ...(color && { color }) };
       // Only touch the avatar when the user actually picked/removed a photo, so a
       // normal profile save never wipes an existing (Drive or legacy) picture.
       if (avatarChanged) profileData.avatarDriveId = avatarDriveId;
@@ -9539,12 +10241,12 @@ const actions = {
     await router();
   },
   'set-theme-mode': async (b) => {
-    applyTheme(b.dataset.mode === 'black' ? 'black' : 'normal');
+    applyTheme(b.dataset.mode || 'normal');
     updateSidebarUser();
     await router();
   },
   'set-theme-variant': async (b) => {
-    setThemeVariant(b.dataset.variant || 'vivid');
+    setThemeVariant(b.dataset.variant || 'arcade');
     updateSidebarUser();
     await router();
   },
@@ -9670,6 +10372,11 @@ const actions = {
     state.adminTab = b.dataset.tab || 'overview';
     await renderAdminTabbed();
   },
+  'settings-tab': async (b) => {
+    state.settingsTab = normalizeSettingsTab(b.dataset.tab || 'customize');
+    if ((window.location.hash || '').slice(1) !== '/settings') window.location.hash = '#/settings';
+    else await renderSettings();
+  },
   'admin-bug-tab': async (b) => {
     state.adminBugTab = b.dataset.bugTab === 'fixed' ? 'fixed' : 'open';
     await renderAdminTabbed();
@@ -9679,7 +10386,8 @@ const actions = {
     const uid = getSession()?.userId;
     if (uid && DB.createPersonalNote) {
       const id = await DB.createPersonalNote({ userId: uid, title: '', content: '' });
-      await renderAdminDashboard();
+      if ((window.location.hash || '').slice(1) === '/admin' && state.adminTab === 'dashboard') await renderAdminTabbed();
+      else await renderAdminDashboard();
       window.WTNotes?.open?.(id);
     }
   },
@@ -9690,6 +10398,11 @@ const actions = {
   'team-view-tab': async (b) => {
     state.teamView = b.dataset.teamView === 'rooms' ? 'rooms' : 'flow';
     localStorage.setItem('wt-team-view-v1', state.teamView);
+    await renderUsers();
+  },
+  'user-card-view': async (b) => {
+    state.userCardView = b.dataset.userCardView === 'mini' ? 'mini' : 'full';
+    localStorage.setItem('wt-user-card-view-v1', state.userCardView);
     await renderUsers();
   },
   'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
@@ -9867,8 +10580,8 @@ const actions = {
     await window.WTReports.generateCurrentUserReport();
   },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
-  'goto-support': () => { closeUserMenu(); window.location.hash = '#/support'; },
-  'goto-diagnostics': () => { closeUserMenu(); window.location.hash = '#/diagnostics'; },
+  'goto-support': () => { closeUserMenu(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
+  'goto-diagnostics': () => { closeUserMenu(); state.settingsTab = 'diagnostics'; window.location.hash = '#/settings'; },
   'calendar-prev-month': async () => {
     const d = _parseCalendarMonth(state.calendarMonth);
     d.setMonth(d.getMonth() - 1);
@@ -9928,16 +10641,36 @@ const actions = {
   'check-storage-auth': async () => {
     const status = await runStorageAuthHealthCheck({ notify: true, force: true });
     if (status.ok) showToast('Document storage authorization is valid.', 'success');
-    if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
+    await rerenderDiagnosticsSurface();
   },
   'reconnect-storage': async (b) => {
-    if (b) { b.disabled = true; b.textContent = 'Reconnecting?'; }
-    let recovered = false;
-    try { recovered = await window.DriveStorage?.recoverSession?.(); } catch (_) {}
-    const status = await runStorageAuthHealthCheck({ notify: false, force: true });
-    if (status.ok) showToast('Document storage reconnected.', 'success');
-    else showToast('Could not reconnect automatically ? log out and back in once to restore file access.', 'warning');
-    if ((window.location.hash || '').slice(1) === '/diagnostics') await renderDiagnosticsPage();
+    const oldHtml = b?.innerHTML;
+    const oldMinWidth = b?.style?.minWidth || '';
+    const measuredWidth = b ? Math.ceil(b.getBoundingClientRect().width) : 0;
+    if (b) {
+      if (measuredWidth) b.style.minWidth = `${measuredWidth}px`;
+      b.disabled = true;
+      b.textContent = 'Reconnecting...';
+    }
+    try {
+      try { await window.DriveStorage?.recoverSession?.(); } catch (_) {}
+      const status = await runStorageAuthHealthCheck({ notify: false, force: true });
+      if (status.ok) {
+        showToast('Document storage reconnected.', 'success');
+        await rerenderDiagnosticsSurface();
+      } else if (status.code === 'drive_auth_revoked') {
+        showToast('Central Google Drive authorization expired. Renew the storage account OAuth token and redeploy the Edge Function secrets.', 'warning');
+        await rerenderDiagnosticsSurface();
+      } else {
+        showStorageReconnectModal();
+      }
+    } finally {
+      if (b?.isConnected) {
+        b.disabled = false;
+        b.innerHTML = oldHtml || `${ICONS.refresh} Reconnect storage`;
+        b.style.minWidth = oldMinWidth;
+      }
+    }
   },
   'diagnostics-copy': async () => {
     const text = await buildDiagnosticsText({ forceAuth: true });
@@ -9964,7 +10697,7 @@ const actions = {
   'diagnostics-clear': async () => {
     clearUserIssueLog();
     showToast('Diagnostics issue log cleared', 'info');
-    await renderDiagnosticsPage();
+    await rerenderDiagnosticsSurface();
   },
   'show-user-profile': async (b) => {
     await showUserProfileModal(Number(b.dataset.userId));
@@ -10015,7 +10748,7 @@ const actions = {
       showToast('You are offline. Sync will run when the connection returns.', 'warning');
       return;
     }
-    showToast('Syncing?', 'info');
+    showToast('Syncing...', 'info');
     try {
       if (window.SyncEngine) {
         await SyncEngine.pull();
@@ -10147,7 +10880,7 @@ const actions = {
     if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
     state.collapsedTaskGroups[pid] = collapsed;
   },
-  'show-about': () => { closeUserMenu(); window.location.hash = '#/support'; },
+  'show-about': () => { closeUserMenu(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
     const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving?';
@@ -10471,7 +11204,14 @@ const actions = {
       fromName: s?.displayName || s?.username || 'Admin',
       reason: 'Signed out by an admin'
     });
-    showToast(sent ? `Force logout sent to ${name}` : 'Realtime is offline. Could not send logout.', sent ? 'success' : 'warning');
+    await DB.createNotification?.({
+      userId: targetId,
+      type: 'priority_force_logout',
+      entityType: 'priority_force_logout',
+      message: 'You were signed out by an admin.',
+      actorUserId: s?.userId
+    }).catch(err => console.warn('[force-logout] fallback notify failed', err));
+    showToast(sent ? `Force logout sent to ${name}` : `Force logout queued for ${name}.`, sent ? 'success' : 'warning');
   },
   'delete-user': async (b) => {
     const uid = Number(b.dataset.id); const s = getSession();
@@ -10582,6 +11322,15 @@ const actions = {
   },
   'notif-open': async (b) => {
     const id = Number(b.dataset.id);
+    if (PRIORITY_EVENT_TYPES.has(b.dataset.type)) {
+      const rows = actorId() && DB.getNotifications ? await DB.getNotifications(actorId(), { limit: 100 }).catch(() => []) : [];
+      const n = rows.find(row => Number(row.id) === id);
+      if (n) await processPriorityNotification(n);
+      closeNotifPanel();
+      refreshNotificationBadge();
+      if (window.location.hash === '#/notifications') await renderNotificationsPage();
+      return;
+    }
     await DB.markNotificationRead(id);
     closeNotifPanel();
     refreshNotificationBadge();
@@ -11238,10 +11987,12 @@ async function renderRankingPanel() {
 async function renderUsers() {
   const content = document.getElementById('content');
   if (!content) return;
+  if (!['full', 'mini'].includes(state.userCardView)) state.userCardView = 'full';
   const [users, { projects, tasks }] = await Promise.all([
     getUsersCached(true),
     getWorkspaceData(),
   ]);
+  const viewer = users.find(u => Number(u.id) === Number(actorId())) || getSession();
   const enriched = users.map(u => ({ u, stats: userProfileStats(u, projects, tasks) }))
     .sort((a, b) => {
       const aOnline = isUserOnline(a.u) ? 1 : 0;
@@ -11250,14 +12001,31 @@ async function renderUsers() {
       const aT = a.u.lastSeenAt ? Date.parse(a.u.lastSeenAt) : 0;
       const bT = b.u.lastSeenAt ? Date.parse(b.u.lastSeenAt) : 0;
       if (aT !== bT) return bT - aT;
-      return b.stats.score - a.stats.score;
+      if (canSeeScore(a.u, viewer) && canSeeScore(b.u, viewer)) return b.stats.score - a.stats.score;
+      return String(a.u.displayName || a.u.username || '').localeCompare(String(b.u.displayName || b.u.username || ''));
     });
 
+  const compact = state.userCardView === 'mini';
   const cards = enriched.map(({ u, stats }, i) => {
     const initials = (u.displayName || u.username || '?').charAt(0).toUpperCase();
     const avatarInner = avatarSrc(u)
       ? `<img src="${esc(avatarSrc(u))}" alt="${esc(initials)}">`
       : initials;
+    if (compact) {
+      return `<div class="user-card user-card--mini" data-action="show-user-profile" data-user-id="${u.id}" role="button" tabindex="0" title="View ${esc(u.displayName || u.username)}'s profile">
+        <div class="user-card-rank-num">#${i + 1}</div>
+        <div class="user-card-avatar-wrap">
+          <div class="user-card-avatar" ${userColorStyle(u)}>${avatarInner}</div>
+          ${presenceDotHtml(u)}
+        </div>
+        <strong class="user-card-mini-score">${scoreHtml(u, stats, viewer)}</strong>
+        <span class="user-card-mini-name">${esc(u.displayName || u.username)}</span>
+        <span class="user-card-mini-status">${isUserOnline(u) ? 'Online' : (u.lastSeenAt ? timeAgo(u.lastSeenAt) : 'Away')}</span>
+      </div>`;
+    }
+    const rankBadge = canSeeScore(u, viewer)
+      ? `<span class="profile-rank profile-rank--${esc(stats.rank.tone)}"><span class="rank-label">${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}</span><strong>${scoreHtml(u, stats, viewer)}</strong></span>`
+      : `<span class="profile-rank profile-rank--muted profile-rank--hidden" title="${esc(scorePrivacyHint(u, viewer))}"><span class="rank-label">Score hidden</span><strong>${scoreHtml(u, stats, viewer)}</strong></span>`;
     return `<div class="user-card" data-action="show-user-profile" data-user-id="${u.id}" role="button" tabindex="0" title="View ${esc(u.displayName || u.username)}'s profile">
       <div class="user-card-rank-num">#${i + 1}</div>
       <div class="user-card-avatar-wrap">
@@ -11268,7 +12036,7 @@ async function renderUsers() {
         <div class="user-card-name">${esc(u.displayName || u.username)}</div>
         <div class="user-card-sub">@${esc(u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}</div>
         <div class="user-card-badges">
-          <span class="profile-rank profile-rank--${esc(stats.rank.tone)}"><span class="rank-label">${rankIcon(stats.rank.label, 15)}${esc(stats.rank.label)}</span><strong>${stats.score}</strong></span>
+          ${rankBadge}
           ${badge(stats.position, 'accent')}
           ${u.role === 'admin' ? badge('Admin', 'purple') : ''}
         </div>
@@ -11286,10 +12054,16 @@ async function renderUsers() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} ? ranked by contribution</p></div>
-      <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
+      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} ? ranked by contribution${userHidesScore(viewer) ? ' ? scores scrambled for you' : ''}</p></div>
+      <div class="view-actions user-view-actions">
+        <div class="team-lite-tabs user-card-view-tabs" role="group" aria-label="User card view">
+          <button type="button" class="team-lite-tab ${compact ? '' : 'active'}" data-action="user-card-view" data-user-card-view="full" title="Expanded user cards">Expanded</button>
+          <button type="button" class="team-lite-tab ${compact ? 'active' : ''}" data-action="user-card-view" data-user-card-view="mini" title="Mini user cards">Mini</button>
+        </div>
+        <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
+      </div>
     </div>
-    <div class="user-grid">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
+    <div class="user-grid ${compact ? 'user-grid--mini' : ''}">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
 }
 
@@ -11302,7 +12076,7 @@ async function router() {
   const previousRoute = state._activeRoute;
   if (previousRoute) saveRouteScroll(previousRoute);
   state._activeRoute = normalizeRouteForScroll(hash);
-  if (!['/settings', '/notifications', '/admin'].includes(hash)) {
+  if (!['/settings', '/support', '/diagnostics', '/about', '/notifications', '/admin', '/dashboard', '/reports'].includes(hash)) {
     state.lastMainRoute = hash;
   }
   if (!hash.startsWith('/projects/')) {
@@ -11313,18 +12087,22 @@ async function router() {
     state.currentProjectId = null;
   }
   if (hash !== '/users') hideRankingPanel();
-  if (hash !== '/dashboard' && window._dashNoteHandle) { try { window._dashNoteHandle.unmount(); } catch (_) {} window._dashNoteHandle = null; }
+  if (!(hash === '/dashboard' || (hash === '/admin' && state.adminTab === 'dashboard')) && window._dashNoteHandle) { try { window._dashNoteHandle.unmount(); } catch (_) {} window._dashNoteHandle = null; }
   updateNav(hash);
   const content = document.getElementById('content');
   if (content) content.classList.add('content-fade');
   if (hash === '/' || hash === '/projects') await renderProjects();
   else if (hash === '/dashboard') {
     if (isAdmin()) {
-      await renderAdminDashboard();
+      state.adminTab = 'dashboard';
+      await renderAdminTabbed();
     } else await renderProjects();
   }
   else if (hash === '/reports') {
-    if (isAdmin()) await renderReportsPage();
+    if (isAdmin()) {
+      state.adminTab = 'reports';
+      await renderAdminTabbed();
+    }
     else await renderProjects();
   }
   else if (hash.startsWith('/projects/')) {
@@ -11337,12 +12115,21 @@ async function router() {
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/users') await renderUsers();
   else if (hash === '/notifications') await renderNotificationsPage();
-  else if (hash === '/diagnostics') await renderDiagnosticsPage();
+  else if (hash === '/diagnostics') {
+    state.settingsTab = 'diagnostics';
+    await renderSettings();
+  }
   else if (hash === '/activity') await renderActivityPage();
-  else if (hash === '/support') await renderSupportPage();
+  else if (hash === '/support') {
+    state.settingsTab = 'support';
+    await renderSettings();
+  }
   else if (hash === '/guide') await renderGuidePage();
   else if (hash === '/calendar') await renderCalendarPage();
-  else if (hash === '/about') await renderSupportPage(); // About folded into Support
+  else if (hash === '/about') {
+    state.settingsTab = 'support';
+    await renderSettings();
+  }
   else if (hash === '/admin') await renderAdminTabbed();
   else if (hash === '/settings') await renderSettings();
   else window.location.hash = '#/projects';
@@ -11372,7 +12159,10 @@ function updateNav(route) {
     const n = item.dataset.nav;
     if (!n) return;
     item.classList.toggle('active',
-      route === `/${n}` || (n === 'projects' && (route === '/' || route.startsWith('/projects'))));
+      route === `/${n}`
+        || (n === 'projects' && (route === '/' || route.startsWith('/projects')))
+        || (n === 'settings' && ['/support', '/diagnostics', '/about'].includes(route))
+        || (n === 'admin' && ['/dashboard', '/reports'].includes(route)));
   });
 }
 
@@ -11520,6 +12310,7 @@ function runShortcutAction(id) {
   if (id === 'nav.tasks') { window.location.hash = '#/tasks'; return; }
   if (id === 'nav.team') { window.location.hash = '#/users'; return; }
   if (id === 'nav.settings') { window.location.hash = '#/settings'; return; }
+  if (id === 'nav.admin') { window.location.hash = isAdmin() ? '#/admin' : '#/projects'; return; }
   if (id === 'create.task') return showTaskModal(state.currentProjectId || null).catch(err => console.error('[shortcut:new-task]', err));
   if (id === 'create.project') return showProjectModal().catch(err => console.error('[shortcut:new-project]', err));
   if (id === 'search.focus') {
@@ -11538,6 +12329,15 @@ function runShortcutAction(id) {
     return;
   }
   if (id === 'notes.toggle') { window.WTNotes?.toggle?.(); }
+  if (id === 'admin.announce') {
+    if (isAdmin()) return showAnnouncementModal().catch(err => console.error('[shortcut:announcement]', err));
+    return;
+  }
+  if (id === 'users.toggleCompact') {
+    state.userCardView = state.userCardView === 'mini' ? 'full' : 'mini';
+    localStorage.setItem('wt-user-card-view-v1', state.userCardView);
+    if ((window.location.hash || '').slice(1) === '/users') renderUsers().catch(() => {});
+  }
 }
 
 function handleConfiguredShortcut(e) {
@@ -11583,8 +12383,9 @@ function handleConfiguredShortcut(e) {
 
 async function refreshActivityViews() {
   const hash = window.location.hash.slice(1) || '';
-  if (hash === '/dashboard' && isAdmin()) {
-    await renderAdminDashboard().catch(() => {});
+  if (isAdmin() && (hash === '/dashboard' || (hash === '/admin' && state.adminTab === 'dashboard'))) {
+    if (hash === '/admin') await renderAdminTabbed().catch(() => {});
+    else await renderAdminDashboard().catch(() => {});
     return;
   }
   const m = hash.match(/^\/projects\/(\d+)/);
@@ -11606,6 +12407,10 @@ function setupRealtimeHandlers() {
   window.addEventListener('wt-realtime-notification', (e) => {
     const row = e.detail?.row;
     if (!row || Number(row.userId) !== Number(actorId())) return;
+    if (!row.readAt && e.detail?.eventType === 'INSERT' && PRIORITY_EVENT_TYPES.has(row.type)) {
+      processPriorityNotification(row).catch(err => console.warn('[priority-events] realtime process failed', err));
+      return;
+    }
     refreshNotificationBadge().catch(() => {});
     const panel = document.getElementById('notif-panel');
     if (panel && !panel.classList.contains('hidden')) renderNotificationPanel();
@@ -11614,7 +12419,7 @@ function setupRealtimeHandlers() {
       if (!actor || actor !== Number(actorId())) {
         NotificationSounds?.play?.(row.type || 'default');
       }
-      showToast(row.message || 'New notification', 'info');
+      showToast(notificationDisplayMessage(row) || 'New notification', 'info');
     }
   });
 
@@ -11625,6 +12430,9 @@ function setupRealtimeHandlers() {
   window.addEventListener('wt-realtime-announcement', (e) => {
     const payload = e.detail || {};
     if (!announcementTargetsMe(payload)) return;
+    const key = payload.id ? `announcement:${payload.id}` : '';
+    if (key && handledPriorityEvents.has(key)) return;
+    if (key) handledPriorityEvents.add(key);
     NotificationSounds?.play?.('notification');
     showAnnouncementOverlay(payload);
   });
@@ -11771,6 +12579,15 @@ async function init() {
       }
     });
     document.getElementById('modal-overlay').addEventListener('submit', handleFormSubmit);
+    document.getElementById('modal-overlay').addEventListener('change', (e) => {
+      const target = e.target;
+      if (target?.dataset?.announcementTargetMode != null) {
+        const mode = target.value || 'all';
+        document.querySelectorAll('[data-announcement-panel]').forEach(panel => {
+          panel.hidden = panel.dataset.announcementPanel !== mode;
+        });
+      }
+    });
     document.getElementById('content').addEventListener('submit', handleFormSubmit);
     window.WTNotes?.bindEvents?.();
     document.getElementById('project-panel-backdrop')?.addEventListener('click', hideDocumentPanel);
@@ -11805,9 +12622,18 @@ async function init() {
         state.classroomFilter = target.value || 'all';
         await applyClassroomTheme(state.classroomFilter);
         await renderProjects();
+      } else if (target?.dataset?.settingsRange === 'performance') {
+        const order = ['low-power', 'balanced', 'full'];
+        setPerformanceMode(order[Number(target.value)] || 'balanced');
+        await renderSettings();
+      } else if (target?.dataset?.settingsRange === 'density') {
+        const order = ['comfortable', 'compact', 'tiny'];
+        setUiDensity(order[Number(target.value)] || 'compact');
+        await renderSettings();
       } else if (target?.dataset?.reportInput === 'month') {
         state.reportMonth = target.value || formatMonthInput();
-        await renderReportsPage();
+        if ((window.location.hash || '').slice(1) === '/admin' && state.adminTab === 'reports') await renderAdminTabbed();
+        else await renderReportsPage();
       }
     });
     document.getElementById('modal-overlay').addEventListener('click', (e) => {
@@ -11924,6 +12750,7 @@ async function init() {
       toggleSidebarCollapsed();
     });
     applySidebarCollapsed();
+    installIconTooltips();
     window.addEventListener('hashchange', closeSidebar);
     window.addEventListener('hashchange', () => { applyRoute(); });
 

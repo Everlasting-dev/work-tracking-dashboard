@@ -83,6 +83,8 @@ const SupabaseDB = {
         color: saved.color || '',
         bio: saved.bio || '',
         avatarBase64: saved.avatarBase64 || '',
+        hideScore: !!saved.hideScore,
+        hideFromTeamMap: !!saved.hideFromTeamMap,
         lastSeenAt: null,
         lastSeenIp: null
       };
@@ -532,6 +534,7 @@ const SupabaseDB = {
       mustChangePassword: !!r.must_change_password,
       tagline: r.tagline || '', accentColor: r.accent_color || '', coverColor: r.cover_color || '',
       hideFromTeamMap: !!r.hide_from_team_map,
+      hideScore: !!r.hide_score,
       trophies: Array.isArray(r.trophies) ? r.trophies : [],
       blobReactions: Array.isArray(r.blob_reactions) ? r.blob_reactions : []
     };
@@ -1433,6 +1436,7 @@ const SupabaseDB = {
       phone: data.phone || '',
       address: data.address || '',
       hours_logged_total: Number(data.hoursLoggedTotal || 0),
+      hide_score: !!data.hideScore,
       must_change_password: !!data.mustChangePassword,
       // Explicit null: the DB column defaults auth_user_id to auth.uid(), which
       // would stamp the CREATING admin's id onto the new row and trip the
@@ -1446,6 +1450,7 @@ const SupabaseDB = {
       delete payload.color;
       delete payload.bio;
       delete payload.avatar_base64;
+      delete payload.hide_score;
       delete payload.must_change_password;
       ({ data: row, error } = await this._sb().from('wt_users').insert(payload).select().single());
     }
@@ -1498,11 +1503,14 @@ const SupabaseDB = {
   // user and was the dominant sync-pull egress cost (re-shipped on every pull).
   // The lite roster is cheap; avatars are fetched separately only when their
   // avatar_updated_at marker changes (see getUserAvatarsByIds + the sync pull).
-  _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_drive_id,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map',
+  _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_drive_id,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map,hide_score',
 
   async getUsersLite() {
     if (this._isOffline()) return this.getUsers();
-    const { data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS).order('id');
+    let { data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS).order('id');
+    if (error && this._isMissingColumn(error)) {
+      ({ data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS.replace(',hide_score', '')).order('id'));
+    }
     if (error) throw error;
     return (data || []).map(r => {
       const u = this._mapUser(r);
@@ -1556,6 +1564,7 @@ const SupabaseDB = {
     if (changes.accentColor != null) patch.accent_color = changes.accentColor || '';
     if (changes.coverColor != null) patch.cover_color = changes.coverColor || '';
     if (changes.hideFromTeamMap != null) patch.hide_from_team_map = !!changes.hideFromTeamMap;
+    if (changes.hideScore != null) patch.hide_score = !!changes.hideScore;
     if (changes.trophies != null) patch.trophies = changes.trophies;
     if (changes.blobReactions != null) patch.blob_reactions = changes.blobReactions;
     if (changes.hoursLoggedTotal != null) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
@@ -1578,6 +1587,7 @@ const SupabaseDB = {
       delete patch.accent_color;
       delete patch.cover_color;
       delete patch.hide_from_team_map;
+      delete patch.hide_score;
       delete patch.trophies;
       delete patch.blob_reactions;
       ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));

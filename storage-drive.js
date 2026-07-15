@@ -89,12 +89,48 @@
     return false;
   }
 
+  async function resetSession() {
+    const client = sb();
+    if (!client?.auth) return false;
+    try { await client.auth.signOut({ scope: "local" }); }
+    catch (_) { try { await client.auth.signOut(); } catch (_) {} }
+    return true;
+  }
+
   async function token() {
     const client = sb();
     const { data } = await client.auth.getSession();
     const t = data?.session?.access_token;
-    if (!t) throw new Error("Not signed in to storage. Please sign out and back in.");
+    if (!t) throw new Error('Not signed in to storage. Use "Reconnect storage" in Settings > Diagnostics.');
     return t;
+  }
+
+  async function checkCentralDriveHealth(jwt) {
+    const res = await fetch(`${fnBase()}/files-content?health=1`, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${jwt}`, apikey: anonKey() },
+    });
+    const { body, text } = await readResponseBody(res);
+    if (!res.ok) {
+      const oldFunction = res.status === 400 && String(body.error || text || "").toLowerCase().includes("id is required");
+      return {
+        ok: false,
+        code: oldFunction ? "health_check_unavailable" : (body.code || `backend_${res.status}`),
+        backendStatus: res.status,
+        backendError: body.error || body.message || text || "",
+        message: oldFunction
+          ? "Document storage sign-in is valid, but this build cannot verify the central Google Drive account until the files-content Edge Function is redeployed."
+          : storageErrorMessage(res.status, body, `Could not verify central Google Drive storage (${res.status})`, text)
+      };
+    }
+    return {
+      ok: true,
+      code: body.code || "ok",
+      centralStorageOk: true,
+      backendStatus: res.status,
+      rootFolderId: body.rootFolderId || null,
+      rootFolderName: body.rootFolderName || null
+    };
   }
 
   async function checkAuthStatus() {
@@ -118,12 +154,11 @@
       appUserId: appUid,
       hasSession: !!session?.access_token,
       authUserId: session?.user?.id || null,
-      authEmail: session?.user?.email || null,
       expiresAt: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
       linkedUserId: null,
     };
     if (!session?.access_token) {
-      return { ...detail, ok: false, code: "missing_session", message: "Document storage authorization is missing. Use “Reconnect storage”, or sign out and back in." };
+      return { ...detail, ok: false, code: "missing_session", message: 'Document storage authorization is missing. Use "Reconnect storage" to restore file access on this device.' };
     }
 
     if (appUid && session.user?.id && client.from) {
@@ -136,12 +171,23 @@
       }
       detail.linkedUserId = linked?.id != null ? Number(linked.id) : null;
       if (Number(linked?.id) !== Number(appUid)) {
-        return { ...detail, ok: false, code: "wrong_user", message: "Document storage is signed in as a different user. Sign out and back in to refresh authorization." };
+        return { ...detail, ok: false, code: "wrong_user", message: 'Document storage is linked to a different local session. Use "Reconnect storage" to refresh authorization.' };
       }
+    }
+
+    const central = await checkCentralDriveHealth(session.access_token);
+    if (!central.ok) {
+      return {
+        ...detail,
+        ...central,
+        ok: false,
+        centralStorageOk: false,
+      };
     }
 
     return {
       ...detail,
+      ...central,
       ok: true,
       code: "ok",
       message: "Document storage authorization is valid.",
@@ -154,18 +200,23 @@
     if (body.code === "drive_auth_revoked") {
       return "Document storage authorization has expired. Reconnect the central Google Drive storage account.";
     }
-    if (status === 401) return "Storage sign-in expired. Please sign out and back in.";
+    if (status === 401) return 'Storage sign-in expired. Use "Reconnect storage" in Settings > Diagnostics.';
     if (status === 403) return "You do not have access to this file.";
     if (status === 404) return "File not found in storage. It may need to be re-uploaded or migrated.";
     return detail;
   }
 
-  async function responseError(res, fallback) {
+  async function readResponseBody(res) {
     let body = {};
     let text = "";
     try { body = await res.clone().json(); } catch (_) {
       try { text = (await res.text()).trim(); } catch (_) {}
     }
+    return { body, text };
+  }
+
+  async function responseError(res, fallback) {
+    const { body, text } = await readResponseBody(res);
     return new Error(storageErrorMessage(res.status, body, fallback, text));
   }
 
@@ -251,5 +302,5 @@
     return data || null;
   }
 
-  window.DriveStorage = { enabled, ensureAuthSession, recoverSession, checkAuthStatus, upload, uploadAvatar, objectUrl, remove, list, getOne };
+  window.DriveStorage = { enabled, ensureAuthSession, recoverSession, resetSession, checkAuthStatus, upload, uploadAvatar, objectUrl, remove, list, getOne };
 })();

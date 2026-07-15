@@ -123,6 +123,7 @@ const SyncEngineV3 = (() => {
       phone: row.phone || '',
       address: row.address || '',
       hoursLoggedTotal: Number(row.hours_logged_total || 0),
+      hideScore: !!row.hide_score,
       avatarBase64: '',
       avatarUrl: row.avatar_url || '',
       lastSeenAt: row.last_seen_at || null,
@@ -366,6 +367,7 @@ const SyncEngineV3 = (() => {
       if (changes.phone !== undefined) patch.phone = changes.phone || '';
       if (changes.address !== undefined) patch.address = changes.address || '';
       if (changes.hoursLoggedTotal !== undefined) patch.hours_logged_total = Number(changes.hoursLoggedTotal || 0);
+      if (changes.hideScore !== undefined) patch.hide_score = !!changes.hideScore;
       const { error } = await _sb().from('profiles').update(patch).eq('id', uuid);
       if (error) throw error;
     } else if (method === 'createProject') {

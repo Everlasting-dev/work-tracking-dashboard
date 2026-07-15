@@ -19,6 +19,7 @@ create table if not exists public.profiles (
   phone text not null default '',
   address text not null default '',
   hours_logged_total numeric(10,2) not null default 0,
+  hide_score boolean not null default false,
   metadata jsonb not null default '{}',
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),

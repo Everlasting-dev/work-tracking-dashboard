@@ -4,11 +4,22 @@
 // client — so changing ids cannot reach another project's file.
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, json, preflight, log } from "../_shared/cors.ts";
-import { getAuthedUser, serviceClient, loadProject, isMember } from "../_shared/auth.ts";
-import { downloadStream, thumbnailResponse, DriveAuthRevokedError } from "../_shared/drive.ts";
+import {
+  getAuthedUser,
+  serviceClient,
+  loadProject,
+  isMember,
+} from "../_shared/auth.ts";
+import {
+  downloadStream,
+  thumbnailResponse,
+  storageHealth,
+  DriveAuthRevokedError,
+} from "../_shared/drive.ts";
 
 serve(async (req) => {
-  const pf = preflight(req); if (pf) return pf;
+  const pf = preflight(req);
+  if (pf) return pf;
   if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
   try {
@@ -19,22 +30,38 @@ serve(async (req) => {
     const recordId = url.searchParams.get("id");
     const asDownload = url.searchParams.get("download") === "1";
     const asThumb = url.searchParams.get("thumb") === "1";
-    const thumbSize = Math.min(2048, Math.max(64, Number(url.searchParams.get("sz")) || 1024));
+    const healthCheck = url.searchParams.get("health") === "1";
+    const thumbSize = Math.min(
+      2048,
+      Math.max(64, Number(url.searchParams.get("sz")) || 1024),
+    );
+    if (healthCheck) {
+      const health = await storageHealth();
+      return json({ ok: true, code: "ok", ...health }, 200);
+    }
     if (!recordId) return json({ error: "id is required" }, 400);
 
     const svc = serviceClient();
-    const { data: row } = await svc.from("project_files")
-      .select("id, project_id, drive_file_id, original_name, mime_type, size_bytes, deleted_at")
-      .eq("id", recordId).maybeSingle();
+    const { data: row } = await svc
+      .from("project_files")
+      .select(
+        "id, project_id, drive_file_id, original_name, mime_type, size_bytes, deleted_at",
+      )
+      .eq("id", recordId)
+      .maybeSingle();
     if (!row || row.deleted_at) return json({ error: "Not found" }, 404);
 
     const project = await loadProject(svc, Number(row.project_id));
-    if (!(await isMember(svc, user, project))) return json({ error: "Forbidden" }, 403);
+    if (!(await isMember(svc, user, project)))
+      return json({ error: "Forbidden" }, 403);
 
     // ETag short-circuit (browser cache revalidation). Thumbs get their own tag.
     const etag = `"pf-${row.id}${asThumb ? `-t${thumbSize}` : ""}"`;
     if (req.headers.get("if-none-match") === etag) {
-      return new Response(null, { status: 304, headers: { ...corsHeaders, ETag: etag } });
+      return new Response(null, {
+        status: 304,
+        headers: { ...corsHeaders, ETag: etag },
+      });
     }
 
     // Low-quality fast preview: serve Drive's auto thumbnail when requested.
@@ -42,7 +69,10 @@ serve(async (req) => {
       const thumb = await thumbnailResponse(row.drive_file_id, thumbSize);
       if (thumb && thumb.body) {
         const h = new Headers(corsHeaders);
-        h.set("Content-Type", thumb.headers.get("content-type") || "image/jpeg");
+        h.set(
+          "Content-Type",
+          thumb.headers.get("content-type") || "image/jpeg",
+        );
         h.set("Content-Disposition", "inline");
         h.set("Cache-Control", "private, max-age=600");
         h.set("ETag", etag);
@@ -51,26 +81,43 @@ serve(async (req) => {
       // No thumbnail available → fall through to the full file.
     }
 
-    const driveRes = await downloadStream(row.drive_file_id, req.headers.get("range"));
+    const driveRes = await downloadStream(
+      row.drive_file_id,
+      req.headers.get("range"),
+    );
 
     const disposition = `${asDownload ? "attachment" : "inline"}; filename="${encodeURIComponent(row.original_name)}"`;
     const headers = new Headers(corsHeaders);
-    headers.set("Content-Type", row.mime_type || driveRes.headers.get("content-type") || "application/octet-stream");
+    headers.set(
+      "Content-Type",
+      row.mime_type ||
+        driveRes.headers.get("content-type") ||
+        "application/octet-stream",
+    );
     headers.set("Content-Disposition", disposition);
     headers.set("Cache-Control", "private, max-age=300");
     headers.set("ETag", etag);
     headers.set("Accept-Ranges", "bytes");
-    const cr = driveRes.headers.get("content-range"); if (cr) headers.set("Content-Range", cr);
-    const cl = driveRes.headers.get("content-length"); if (cl) headers.set("Content-Length", cl);
+    const cr = driveRes.headers.get("content-range");
+    if (cr) headers.set("Content-Range", cr);
+    const cl = driveRes.headers.get("content-length");
+    if (cl) headers.set("Content-Length", cl);
 
-    return new Response(driveRes.body, { status: driveRes.status === 206 ? 206 : 200, headers });
+    return new Response(driveRes.body, {
+      status: driveRes.status === 206 ? 206 : 200,
+      headers,
+    });
   } catch (err) {
     if (err instanceof DriveAuthRevokedError) {
       log("drive.auth_revoked", { operation: "content" });
-      return json({
-        code: "drive_auth_revoked",
-        error: "Storage authorization error. Reconnect the central Google Drive storage account.",
-      }, 502);
+      return json(
+        {
+          code: "drive_auth_revoked",
+          error:
+            "Storage authorization error. Reconnect the central Google Drive storage account.",
+        },
+        502,
+      );
     }
     log("content.error", { err: String(err) });
     return json({ error: "Could not load file." }, 500);

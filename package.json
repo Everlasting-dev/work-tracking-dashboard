@@ -1,6 +1,6 @@
 {
   "name": "orbitrack-desktop",
-  "version": "3.5.6",
+  "version": "3.5.7",
   "description": "Orbitrack Lite — project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
@@ -26,6 +26,8 @@
     "build:orbiobs": "esbuild ./build-src/orbiobs.js --bundle --format=iife --minify --outfile=vendor/orbiobs/orbiobs.js",
     "build:orbiemoji": "esbuild ./build-src/orbiemoji.js --bundle --format=iife --minify --outfile=vendor/orbiemoji/orbiemoji.js",
     "build:orbitiptap": "esbuild ./build-src/orbitiptap.js --bundle --format=iife --minify --outfile=vendor/orbitiptap/orbitiptap.js",
+    "drive:check": "node scripts/drive-storage-maintenance.mjs",
+    "drive:repair": "node scripts/drive-storage-maintenance.mjs --set-secrets --deploy",
     "dist": "electron-builder --win nsis",
     "dist:win": "electron-builder --win nsis",
     "publish:win": "electron-builder --win nsis --publish always"
