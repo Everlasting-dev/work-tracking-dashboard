@@ -1,6 +1,6 @@
 {
   "name": "orbitrack-desktop",
-  "version": "3.5.7",
+  "version": "3.5.8",
   "description": "Orbitrack Lite — project, task, file, and team activity tracking.",
   "author": "Everlasting",
   "private": true,
@@ -114,7 +114,6 @@
       "scripts/**/*",
       "supabase/**/*",
       "desktop/**/*",
-      "!**/node_modules/**/*",
       "!release/**/*",
       "!release-executive/**/*",
       "!rollback-backups/**/*",

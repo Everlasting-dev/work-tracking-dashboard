@@ -89,7 +89,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.7'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.8'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -8408,6 +8408,10 @@ function showOnboardingModal(force = false) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.8', date: '2026-07-15', highlights: [
+    'Fixed the Windows installer packaging so desktop auto-updates can load inside the installed app.',
+    'Added a release build check that prevents publishing if the updater module is missing.',
+  ] },
   { version: '3.5.7', date: '2026-07-15', highlights: [
     'Settings were simplified with smaller customization controls and cleaner support/update alignment.',
     'Score privacy is now available from your profile; hiding your score also scrambles other scores for you.',
@@ -9228,6 +9232,7 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
+    { version: '3.5.8', date: 'July 2026', features: ['Desktop updater packaging repaired for installed Windows builds', 'Release workflow now verifies the updater module before publishing'] },
     { version: '3.5.7', date: 'July 2026', features: ['Score privacy toggle with scrambled score display', 'Simpler settings landing page with compact controls', 'Single custom sidebar tooltip behavior', 'Arcade green/white theme and Invert Ink contrast polish', 'Dark-mode desktop update notice contrast fixed'] },
     { version: '3.5.3', date: 'July 2026', features: ['Team page simplified to member cards', 'Less team summary loading', 'Minor Lite polish'] },
     { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
