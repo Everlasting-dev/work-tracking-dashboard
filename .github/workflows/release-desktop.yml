@@ -46,7 +46,7 @@ jobs:
           if (-not ($asarList -match 'splash-sphere\.js')) {
             throw 'splash-sphere.js missing from app.asar'
           }
-          if (-not ($asarList -match 'node_modules/electron-updater')) {
+          if (-not ($asarList -match 'node_modules[\\/]electron-updater')) {
             throw 'electron-updater missing from app.asar'
           }
           $tmp = Join-Path $env:RUNNER_TEMP 'asar-check'
