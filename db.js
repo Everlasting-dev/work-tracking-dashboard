@@ -1000,6 +1000,13 @@ const LocalDB = {
       patch.username = next;
     }
     if (patch.department != null) patch.department = patch.department || '';
+    if (patch.avatarDriveId !== undefined) {
+      patch.avatarDriveId = patch.avatarDriveId || null;
+      patch.avatarBase64 = '';
+      patch.avatarUpdatedAt = new Date().toISOString();
+    }
+    if (patch.hideScore != null) patch.hideScore = !!patch.hideScore;
+    if (patch.hideFromTeamMap != null) patch.hideFromTeamMap = !!patch.hideFromTeamMap;
     await db.users.update(id, patch);
     if (actorUserId) {
       const details = Object.keys(patch).join(',');

@@ -633,6 +633,14 @@ const SyncEngine = (() => {
     if (!table || !Array.isArray(rosterRows) || !rosterRows.length) return;
     const valid = rosterRows.filter(r => r?.id != null);
     if (!valid.length) return;
+    const pendingUserPatches = {};
+    for (const op of _queue || []) {
+      if (op?.method !== 'updateUser' || op.status === 'done') continue;
+      const id = Number(op.args?.[0]);
+      const patch = op.args?.[1];
+      if (!Number.isFinite(id) || !patch || typeof patch !== 'object' || Array.isArray(patch)) continue;
+      pendingUserPatches[id] = { ...(pendingUserPatches[id] || {}), ...patch };
+    }
     const existingById = {};
     try {
       const existing = await table.bulkGet(valid.map(r => r.id));
@@ -646,7 +654,19 @@ const SyncEngine = (() => {
       } else {
         avatarBase64 = prev ? (prev.avatarBase64 || '') : '';
       }
-      return { ...r, avatarBase64 };
+      let next = { ...r, avatarBase64 };
+      if (!Object.prototype.hasOwnProperty.call(r, 'hideScore') && prev && Object.prototype.hasOwnProperty.call(prev, 'hideScore')) {
+        next.hideScore = !!prev.hideScore;
+      }
+      const pending = pendingUserPatches[r.id];
+      if (pending) next = { ...next, ...pending };
+      if (Object.prototype.hasOwnProperty.call(next, 'hideScore')) next.hideScore = !!next.hideScore;
+      if (Object.prototype.hasOwnProperty.call(next, 'hideFromTeamMap')) next.hideFromTeamMap = !!next.hideFromTeamMap;
+      if (Object.prototype.hasOwnProperty.call(next, 'avatarDriveId')) {
+        next.avatarDriveId = next.avatarDriveId || null;
+        if (next.avatarDriveId || pending?.avatarDriveId !== undefined) next.avatarBase64 = '';
+      }
+      return next;
     });
     await table.bulkPut(merged).catch(() => {});
   }

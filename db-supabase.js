@@ -1507,8 +1507,10 @@ const SupabaseDB = {
 
   async getUsersLite() {
     if (this._isOffline()) return this.getUsers();
+    let preserveHideScore = false;
     let { data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS).order('id');
     if (error && this._isMissingColumn(error)) {
+      preserveHideScore = true;
       ({ data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS.replace(',hide_score', '')).order('id'));
     }
     if (error) throw error;
@@ -1516,6 +1518,7 @@ const SupabaseDB = {
       const u = this._mapUser(r);
       // No avatar in this payload — signal the caller to preserve the cached one.
       delete u.avatarBase64;
+      if (preserveHideScore) delete u.hideScore;
       return u;
     });
   },

@@ -21,6 +21,7 @@ const ICONS = {
   download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>',
   logOut: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>',
   crown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.5 19h19l-1.5-9-4.5 4-3-7-3 7-4.5-4z"/></svg>',
+  ghost: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 3-2 3 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8Z"/></svg>',
   userCog: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><circle cx="18" cy="15" r="3"/><path d="m21.7 16.4-.9-.3M15.2 13.9l-.9-.3M16.6 18.7l.3-.9M13.9 12.2l.3-.9M19.7 18.3l-.4 1M15.3 12.6l-.4 1M20.6 13.8l-.9.3M14.1 16.3l-.9.3"/></svg>',
   sparkles: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>',
   bell: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
@@ -89,7 +90,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.9'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.10'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -567,6 +568,7 @@ function mapRestUser(row) {
     avatarDriveId: row.avatar_drive_id || null,
     hideScore: !!row.hide_score,
     hideFromTeamMap: !!row.hide_from_team_map,
+    mustChangePassword: !!row.must_change_password,
     lastSeenAt: row.last_seen_at || null,
     lastSeenIp: row.last_seen_ip || null,
     createdAt: row.created_at || new Date().toISOString()
@@ -1025,8 +1027,9 @@ function filterProjectsByClassroom(projects, allowedIds = null) {
 function classroomFilterHtml(classrooms = [], allowedIds = null) {
   const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(Number)) : null;
   const myId = Number(actorId());
+  const showOtherPersonal = isAdmin() && state.adminShowPersonalProjects;
   const visible = (allowedSet ? classrooms.filter(c => allowedSet.has(Number(c.id))) : classrooms)
-    .filter(c => !c.isPersonal || Number(c.ownerId) === myId);
+    .filter(c => !c.isPersonal || showOtherPersonal || Number(c.ownerId) === myId);
   if (!visible.length) return '';
   return `<div class="classroom-switcher classroom-switcher--lg">
     <span class="classroom-switcher-label">Classroom:</span>
@@ -1035,6 +1038,39 @@ function classroomFilterHtml(classrooms = [], allowedIds = null) {
       ${visible.map(c => `<option value="${c.id}" ${String(state.classroomFilter) === String(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
     </select>
   </div>`;
+}
+
+function adminHiddenPersonalClassroomIds(classrooms = []) {
+  if (!isAdmin() || state.adminShowPersonalProjects) return new Set();
+  const myId = Number(actorId());
+  return new Set((classrooms || [])
+    .filter(c => c?.isPersonal && Number(c.ownerId) !== myId)
+    .map(c => Number(c.id))
+    .filter(Number.isFinite));
+}
+
+function filterAdminPersonalProjects(projects = [], classrooms = []) {
+  const hiddenIds = adminHiddenPersonalClassroomIds(classrooms);
+  if (!hiddenIds.size) return projects;
+  return (projects || []).filter(p => p.classroomId == null || !hiddenIds.has(Number(p.classroomId)));
+}
+
+function adminPersonalProjectsToggleHtml(projects = [], classrooms = []) {
+  if (!isAdmin()) return '';
+  const myId = Number(actorId());
+  const personalIds = new Set((classrooms || [])
+    .filter(c => c?.isPersonal && Number(c.ownerId) !== myId)
+    .map(c => Number(c.id))
+    .filter(Number.isFinite));
+  if (!personalIds.size) return '';
+  const personalCount = (projects || []).filter(p => personalIds.has(Number(p.classroomId))).length;
+  const active = state.adminShowPersonalProjects;
+  const label = active ? 'Hide personal spaces' : 'Show personal spaces';
+  return `<button type="button" class="admin-personal-toggle ${active ? 'active' : ''}" data-action="toggle-admin-personal-projects" aria-pressed="${active ? 'true' : 'false'}" title="${esc(label)}${personalCount ? ` (${personalCount})` : ''}">
+    ${ICONS.ghost}
+    <span>Spaces</span>
+    <i aria-hidden="true"></i>
+  </button>`;
 }
 
 function workspaceScopeBarHtml() {
@@ -1231,6 +1267,10 @@ function resolveProjectIdFromAction(el) {
 
 /* ???? State ???? */
 
+const ADMIN_SHOW_PERSONAL_KEY = 'wt-admin-show-personal-projects-v1';
+const TEAM_RATING_GRAPH_KEY = 'wt-team-rating-graph-v1';
+const WHATS_NEW_SEEN_PREFIX = 'wt-whats-new-seen-v1';
+
 const state = {
   projectFilter: 'active',
   projectSearch: '',
@@ -1266,6 +1306,8 @@ const state = {
   adminBugTab: 'open',
   teamView: localStorage.getItem('wt-team-view-v1') || 'flow',
   userCardView: localStorage.getItem('wt-user-card-view-v1') || 'full',
+  teamRatingGraphVisible: localStorage.getItem(TEAM_RATING_GRAPH_KEY) === '1',
+  adminShowPersonalProjects: localStorage.getItem(ADMIN_SHOW_PERSONAL_KEY) === '1',
   shortcutPrefix: null,
   shortcutPrefixAt: 0
 };
@@ -1443,7 +1485,12 @@ function resetShortcutOverride(id = null) {
 
 function getThemeMode() {
   const saved = localStorage.getItem(THEME_KEY);
-  return saved === 'black' || saved === 'ink-invert' ? saved : 'normal';
+  if (saved === 'ink-invert') {
+    localStorage.setItem(THEME_KEY, 'black');
+    return 'black';
+  }
+  if (saved === 'black' || saved === 'normal') return saved;
+  return 'black';
 }
 
 const DAY_THEME_VARIANTS = {
@@ -1462,10 +1509,9 @@ function getThemeVariant() {
 }
 
 function applyTheme(mode = getThemeMode(), variant = getThemeVariant()) {
-  const next = mode === 'black' || mode === 'ink-invert' ? mode : 'normal';
+  const next = mode === 'black' ? mode : 'normal';
   const nextVariant = normalizeThemeVariant(variant);
-  document.body.classList.toggle('theme-black', next === 'black' || next === 'ink-invert');
-  document.body.classList.toggle('theme-ink-invert', next === 'ink-invert');
+  document.body.classList.toggle('theme-black', next === 'black');
   document.body.classList.toggle('theme-normal', next === 'normal');
   document.body.classList.toggle('theme-day-arcade', next === 'normal' && nextVariant === 'arcade');
   document.body.classList.toggle('theme-day-ink', next === 'normal' && nextVariant === 'ink');
@@ -2021,6 +2067,16 @@ async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
   const appEl = document.getElementById('app');
   const s = getSession();
+  const freshUser = s?.userId ? await DB.getUser(s.userId).catch(() => null) : null;
+  const activeUser = freshUser || s;
+  if (activeUser?.mustChangePassword) {
+    if (freshUser) setSession(freshUser, { remember: !!getTrustedSession() });
+    appEl.style.display = 'none';
+    document.getElementById('menu-toggle').style.display = 'none';
+    renderForcePasswordChange(activeUser);
+    requestSplashDismiss();
+    return;
+  }
   await DB.migrateFromLocalStorage(s.userId);
   if (DB.ensureSampleClassroom) await DB.ensureSampleClassroom(s.userId);
   // Personal space is created on the user's OWN first login, where s.userId is
@@ -2071,6 +2127,7 @@ async function showApp() {
   requestSplashDismiss();
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
+  setTimeout(() => showWhatsNewModal(false), 1000);
   setTimeout(() => runStorageAuthHealthCheck({ notify: true }).catch(() => {}), 1200);
 }
 
@@ -2709,8 +2766,12 @@ async function renderProjects() {
   const s = getSession();
   const { projects: allRaw, tasks: allTasks, users, classrooms = [] } = await getWorkspaceData();
   const allowedClassroomIds = await userClassroomIds();
-  const all = filterProjectsByClassroom(filterProjectsByWorkspace(allRaw), allowedClassroomIds);
+  const workspaceProjects = filterProjectsByWorkspace(allRaw);
+  const hiddenPersonalIds = adminHiddenPersonalClassroomIds(classrooms);
+  if (hiddenPersonalIds.has(Number(state.classroomFilter))) state.classroomFilter = 'all';
+  const all = filterProjectsByClassroom(filterAdminPersonalProjects(workspaceProjects, classrooms), allowedClassroomIds);
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
+  const classroomById = Object.fromEntries((classrooms || []).map(c => [Number(c.id), c]));
   const query = normalizeSearchText(state.projectSearch);
   const ownerFilter = state.projectOwnerFilter;
   const deptFilter = state.projectDepartmentFilter;
@@ -2763,7 +2824,7 @@ async function renderProjects() {
     <div class="projects-page-header">
       <div class="projects-page-title">
         <h1>Projects</h1>
-        <span class="projects-page-count">${allRaw.length} total</span>
+        <span class="projects-page-count">${all.length} total</span>
         ${state.classroomFilter && state.classroomFilter !== 'all' ? (() => {
           const room = classrooms.find(c => String(c.id) === String(state.classroomFilter));
           const pal = classroomPaletteOf(room || { id: state.classroomFilter });
@@ -2778,6 +2839,7 @@ async function renderProjects() {
     ${teamHint}
     ${workspaceScopeBarHtml()}
     ${classroomFilterHtml(classrooms, allowedClassroomIds)}
+    ${adminPersonalProjectsToggleHtml(workspaceProjects, classrooms)}
     <div class="projects-controls">
       <div class="projects-search-wrap">
         <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -2825,6 +2887,11 @@ async function renderProjects() {
       const ctAssignee = ct ? uMap[ct.assigneeId] : null;
       const pinnedFields = visibleFieldsByProject[p.id] || [];
       const attachmentCount = attachmentCounts[p.id] || 0;
+      const room = classroomById[Number(p.classroomId)];
+      const adminPersonalVisible = isAdmin() && state.adminShowPersonalProjects && room?.isPersonal && Number(room.ownerId) !== Number(s.userId);
+      const personalMarker = adminPersonalVisible
+        ? `<span class="project-card-private-ghost" title="Personal space project">${ICONS.ghost}</span>`
+        : '';
       const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
       const editorIds = Array.isArray(p.editorIds) ? p.editorIds.filter(id => Number(id) !== p.ownerId) : [];
       const memberAvatars = editorIds.slice(0, 4).map(eid => {
@@ -2837,7 +2904,7 @@ async function renderProjects() {
       return `<div class="project-card-v2" role="link" tabindex="0" data-action="open-project-card" data-project-id="${p.id}" style="--card-accent:${accent}">
         <div class="project-card-v2-accent-bar"></div>
         <div class="project-card-v2-body">
-          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!editable ? badge('View Only', 'muted') : (!mine ? badge('Editor', 'blue') : '')}</div>
+          <div class="project-card-v2-badges">${typeBadge(p.type)} ${statusBadge(p.status)} ${departmentBadge(dept)} ${projectModeBadge(p)} ${p.workflowTemplate ? badge(workflowTemplateLabel(p.workflowTemplate), 'accent') : ''} ${!editable ? badge('View Only', 'muted') : (!mine ? badge('Editor', 'blue') : '')} ${personalMarker}</div>
           <h3 class="project-card-v2-title" title="${esc(p.name)}">${esc(p.name)}${attachmentCount ? `<span class="project-attach-indicator" title="${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}">${ICONS.paperclip}</span>` : ''}</h3>
           <p class="project-card-v2-notes">${esc(p.notes || 'No description')}</p>
           ${renderProjectCardVisibleFields(pinnedFields)}
@@ -5254,7 +5321,7 @@ function renderAppearanceSettingsHtml() {
   const mode = getThemeMode();
   const variant = getThemeVariant();
   const density = getUiDensity();
-  const themeLabel = mode === 'black' ? 'Black' : mode === 'ink-invert' ? 'Ink Invert' : (DAY_THEME_VARIANTS[variant]?.label || 'Day');
+  const themeLabel = mode === 'black' ? 'Black' : (DAY_THEME_VARIANTS[variant]?.label || 'Day');
   const densityOptions = [
     { key: 'comfortable', label: UI_DENSITIES.comfortable.label },
     { key: 'compact', label: UI_DENSITIES.compact.label },
@@ -5272,11 +5339,6 @@ function renderAppearanceSettingsHtml() {
         <strong>Black</strong>
         <span>Dark workspace with high-contrast chrome.</span>
         <small>Night mode</small>
-      </button>
-      <button type="button" class="settings-performance-option ${mode === 'ink-invert' ? 'active' : ''}" data-action="set-theme-mode" data-mode="ink-invert">
-        <strong>Ink Invert</strong>
-        <span>Full black surfaces with white text, lines, and controls.</span>
-        <small>Pure contrast</small>
       </button>
       ${Object.entries(DAY_THEME_VARIANTS).map(([key, meta]) => `<button type="button" class="settings-performance-option ${mode === 'normal' && variant === key ? 'active' : ''}" data-action="set-theme-variant" data-variant="${esc(key)}">
         <strong>${esc(meta.label)}</strong>
@@ -8343,6 +8405,189 @@ async function showProfileModal() {
   if (nameInput) nameInput.addEventListener('input', () => { const el = document.getElementById('profile-cust-name'); if (el) el.textContent = nameInput.value.trim() || user.username; });
 }
 
+async function renderProfilePage() {
+  const content = document.getElementById('content');
+  const s = getSession();
+  if (!content || !s) return;
+  const user = await DB.getUser(s.userId).catch(() => null);
+  if (!user) {
+    content.innerHTML = emptyState({ icon: 'user', title: 'Profile unavailable', description: 'Could not load your profile right now.' });
+    return;
+  }
+
+  const isAdm = s.role === 'admin';
+  const { projects, tasks } = await getWorkspaceData();
+  const stats = userProfileStats(user, projects, tasks);
+  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  const isHex = (v) => /^#[0-9a-f]{6}$/i.test(String(v || ''));
+  const accentHex = isHex(user.accentColor) ? user.accentColor : (isHex(user.color) ? user.color : '#4f46e5');
+  const coverHex = isHex(user.coverColor) ? user.coverColor : accentHex;
+  const avatarUrl = avatarSrc(user) || '';
+  const rk = stats.rank;
+  const scoreVisible = canSeeScore(user, user);
+  const progressPct = rk.next != null ? Math.max(6, Math.min(97, Math.round((stats.score / (stats.score + rk.next)) * 100))) : 100;
+  const openTasks = tasks.filter(t => Number(t.assigneeId) === Number(user.id) && t.status !== 'done').length;
+  const avatarFrame = (src) => src
+    ? `<img src="${esc(src)}" class="profile-page-avatar-img" alt="${esc(initials)}">`
+    : `<div class="profile-page-avatar-initials" ${userColorStyle(user)}>${initials}</div>`;
+
+  content.innerHTML = `
+    <div class="profile-page">
+      <div class="profile-page-header" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+        <div class="profile-page-cover"></div>
+        <div class="profile-page-identity">
+          <div class="profile-page-avatar-frame" data-profile-avatar-frame>${avatarFrame(avatarUrl)}</div>
+          <div>
+            <h1>${esc(user.displayName || user.username)}</h1>
+            <p>@${esc(user.username)}${user.department ? ` / ${esc(departmentLabel(user.department))}` : ''}</p>
+            ${user.tagline ? `<span>${esc(user.tagline)}</span>` : ''}
+          </div>
+        </div>
+        <div class="profile-page-score profile-rank--${esc(rk.tone)}">
+          <span>${scoreVisible ? `${esc(rk.label)} ${esc(rk.levelRoman || '')}` : 'Score hidden'}</span>
+          <strong>${scoreHtml(user, stats, user, ' XP')}</strong>
+          <div class="profile-page-score-track ${scoreVisible ? '' : 'profile-page-score-track--hidden'}"><i style="width:${scoreVisible ? progressPct : 100}%"></i></div>
+        </div>
+      </div>
+
+      <div class="profile-page-grid">
+        <form data-form="edit-profile" class="profile-page-form">
+          <section class="profile-page-panel">
+            <div class="profile-page-panel-head">
+              <h2>Customize</h2>
+              <label class="btn btn-ghost btn-sm profile-photo-btn">Change photo<input type="file" id="profile-avatar-input" accept="image/*" style="display:none"></label>
+            </div>
+            <input type="hidden" name="avatarDriveId" id="profile-avatar-drive-id" value="${esc(user.avatarDriveId || '')}">
+            <input type="hidden" name="avatarChanged" id="profile-avatar-changed" value="">
+            <div class="profile-page-photo-row">
+              <div class="profile-page-avatar-frame profile-page-avatar-frame--small" data-profile-avatar-frame-small>${avatarFrame(avatarUrl)}</div>
+              <div>
+                <button type="button" class="btn btn-ghost btn-sm ${avatarUrl ? '' : 'hidden'}" id="profile-avatar-remove">Remove photo</button>
+                <p class="text-muted text-sm profile-photo-hint">Stored in Google Drive. JPG or PNG, up to 3 MB.</p>
+              </div>
+            </div>
+            <div class="profile-customize profile-customize--page">
+              <div class="profile-cust-preview" id="profile-cust-preview" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+                <span class="profile-cust-preview-avatar">${initials}</span>
+                <div class="profile-cust-preview-text"><strong id="profile-cust-name">${esc(user.displayName || user.username)}</strong><span id="profile-cust-tag">${esc(user.tagline || '') || 'Your tagline appears here'}</span></div>
+              </div>
+              <div class="form-group"><label>Tagline / status</label><input name="tagline" type="text" maxlength="80" value="${esc(user.tagline || '')}" placeholder="e.g. Logistics lead" id="profile-tagline-input"></div>
+              <div class="profile-page-color-row">
+                <div class="form-group"><label>Accent color</label><input name="accentColor" type="color" value="${esc(accentHex)}" id="profile-accent-input"></div>
+                <div class="form-group"><label>Cover color</label><input name="coverColor" type="color" value="${esc(coverHex)}" id="profile-cover-input"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="profile-page-panel">
+            <div class="profile-page-panel-head"><h2>Details</h2></div>
+            <div class="profile-page-two-col">
+              <div class="form-group"><label>Display Name</label><input name="displayName" type="text" value="${esc(user.displayName || '')}" required></div>
+              <div class="form-group"><label>Email</label><input name="email" type="email" value="${esc(user.email || '')}"></div>
+            </div>
+            <div class="form-group"><label>Bio / About</label><textarea name="bio" rows="4" class="fixed-textarea">${esc(user.bio || '')}</textarea></div>
+            <div class="profile-page-two-col">
+              <div class="form-group"><label>Birth date</label><input name="birthDate" type="date" value="${esc(user.birthDate || '')}"></div>
+              <div class="form-group"><label>Gender</label><select name="gender">
+                <option value="" ${!user.gender ? 'selected' : ''}>Not set</option>
+                <option value="female" ${user.gender === 'female' ? 'selected' : ''}>Female</option>
+                <option value="male" ${user.gender === 'male' ? 'selected' : ''}>Male</option>
+                <option value="non_binary" ${user.gender === 'non_binary' ? 'selected' : ''}>Non-binary</option>
+                <option value="prefer_not_to_say" ${user.gender === 'prefer_not_to_say' ? 'selected' : ''}>Prefer not to say</option>
+              </select></div>
+            </div>
+            <div class="profile-page-two-col">
+              <div class="form-group"><label>Phone</label><input name="phone" type="tel" value="${esc(user.phone || '')}"></div>
+              <div class="form-group"><label>Address</label><input name="address" type="text" value="${esc(user.address || '')}"></div>
+            </div>
+            ${isAdm ? `<div class="form-group"><label>Department</label><select name="department"><option value="" ${!user.department ? 'selected' : ''}>Unassigned</option>${departmentOptionsHtml(user.department || '')}</select></div>` : `<div class="form-group"><label>Department</label><div class="profile-dept-readonly">${user.department ? departmentBadge(user.department) : '<span class="text-muted text-sm">Unassigned</span>'}</div></div>`}
+            <div class="profile-page-privacy">
+              <label class="profile-toggle-row"><input type="checkbox" name="hideFromTeamMap" ${user.hideFromTeamMap ? 'checked' : ''}> <span><strong>Hide my tile from the team view</strong></span></label>
+              <label class="profile-toggle-row"><input type="checkbox" name="hideScore" ${user.hideScore ? 'checked' : ''}> <span><strong>Hide my score</strong><small>Your score becomes scrambled, and other people's scores are scrambled for you too.</small></span></label>
+            </div>
+            <div class="form-actions profile-page-actions"><button type="submit" class="btn btn-primary">Save profile</button></div>
+          </section>
+        </form>
+
+        <aside class="profile-page-panel profile-page-sidebar">
+          <div class="profile-page-panel-head"><h2>Snapshot</h2></div>
+          <div class="profile-page-stat-list">
+            <div><span>Open tasks</span><strong>${openTasks}</strong></div>
+            <div><span>Tasks done</span><strong>${stats.completedTasks}</strong></div>
+            <div><span>Projects created</span><strong>${stats.founded}</strong></div>
+            <div><span>Collaborations</span><strong>${stats.coediting}</strong></div>
+          </div>
+          <div class="profile-security-row"><div><strong>Password</strong><p class="text-muted text-sm">${isAdm ? 'Reset any account from Admin.' : 'Ask an admin for a one-time password.'}</p></div>${isAdm ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="request-password-change">Request password change</button>'}</div>
+        </aside>
+      </div>
+    </div>`;
+
+  bindProfilePageInteractions(user, avatarUrl, initials);
+}
+
+function bindProfilePageInteractions(user, avatarUrl, initials) {
+  const root = document.getElementById('content');
+  if (!root) return;
+  const driveIdInput = root.querySelector('#profile-avatar-drive-id');
+  const changedInput = root.querySelector('#profile-avatar-changed');
+  const frames = () => root.querySelectorAll('[data-profile-avatar-frame], [data-profile-avatar-frame-small]');
+  const setAvatarPreview = (src) => {
+    frames().forEach(frame => {
+      frame.innerHTML = src
+        ? `<img src="${esc(src)}" class="${frame.hasAttribute('data-profile-avatar-frame-small') ? 'profile-page-avatar-img profile-page-avatar-img--small' : 'profile-page-avatar-img'}" alt="avatar">`
+        : `<div class="${frame.hasAttribute('data-profile-avatar-frame-small') ? 'profile-page-avatar-initials profile-page-avatar-initials--small' : 'profile-page-avatar-initials'}" ${userColorStyle(user)}>${initials}</div>`;
+    });
+    root.querySelector('#profile-avatar-remove')?.classList.toggle('hidden', !src);
+  };
+
+  root.querySelector('#profile-avatar-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { showToast('Image too large (max 3 MB)', 'warning'); return; }
+    if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready. Try again in a moment.', 'error'); return; }
+    const localUrl = URL.createObjectURL(file);
+    setAvatarPreview(localUrl);
+    showToast('Uploading photo...');
+    try {
+      const driveId = await window.DriveStorage.uploadAvatar(file);
+      if (driveIdInput) driveIdInput.value = driveId;
+      if (changedInput) changedInput.value = '1';
+      showToast('Photo ready. Save profile to apply.', 'success');
+    } catch (err) {
+      setAvatarPreview(avatarUrl);
+      showToast(err?.message || 'Photo upload failed.', 'error');
+    }
+  });
+
+  root.querySelector('#profile-avatar-remove')?.addEventListener('click', () => {
+    if (driveIdInput) driveIdInput.value = '';
+    if (changedInput) changedInput.value = '1';
+    setAvatarPreview('');
+  });
+
+  const preview = root.querySelector('#profile-cust-preview');
+  const accentInput = root.querySelector('#profile-accent-input');
+  const coverInput = root.querySelector('#profile-cover-input');
+  const tagInput = root.querySelector('#profile-tagline-input');
+  const nameInput = root.querySelector('[name="displayName"]');
+  if (accentInput) accentInput.addEventListener('input', () => {
+    preview?.style.setProperty('--pc-accent', accentInput.value);
+    root.querySelector('.profile-page-header')?.style.setProperty('--pc-accent', accentInput.value);
+  });
+  if (coverInput) coverInput.addEventListener('input', () => {
+    preview?.style.setProperty('--pc-cover', coverInput.value);
+    root.querySelector('.profile-page-header')?.style.setProperty('--pc-cover', coverInput.value);
+  });
+  if (tagInput) tagInput.addEventListener('input', () => {
+    const el = root.querySelector('#profile-cust-tag');
+    if (el) el.textContent = tagInput.value.trim() || 'Your tagline appears here';
+  });
+  if (nameInput) nameInput.addEventListener('input', () => {
+    const el = root.querySelector('#profile-cust-name');
+    if (el) el.textContent = nameInput.value.trim() || user.username;
+  });
+}
+
 function howtoSeenKey(userId) { return `wt-howto-seen-${userId}`; }
 
 function showOnboardingModal(force = false) {
@@ -8406,18 +8651,66 @@ function showOnboardingModal(force = false) {
   localStorage.setItem(howtoSeenKey(s.userId), String(Date.now()));
 }
 
+function whatsNewSeenKey(userId) {
+  return `${WHATS_NEW_SEEN_PREFIX}-${userId}-${getAppVersion()}`;
+}
+
+function showWhatsNewModal(force = false, attempt = 0) {
+  const s = getSession();
+  if (!s) return;
+  const key = whatsNewSeenKey(s.userId);
+  if (!force && localStorage.getItem(key)) return;
+  const ov = document.getElementById('modal-overlay');
+  if (!ov) return;
+  if (!force && !ov.classList.contains('hidden')) {
+    if (attempt < 4) setTimeout(() => showWhatsNewModal(false, attempt + 1), 900);
+    return;
+  }
+  const version = getAppVersion();
+  ov.innerHTML = `<div class="modal whats-new-modal">
+    <div class="modal-header">
+      <h2>What's new in v${esc(version)}</h2>
+      <button type="button" class="btn-icon" data-action="close-whats-new" aria-label="Close">${ICONS.x}</button>
+    </div>
+    <div class="modal-body whats-new-body">
+      <div class="whats-new-lead">
+        <span>${ICONS.sparkles}</span>
+        <div><strong>A cleaner workspace is ready.</strong><p class="text-muted text-sm">Here are the bits worth noticing first.</p></div>
+      </div>
+      <ul class="whats-new-list">
+        <li><strong>Octane-style black UI</strong><span>The workspace now lands closer to the reference dashboard look.</span></li>
+        <li><strong>Profile is a full page</strong><span>Avatar, bio, and personal details have room to breathe.</span></li>
+        <li><strong>Team graph toggle</strong><span>Open or close the lightweight team chart from one highlighted control.</span></li>
+      </ul>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" data-action="goto-support">Learn more</button>
+        <button type="button" class="btn btn-primary" data-action="close-whats-new">Got it</button>
+      </div>
+    </div>
+  </div>`;
+  ov.classList.remove('hidden');
+  ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
+  delete ov.dataset.confirmDialog;
+  localStorage.setItem(key, String(Date.now()));
+}
+
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.10', date: '2026-07-18', highlights: [
+    'Theme choices are simpler, with Black and day themes only.',
+    'Team graph controls were cleaned up so the toolbar button opens and closes the graph.',
+    'First-login account setup is more reliable for newly created users.',
+  ] },
   { version: '3.5.9', date: '2026-07-15', highlights: [
+    'Octane-style black workspace skin with tighter contrast and cleaner controls.',
+    'My Profile now opens as a full page, with Drive-backed profile photos and more breathing room.',
+    'Team view now has a cleaner lightweight graph toggle.',
     'Fixed the Windows installer packaging so desktop auto-updates can load inside the installed app.',
     'Added a release build check that prevents publishing if the updater module is missing.',
   ] },
   { version: '3.5.7', date: '2026-07-15', highlights: [
     'Settings were simplified with smaller customization controls and cleaner support/update alignment.',
-    'Score privacy is now available from your profile; hiding your score also scrambles other scores for you.',
-    'Tooltip, update-notice, Arcade, and Invert Ink theme polish for clearer day and dark modes.',
-  ], adminNotes: [
-    'Deploy the score privacy migration before relying on the cloud toggle for all users.',
+    'Tooltip, update-notice, and Arcade theme polish for clearer day and dark modes.',
   ] },
   { version: '3.5.3', date: '2026-07-12', highlights: [
     'Teams now opens directly to the member cards and status view.',
@@ -9232,8 +9525,9 @@ async function renderAboutPage() {
   const version = getAppVersion();
 
   const releases = [
-    { version: '3.5.9', date: 'July 2026', features: ['Desktop updater packaging repaired for installed Windows builds', 'Release workflow now verifies the updater module before publishing'] },
-    { version: '3.5.7', date: 'July 2026', features: ['Score privacy toggle with scrambled score display', 'Simpler settings landing page with compact controls', 'Single custom sidebar tooltip behavior', 'Arcade green/white theme and Invert Ink contrast polish', 'Dark-mode desktop update notice contrast fixed'] },
+    { version: '3.5.10', date: 'July 2026', features: ['Simpler theme choices', 'Cleaner Team graph toggle', 'More reliable first-login account setup'] },
+    { version: '3.5.9', date: 'July 2026', features: ['Octane-style black workspace skin', 'My Profile is now a full page with Drive-backed profile photos', 'Cleaner Team graph toggle', 'Desktop updater packaging repaired for installed Windows builds', 'Release workflow now verifies the updater module before publishing'] },
+    { version: '3.5.7', date: 'July 2026', features: ['Simpler settings landing page with compact controls', 'Single custom sidebar tooltip behavior', 'Arcade green/white theme polish', 'Dark-mode desktop update notice contrast fixed'] },
     { version: '3.5.3', date: 'July 2026', features: ['Team page simplified to member cards', 'Less team summary loading', 'Minor Lite polish'] },
     { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
     { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
@@ -10089,8 +10383,10 @@ async function handleFormSubmit(e) {
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
       if (updated) setSession(updated);
+      bustWorkspaceCache();
       updateSidebarUser();
       showToast('Profile updated', 'success');
+      if ((window.location.hash || '').slice(1) === '/profile') await renderProfilePage();
     } else if (type === 'add-department') {
       if (!isAdmin()) { showToast('Admins only', 'error'); return; }
       const label = fd.get('label')?.trim();
@@ -10410,6 +10706,11 @@ const actions = {
     localStorage.setItem('wt-user-card-view-v1', state.userCardView);
     await renderUsers();
   },
+  'toggle-team-rating-graph': async () => {
+    state.teamRatingGraphVisible = !state.teamRatingGraphVisible;
+    localStorage.setItem(TEAM_RATING_GRAPH_KEY, state.teamRatingGraphVisible ? '1' : '0');
+    await renderUsers();
+  },
   'toggle-personal-note': async (btn) => { await window.WTNotes?.toggleDone?.(btn); },
   'delete-personal-note': async (btn) => { await window.WTNotes?.deleteNote?.(btn); },
   'add-task': (b) => showTaskModal(Number(b.dataset.projectId) || null, b.dataset.defaultStatus || 'todo', b.dataset.assigneeId != null ? Number(b.dataset.assigneeId) : null),
@@ -10577,15 +10878,15 @@ const actions = {
   'preview-attachment': async (b) => { await openFilePreview(attachmentDatasetId(b.dataset.id), previewSiblingIds(b)); },
   'user-export': async () => { closeUserMenu(); await exportData(); },
   'user-import': () => { closeUserMenu(); document.getElementById('import-input').click(); },
-  'user-view-profile': async () => { closeUserMenu(); await showProfileModal(); },
-  'edit-my-profile': async () => { await showProfileModal(); },
+  'user-view-profile': async () => { closeUserMenu(); hideModal(); window.location.hash = '#/profile'; },
+  'edit-my-profile': async () => { hideModal(); window.location.hash = '#/profile'; },
   'report-bug': () => { closeUserMenu(); showBugReportModal(); },
   'generate-my-report': async () => {
     if (!window.WTReports?.generateCurrentUserReport) { showToast('Reports module not loaded', 'error'); return; }
     await window.WTReports.generateCurrentUserReport();
   },
   'user-show-howto': () => { closeUserMenu(); showOnboardingModal(true); },
-  'goto-support': () => { closeUserMenu(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
+  'goto-support': () => { closeUserMenu(); hideModal(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
   'goto-diagnostics': () => { closeUserMenu(); state.settingsTab = 'diagnostics'; window.location.hash = '#/settings'; },
   'calendar-prev-month': async () => {
     const d = _parseCalendarMonth(state.calendarMonth);
@@ -11073,6 +11374,7 @@ const actions = {
   'filter-tasks': async (b) => { state.taskFilter = b.dataset.filter; await renderTasks(); },
   'global-task-view': async (b) => { state.globalTaskViewMode = b.dataset.view; await renderTasks(); },
   'close-modal': () => requestModalClose(),
+  'close-whats-new': () => hideModal(),
   'regen-temp-pw': () => {
     const inp = document.querySelector('.temp-pw-input');
     if (inp) inp.value = genTempPassword();
@@ -11093,6 +11395,20 @@ const actions = {
   'set-workspace-scope': async (b) => {
     state.workspaceScope = b.dataset.scope === 'everyone' ? 'everyone' : 'mine';
     await router();
+  },
+  'toggle-admin-personal-projects': async (b) => {
+    if (!isAdmin()) return;
+    state.adminShowPersonalProjects = !state.adminShowPersonalProjects;
+    localStorage.setItem(ADMIN_SHOW_PERSONAL_KEY, state.adminShowPersonalProjects ? '1' : '0');
+    await DB.logActivity?.({
+      userId: actorId(),
+      projectId: null,
+      action: 'updated',
+      entityType: 'admin_setting',
+      details: `personal-space project visibility ${state.adminShowPersonalProjects ? 'shown' : 'hidden'}`
+    }).catch(() => {});
+    state.classroomFilter = 'all';
+    await renderProjects();
   },
   'library-pick-upload': (b) => {
     const inp = document.getElementById('library-file-input');
@@ -11989,6 +12305,54 @@ async function renderRankingPanel() {
     <div class="ranking-panel-body">${rankingExplanationBodyHtml()}</div>`;
 }
 
+function teamRatingGraphHtml(enriched = [], viewer = getSession()) {
+  const rows = (enriched || []).map(({ u, stats }) => {
+    const visible = canSeeScore(u, viewer);
+    return {
+      u,
+      stats,
+      visible,
+      score: visible ? Math.max(0, Number(stats?.score || 0)) : null,
+      name: u.displayName || u.username || 'Member'
+    };
+  }).sort((a, b) => {
+    if (a.visible !== b.visible) return a.visible ? -1 : 1;
+    if (a.visible && b.visible && a.score !== b.score) return b.score - a.score;
+    return a.name.localeCompare(b.name);
+  });
+  const visibleRows = rows.filter(r => r.visible);
+  const maxScore = Math.max(1, ...visibleRows.map(r => r.score));
+  const top = visibleRows.reduce((best, row) => !best || row.score > best.score ? row : best, null);
+  const low = visibleRows.reduce((best, row) => !best || row.score < best.score ? row : best, null);
+  const hiddenCount = rows.length - visibleRows.length;
+  const stat = (label, row, tone) => row
+    ? `<div class="team-rating-stat team-rating-stat--${tone}"><span>${esc(label)}</span><strong>${esc(row.name)}</strong><small>${row.score} XP</small></div>`
+    : `<div class="team-rating-stat team-rating-stat--muted"><span>${esc(label)}</span><strong>Hidden</strong><small>No visible scores</small></div>`;
+  const rowHtml = rows.map((row, idx) => {
+    const init = row.name.charAt(0).toUpperCase();
+    const src = avatarSrc(row.u);
+    const width = row.visible ? Math.max(row.score ? 6 : 3, Math.round((row.score / maxScore) * 100)) : 100;
+    return `<div class="team-rating-row ${row.visible ? '' : 'team-rating-row--hidden'}">
+      <span class="team-rating-place">${row.visible ? `#${idx + 1}` : '--'}</span>
+      <span class="team-rating-avatar" ${userColorStyle(row.u)}>${src ? `<img src="${esc(src)}" alt="${esc(init)}">` : esc(init)}</span>
+      <span class="team-rating-name">${esc(row.name)}<small>${esc(row.stats?.position || 'Contributor')}</small></span>
+      <span class="team-rating-bar"><i style="width:${width}%"></i></span>
+      <strong class="team-rating-score">${scoreHtml(row.u, row.stats, viewer)}</strong>
+    </div>`;
+  }).join('');
+
+  return `<section class="team-rating-panel">
+    <div class="team-rating-head">
+      <div>
+        <h2>Rating Graph</h2>
+        <p class="view-subtitle">${visibleRows.length} visible score${visibleRows.length === 1 ? '' : 's'}${hiddenCount ? ` / ${hiddenCount} hidden` : ''}</p>
+      </div>
+    </div>
+    <div class="team-rating-stats">${stat('Max', top, 'max')}${stat('Min', low, 'min')}</div>
+    <div class="team-rating-list">${rowHtml || '<p class="text-muted text-sm">No users yet.</p>'}</div>
+  </section>`;
+}
+
 async function renderUsers() {
   const content = document.getElementById('content');
   if (!content) return;
@@ -12065,9 +12429,11 @@ async function renderUsers() {
           <button type="button" class="team-lite-tab ${compact ? '' : 'active'}" data-action="user-card-view" data-user-card-view="full" title="Expanded user cards">Expanded</button>
           <button type="button" class="team-lite-tab ${compact ? 'active' : ''}" data-action="user-card-view" data-user-card-view="mini" title="Mini user cards">Mini</button>
         </div>
+        <button type="button" class="btn btn-ghost ${state.teamRatingGraphVisible ? 'active' : ''}" data-action="toggle-team-rating-graph" title="${state.teamRatingGraphVisible ? 'Hide graph' : 'Show graph'}">${ICONS.gauge} Graph</button>
         <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
       </div>
     </div>
+    ${state.teamRatingGraphVisible ? teamRatingGraphHtml(enriched, viewer) : ''}
     <div class="user-grid ${compact ? 'user-grid--mini' : ''}">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
 }
@@ -12081,7 +12447,7 @@ async function router() {
   const previousRoute = state._activeRoute;
   if (previousRoute) saveRouteScroll(previousRoute);
   state._activeRoute = normalizeRouteForScroll(hash);
-  if (!['/settings', '/support', '/diagnostics', '/about', '/notifications', '/admin', '/dashboard', '/reports'].includes(hash)) {
+  if (!['/settings', '/support', '/diagnostics', '/about', '/notifications', '/admin', '/dashboard', '/reports', '/profile'].includes(hash)) {
     state.lastMainRoute = hash;
   }
   if (!hash.startsWith('/projects/')) {
@@ -12119,6 +12485,7 @@ async function router() {
   }
   else if (hash === '/tasks') await renderTasks();
   else if (hash === '/users') await renderUsers();
+  else if (hash === '/profile') await renderProfilePage();
   else if (hash === '/notifications') await renderNotificationsPage();
   else if (hash === '/diagnostics') {
     state.settingsTab = 'diagnostics';
@@ -12282,6 +12649,14 @@ async function applyRoute() {
       document.getElementById('menu-toggle').style.display = 'none';
       document.getElementById('auth-screen').style.display = 'flex';
       renderLogin();
+      requestSplashDismiss();
+      return;
+    }
+    if (user.mustChangePassword) {
+      setSession(user, { remember: !!getTrustedSession() });
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('menu-toggle').style.display = 'none';
+      renderForcePasswordChange(user);
       requestSplashDismiss();
       return;
     }
