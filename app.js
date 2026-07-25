@@ -14,6 +14,7 @@ const ICONS = {
   calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>',
   target: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
   alertTriangle: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
   user: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
   file: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
   chevronDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
@@ -36,6 +37,10 @@ const ICONS = {
   discordMark: '<svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z"/></svg>',
   paperclip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
   settings: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+  volume2: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>',
+  volumeX: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>',
+  logIn: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>',
+  arrowRight: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
 };
 
 /* ???? Utilities ???? */
@@ -340,7 +345,7 @@ function logisticsStepByKey(key) {
 }
 function projectModeBadge(p) {
   if (!p?.isOngoing) return '';
-  const label = p.cadence ? `Ongoing ? ${p.cadence}` : 'Ongoing';
+  const label = p.cadence ? `Ongoing - ${p.cadence}` : 'Ongoing';
   return badge(label, 'purple');
 }
 function userColor(user) {
@@ -516,8 +521,13 @@ function canManageProjectAccess(project) {
   if (!s || !project) return false;
   return s.role === 'admin' || project.ownerId === s.userId;
 }
-function isProjectOwner(project) { const s = getSession(); return !!s && !!project && project.ownerId === s.userId; }
-function canDeleteProject() { return isAdmin(); }
+function isProjectOwner(project) { const s = getSession(); return !!s && !!project && Number(project.ownerId) === Number(s.userId); }
+function canDeleteProject(project = null) {
+  const s = getSession();
+  if (!s) return false;
+  if (s.role === 'admin') return true;
+  return !!project && Number(project.ownerId) === Number(s.userId);
+}
 function actorId() { return getSession()?.userId ?? null; }
 
 /* ???? Workspace data cache (cuts duplicate Supabase round-trips) ???? */
@@ -1542,7 +1552,7 @@ function toggleThemeMode() {
 
 const UI_DENSITIES = {
   comfortable: { label: 'Comfortable', description: 'Larger project cards and roomier boards.' },
-  compact: { label: 'Compact', description: 'Smaller, denser cards ? default cute size.' },
+  compact: { label: 'Compact', description: 'Smaller, denser cards - default cute size.' },
   tiny: { label: 'Tiny', description: 'Maximum density for busy boards.' }
 };
 
@@ -1834,7 +1844,7 @@ async function renderRecovery() {
 
 async function renderRecoveryChooseUser() {
   const users = await DB.getUsers();
-  const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} ? ${esc(u.displayName || u.username)}</option>`).join('');
+  const opts = users.map(u => `<option value="${u.id}">${esc(u.username)} - ${esc(u.displayName || u.username)}</option>`).join('');
   document.getElementById('auth-content').innerHTML = `
     ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
@@ -1857,7 +1867,7 @@ function renderForcePasswordChange(user) {
     ${renderAuthThemeToggle()}
     <div class="auth-brand"><div class="brand-icon">O</div><span class="brand-name">Orbitrack</span></div>
     <h2>Set your password</h2>
-    <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password ? choose your own to continue.</p>
+    <p class="auth-subtitle">Welcome${user?.displayName ? `, ${esc(user.displayName)}` : ''}. Your account uses a one-time password - choose your own to continue.</p>
     <div class="auth-error" id="auth-error"></div>
     <form data-form="force-pw" data-user-id="${user?.id}">
       <div class="form-group"><label for="fp-pw">New password</label><input id="fp-pw" name="password" type="password" required minlength="4" autocomplete="new-password"></div>
@@ -1994,7 +2004,7 @@ async function handleAuth(e) {
     captureLastSeen(user.id).then(async () => {
       const fresh = await DB.getUser(user.id);
       const ip = fresh?.lastSeenIp;
-      await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: ip ? `${user.username} ? ${ip}` : user.username });
+      await DB.logActivity({ userId: user.id, action: 'logged_in', entityType: 'session', details: ip ? `${user.username} - ${ip}` : user.username });
     }).catch(() => {});
     await showApp();
   } else if (type === 'admin-setup') {
@@ -2098,8 +2108,8 @@ async function showApp() {
         const first = (s.displayName || s.username || '').split(/\s+/)[0] || 'there';
         await DB.createPersonalNote({
           userId: s.userId,
-          title: 'Welcome to Orbitrack ??',
-          content: `Hi ${first}! A few things to get you going:\n\n? Create a project from the Projects page, then add tasks.\n? Jot quick notes here any time (Alt+N).\n? Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
+          title: 'Welcome to Orbitrack',
+          content: `Hi ${first}! A few things to get you going:\n\n- Create a project from the Projects page, then add tasks.\n- Jot quick notes here any time (Alt+N).\n- Make it yours: set an avatar and colours in My Profile.\n\nNeed help? See the User guide under Support.`
         }).catch(() => {});
       }
     }
@@ -2157,7 +2167,7 @@ function updateOfflineSyncBanner() {
     tone = 'warning';
     text = `${failed} cloud sync issue${failed === 1 ? '' : 's'} need attention.`;
   } else if (syncing) {
-    text = 'Syncing saved changes?';
+    text = 'Syncing saved changes...';
   } else if (pending) {
     text = `${pending} change${pending === 1 ? '' : 's'} waiting to sync.`;
   }
@@ -2177,8 +2187,8 @@ async function handleNetworkOnline() {
     const s = getSession();
     if (s?.userId && window.RealtimeSync) RealtimeSync.restart().catch(() => {});
     if (window.SyncEngine) {
-      await SyncEngine.pull();
       await SyncEngine.flush();
+      await SyncEngine.pull();
     } else {
       await DB.retrySyncNow?.();
     }
@@ -2363,7 +2373,7 @@ async function showSyncDiagnosticsModal() {
     <p class="text-secondary text-sm sync-diag-intro">
       Edits are saved on this device first, then uploaded to the cloud in the background.
       ${!online ? '<strong class="sync-diag-offline">You appear to be offline.</strong> ' : ''}
-      Click a failed row below to read the error. Details are also printed to the browser console (F12 ? Console).
+      Click a failed row below to read the error. Details are also printed to the browser console (F12 > Console).
     </p>
     <div class="sync-diag-summary">
       <span>Queued <strong>${status.pending || 0}</strong></span>
@@ -2705,7 +2715,7 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="user-import">${ICONS.upload} Import Data</button>` : '';
   menu.innerHTML = `
     ${syncMenuItem}
-    <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? '??' : '??'} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
+    <button type="button" class="user-menu-item" data-action="toggle-notification-sounds">${NotificationSounds?.isMuted?.() ? ICONS.volumeX : ICONS.volume2} ${NotificationSounds?.isMuted?.() ? 'Unmute sounds' : 'Mute sounds'}</button>
     <button type="button" class="user-menu-item" data-action="user-view-profile">${ICONS.userCog} My Profile</button>
     <button type="button" class="user-menu-item" data-action="toggle-route-settings">${ICONS.settings} Settings</button>
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
@@ -2843,7 +2853,7 @@ async function renderProjects() {
     <div class="projects-controls">
       <div class="projects-search-wrap">
         <svg class="projects-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input id="project-search" class="projects-search-input" type="search" placeholder="Search projects?" value="${esc(state.projectSearch)}" data-project-filter-input="search">
+        <input id="project-search" class="projects-search-input" type="search" placeholder="Search projects..." value="${esc(state.projectSearch)}" data-project-filter-input="search">
         <kbd>/</kbd>
         <kbd>Ctrl K</kbd>
       </div>
@@ -2887,12 +2897,13 @@ async function renderProjects() {
       const ctAssignee = ct ? uMap[ct.assigneeId] : null;
       const pinnedFields = visibleFieldsByProject[p.id] || [];
       const attachmentCount = attachmentCounts[p.id] || 0;
+      const canRemove = canDeleteProject(p);
       const room = classroomById[Number(p.classroomId)];
       const adminPersonalVisible = isAdmin() && state.adminShowPersonalProjects && room?.isPersonal && Number(room.ownerId) !== Number(s.userId);
       const personalMarker = adminPersonalVisible
         ? `<span class="project-card-private-ghost" title="Personal space project">${ICONS.ghost}</span>`
         : '';
-      const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '?';
+      const ownerInit = owner ? (owner.displayName || owner.username).charAt(0).toUpperCase() : '-';
       const editorIds = Array.isArray(p.editorIds) ? p.editorIds.filter(id => Number(id) !== p.ownerId) : [];
       const memberAvatars = editorIds.slice(0, 4).map(eid => {
         const eu = uMap[eid]; if (!eu) return '';
@@ -2930,7 +2941,10 @@ async function renderProjects() {
             <span class="project-card-v2-owner-name project-card-v2-user-click" ${owner ? `data-action="show-user-profile" data-user-id="${owner.id}"` : ''}>${owner ? esc(owner.displayName || owner.username) : 'Unknown'}${owner?.role === 'admin' ? ` <span class="admin-crown" title="Admin">${ICONS.crown}</span>` : ''}</span>
             ${memberAvatars ? `<span class="project-card-v2-members">${memberAvatars}</span>` : ''}
           </span>
-          <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
+          <span class="project-card-v2-footer-actions">
+            ${canRemove ? `<button type="button" class="project-card-v2-delete" data-action="delete-project" data-id="${p.id}" title="Delete project">${ICONS.trash}</button>` : ''}
+            <span class="project-card-v2-time">${timeAgo(p.updatedAt)}</span>
+          </span>
         </div>
       </div>`;
     }).join('')}</div>`}`;
@@ -3072,7 +3086,7 @@ function renderTaskListViewHtml(tasks, uMap, editable, projectId, attachments = 
           ${editable
             ? `<button class="status-dot status-dot-${t.status}" data-action="cycle-task-status" data-id="${t.id}" title="Cycle status"></button>`
             : `<span class="status-dot status-dot-${t.status}"></span>`}
-          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details ? notes, tracking info, files">${esc(t.title)}</button>
+          <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Open details: notes, tracking info, files">${esc(t.title)}</button>
           <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </button>
@@ -3144,7 +3158,7 @@ function renderLinearTaskListHtml(tasks, uMap, editable, projectId, attachments 
 
   const renderAssignee = (user) => {
     const label = user ? (user.displayName || user.username || 'Assignee') : 'No assignee';
-    const initial = user ? label.charAt(0).toUpperCase() : '?';
+    const initial = user ? label.charAt(0).toUpperCase() : '-';
     const inner = avatarSrc(user)
       ? `<img src="${esc(avatarSrc(user))}" alt="${esc(label)}">`
       : esc(initial);
@@ -3430,7 +3444,7 @@ function renderTaskTimelineViewHtml(tasks, uMap, projectId) {
       </div>
       <div class="timeline-row-track-v2">
         <div class="timeline-today-track" style="left:${todayPct}%"></div>
-        <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} ? Due ${formatDateShort(t.dueDate)}">
+    <div class="timeline-bar-v2" style="left:${barLeft}%;width:${barW}%;background:${color}" title="${esc(t.title)} - Due ${formatDateShort(t.dueDate)}">
           <span class="timeline-bar-label-v2">${formatDateShort(t.dueDate)}</span>
         </div>
       </div>
@@ -3669,7 +3683,7 @@ function showProjectCelebration(project, creditLabel) {
   overlay.innerHTML = `
     <div class="celebration-confetti-layer">${pieces}</div>
     <div class="celebration-card">
-      <div class="celebration-trophy">??</div>
+      <div class="celebration-trophy">${ICONS.checkCircle}</div>
       <h2>Project complete!</h2>
       <p class="celebration-project">${esc(project.name)}</p>
       <p class="celebration-credit">Completed by <strong>${esc(creditLabel)}</strong></p>
@@ -3695,7 +3709,7 @@ async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks
   const who = actor?.displayName || actor?.username || 'Someone';
   await recordProjectActivity({
     userId: uid, projectId: p.id, action: 'updated', entityType: 'task', entityId: task.id,
-    details: `${task.title} ? ${TSTATUS[nextStatus]?.l || nextStatus}`,
+    details: `${task.title} - ${TSTATUS[nextStatus]?.l || nextStatus}`,
     discordLine: `${who} changed task "${task.title}" in "${p.name}" to ${TSTATUS[nextStatus]?.l || nextStatus}.`
   });
   if (workflowProjectStatus) {
@@ -3710,7 +3724,7 @@ async function applyTaskStatusSideEffects(p, task, nextStatus, uid, projectTasks
     const allDone = tasksAfterUpdate.length > 0 && tasksAfterUpdate.every(pt => pt.status === 'done');
     if (allDone && p.status !== 'completed') {
       await DB.updateProject(p.id, { status: 'completed' }, uid);
-      showToast(`"${p.name}" completed ? all tasks done!`, 'success');
+      showToast(`"${p.name}" completed - all tasks done!`, 'success');
       await recordProjectActivity({
         userId: uid, projectId: p.id, action: 'updated', entityType: 'project',
         details: 'moved to Completed (all tasks done)',
@@ -3901,8 +3915,8 @@ async function renderProjectDetail(projectId) {
         ${requestAccessBtn}
         ${manageAccess ? `<button class="btn btn-ghost" data-action="manage-project-access" data-project-id="${project.id}">${ICONS.userCog} Access</button>` : ''}
         ${editable ? `<button class="btn btn-ghost" data-action="edit-project" data-id="${project.id}">${ICONS.edit} Edit</button>` : ''}
-        ${canDeleteProject() ? `<button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` : ''}
-        ${!editable && !canDeleteProject() ? badge('View Only', 'muted') : ''}
+        ${canDeleteProject(project) ? `<button class="btn btn-ghost btn-danger-text" data-action="delete-project" data-id="${project.id}">${ICONS.trash} Delete</button>` : ''}
+        ${!editable && !canDeleteProject(project) ? badge('View Only', 'muted') : ''}
       </div>
     </div>
     <button type="button" class="project-panel-launcher ${state.projectPanelOpen ? 'is-open' : ''}" data-action="toggle-doc-panel" data-project-id="${project.id}" title="Documents" aria-label="Open documents panel">
@@ -4129,7 +4143,7 @@ async function renderDocumentPanel(projectId, editable) {
             <strong>${esc(m.title)}</strong>
             <span>${m.dueDate ? formatDateShort(m.dueDate) : (m.status || 'Pending')}</span>
           </div>
-          ${editable ? `<button type="button" class="btn-icon" data-action="complete-milestone" data-id="${m.id}" title="Complete">${ICONS.check || '?'}</button>` : ''}
+          ${editable ? `<button type="button" class="btn-icon" data-action="complete-milestone" data-id="${m.id}" title="Complete">${ICONS.checkCircle}</button>` : ''}
         </div>`).join('')}</div>`
     : `<p class="doc-panel-empty">Add milestones to break this project into smaller stages.</p>`;
 
@@ -4253,7 +4267,7 @@ async function openFilePreview(attachmentId, list = null) {
       catch (e) { showToast(e.message || 'Could not load file.', 'error'); return; }
     }
   }
-  if (!url) { showToast('File is not available ? it may still be syncing.', 'error'); return; }
+  if (!url) { showToast('File is not available - it may still be syncing.', 'error'); return; }
   if (state._previewUrl) try { URL.revokeObjectURL(state._previewUrl); } catch (_) {}
   state._previewUrl = isBlobUrl ? url : null;
   const ov = document.getElementById('file-preview-overlay');
@@ -4521,7 +4535,7 @@ async function renderTab(tab, projectId, editable) {
     const uMap = Object.fromEntries(users.map(u => [u.id, u]));
     el.innerHTML = `
       ${editable ? `<div class="tab-header"><button class="btn btn-sm btn-primary" data-action="add-update" data-project-id="${projectId}">${ICONS.plus} Add Note</button></div>` : ''}
-      <p class="text-muted text-sm tab-hint activity-hint">Activity log ? visible to you${isAdmin() ? ' and all admins' : ''}.</p>
+      <p class="text-muted text-sm tab-hint activity-hint">Activity log - visible to you${isAdmin() ? ' and all admins' : ''}.</p>
       ${logs.length === 0 ? emptyState({
         icon: 'activity',
         title: 'No activity yet',
@@ -4779,7 +4793,7 @@ async function renderTasks() {
             : `<span class="status-dot status-dot-${t.status}"></span>`}
           <button class="task-card-title-link task-card-title${t.status === 'done' ? ' text-strikethrough' : ''}" data-action="open-task-detail" data-id="${t.id}" title="Click to open details, add notes &amp; tracking info">${esc(t.title)}</button>
           ${showProject && proj ? `<a href="#/projects/${proj.id}" class="task-card-proj-badge">${esc(proj.name)}</a>` : ''}
-          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details ? add notes, tracking number, files">
+          <button class="btn-icon task-card-detail-btn" data-action="open-task-detail" data-id="${t.id}" title="Open details: add notes, tracking number, files">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </button>
           ${editable ? `<button class="btn-icon task-card-del" data-action="delete-task" data-id="${t.id}" title="Delete">${ICONS.trash}</button>` : ''}
@@ -4792,7 +4806,7 @@ async function renderTasks() {
           <div class="task-card-tags">
             ${t.dueDate ? `<span class="task-card-due ${od ? 'overdue' : isDueSoon(t.dueDate) ? 'due-soon' : 'text-muted'}">${ICONS.calendar} ${formatDateShort(t.dueDate)}</span>` : ''}
             ${prioBadge(t.priority)}
-            ${hasNotes ? `<span class="task-note-dot" title="Has notes">??</span>` : ''}
+            ${hasNotes ? `<span class="task-note-dot" title="Has notes">${ICONS.file}</span>` : ''}
           </div>
         </div>
         ${fileBadge ? `<div class="task-card-fields">${fileBadge}</div>` : ''}
@@ -5400,7 +5414,7 @@ function renderShortcutSettingsHtml({ readonly = false } = {}) {
     <div class="section-header">
       <div>
         <h2>Keyboard Shortcuts</h2>
-        <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">${readonly ? 'Reference only ? shortcuts cannot be changed on this account.' : 'Shortcuts are local to this device. Sequential shortcuts do not fire while typing.'}</p>
+      <p class="view-subtitle" style="margin-top:2px;font-size:0.8rem">${readonly ? 'Reference only - shortcuts cannot be changed on this account.' : 'Shortcuts are local to this device. Sequential shortcuts do not fire while typing.'}</p>
       </div>
       ${readonly ? '' : `<div class="settings-shortcut-toolbar">
         <button type="button" class="btn btn-sm btn-ghost" data-action="export-shortcuts">${ICONS.download} Export</button>
@@ -5802,11 +5816,11 @@ async function renderAdminDashboard({ embedded = false } = {}) {
           ${departmentBadge(u.department || '')}
         </div>
         <div class="dash-user-stats">
-          <span>${pCnt}p</span><span class="dash-sep">?</span>
+          <span>${pCnt}p</span><span class="dash-sep">&middot;</span>
           <span>${tCnt} tasks</span>
-          ${devCnt ? `<span class="dash-sep">?</span><span>${devCnt} devices</span>` : ''}
-          ${u.lastSeenAt ? `<span class="dash-sep">?</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
-          ${u.lastSeenIp ? `<span class="dash-sep">?</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
+          ${devCnt ? `<span class="dash-sep">&middot;</span><span>${devCnt} devices</span>` : ''}
+          ${u.lastSeenAt ? `<span class="dash-sep">&middot;</span><span class="text-muted">${timeAgo(u.lastSeenAt)}</span>` : ''}
+          ${u.lastSeenIp ? `<span class="dash-sep">&middot;</span><code class="dash-ip">${esc(u.lastSeenIp)}</code>` : ''}
         </div>
       </div>
     </div>`;
@@ -6001,7 +6015,7 @@ function renderMonthlyReportTable(rows, { showOwner = false, showDepartment = fa
       ${rows.map(row => `<tr>
         <td><a href="#/projects/${row.project.id}" class="report-project-link">${esc(row.project.name)}</a></td>
         ${showOwner ? `<td>${esc(row.owner?.displayName || row.owner?.username || 'Unknown')}</td>` : ''}
-        <td>${(row.contributors && row.contributors.length) ? `<span class="report-coauthors">${row.contributors.map(n => `<span class="report-coauthor-chip">${esc(n)}</span>`).join('')}</span>` : '<span class="text-muted">?</span>'}</td>
+        <td>${(row.contributors && row.contributors.length) ? `<span class="report-coauthors">${row.contributors.map(n => `<span class="report-coauthor-chip">${esc(n)}</span>`).join('')}</span>` : '<span class="text-muted">-</span>'}</td>
         ${showDepartment ? `<td>${departmentBadge(row.department || '')}</td>` : ''}
         <td>${row.project.createdAt ? formatDateShort(row.project.createdAt.split('T')[0]) : '?'}</td>
         <td>${row.completedAt ? formatDateShort(row.completedAt.split('T')[0]) : '?'}</td>
@@ -6123,7 +6137,7 @@ async function exportMonthlyReportPdf() {
   doc.text('PROGRESS BRIEF', 40, 24);
   doc.setTextColor(24, 27, 34);
   doc.setFontSize(18);
-  doc.text('Orbitrack ? Monthly Report', 40, 35);
+  doc.text('Orbitrack - Monthly Report', 40, 35);
   doc.setFontSize(12);
   doc.text(label, 40, 52);
 
@@ -6321,7 +6335,7 @@ async function showBugReportStatusModal(bugId) {
       </div>
       <p class="text-secondary text-sm" style="margin-bottom:12px">${esc(report.description)}</p>
       ${report.resolutionNote ? `<div class="bug-report-resolution" style="margin-bottom:12px"><strong>Resolution note</strong><p>${esc(report.resolutionNote)}</p></div>` : ''}
-      <p class="text-muted text-sm">Reported ${timeAgo(report.createdAt)} ? ${esc(report.severity)} severity</p>
+      <p class="text-muted text-sm">Reported ${timeAgo(report.createdAt)} - ${esc(report.severity)} severity</p>
     </div>
     <div class="form-actions"><button type="button" class="btn btn-primary" data-action="close-modal">Close</button></div>`);
 }
@@ -6339,16 +6353,28 @@ async function renderNotificationsPage() {
   const uid = actorId();
   const rows = uid ? await DB.getNotifications(uid, { limit: 100 }) : [];
   const unread = rows.filter(r => !r.readAt).length;
-  const TYPE_ICON = { assignment: '??', task_done: '?', mention: '??', update: '??', access_request: '??', access_approved: '?', access_declined: '?', bug_report: '??', project_completed: '??', priority_announcement: '!!', priority_force_logout: '!!' };
+  const TYPE_ICON = {
+    assignment: ICONS.user,
+    task_done: ICONS.checkCircle,
+    mention: ICONS.chat,
+    update: ICONS.refresh,
+    access_request: ICONS.userCog,
+    access_approved: ICONS.checkCircle,
+    access_declined: ICONS.x,
+    bug_report: ICONS.alertTriangle,
+    project_completed: ICONS.target,
+    priority_announcement: ICONS.bell,
+    priority_force_logout: ICONS.logOut
+  };
   content.innerHTML = `
     <div class="projects-page-header">
-      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` ? ${unread} unread` : ''}</span></div>
+      <div class="projects-page-title"><h1>Notifications</h1><span class="projects-page-count">${rows.length} total${unread ? ` - ${unread} unread` : ''}</span></div>
       ${unread ? `<button type="button" class="btn btn-ghost btn-sm" data-action="notif-mark-all">Mark all read</button>` : ''}
     </div>
     <div class="notif-page-list">
       ${rows.length === 0 ? emptyState({ icon: 'activity', title: 'All clear!', description: 'Assignments and project updates will appear here.' })
         : rows.map(n => {
-          const icon = TYPE_ICON[n.type] || '??';
+          const icon = TYPE_ICON[n.type] || ICONS.bell;
           return `<button type="button" class="notif-page-item${n.readAt ? '' : ' notif-page-item--unread'}" ${notifButtonAttrs(n)}>
             <span class="notif-page-icon">${icon}</span>
             <div class="notif-page-body">
@@ -6707,7 +6733,7 @@ async function showProjectModal(editId = null) {
   const editIntent = Number.isFinite(parsedId) && parsedId > 0;
   const p = editIntent ? await DB.getProject(parsedId) : null;
   if (editIntent && !p) {
-    showToast('Could not open project for editing ? refresh and try again.', 'error');
+    showToast('Could not open project for editing - refresh and try again.', 'error');
     return;
   }
   const currentUser = actorId() ? await DB.getUser(actorId()) : null;
@@ -6727,7 +6753,7 @@ async function showProjectModal(editId = null) {
     .filter(u => u.id !== p?.ownerId)
     .map(u => `<label class="project-editor-option">
       <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
-      <span>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</span>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` / ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' / Admin' : ''}</span>
     </label>`).join('');
 
   showModal(isE ? 'Edit Project' : 'New Project', `
@@ -6787,7 +6813,7 @@ async function showProjectModal(editId = null) {
         <input name="isOngoing" type="checkbox" value="1" ${p?.isOngoing?'checked':''}>
         <div class="pf-ongoing-text">
           <strong>Ongoing / recurring</strong>
-          <span>Maintenance, stock counts, upgrades ? work without a fixed end date</span>
+          <span>Maintenance, stock counts, upgrades - work without a fixed end date</span>
         </div>
         <select name="cadence" class="pf-meta-select" style="margin-left:auto;min-width:130px">
           <option value="" ${!p?.cadence?'selected':''}>No repeat</option>
@@ -6802,7 +6828,7 @@ async function showProjectModal(editId = null) {
       <div class="pf-tasks-block">
         <div class="pf-tasks-header">
           <span class="pf-tasks-title">Starting tasks</span>
-          <span class="pf-tasks-hint">Press ? to add next</span>
+          <span class="pf-tasks-hint">Press Enter to add next</span>
         </div>
         <div id="bulk-task-list" class="bulk-task-list"></div>
         <button type="button" id="bulk-add-task-btn" class="pf-add-task-btn">
@@ -7242,7 +7268,7 @@ function renderTaskChainTimelineHtml(tasks, uMap) {
         <div class="timeline-chain-node"><span>${index + 1}</span></div>
         <button type="button" class="timeline-chain-card" data-action="open-task-detail" data-id="${t.id}">
           <strong>${esc(t.title)}</strong>
-          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` ? ${formatDateShort(t.dueDate)}` : ''}${od ? ' ? overdue' : ''}</span>
+          <span>${TSTATUS[t.status]?.l || t.status}${t.dueDate ? ` - ${formatDateShort(t.dueDate)}` : ''}${od ? ' - overdue' : ''}</span>
           <small title="${esc(assignee?.displayName || assignee?.username || 'Unassigned')}">${init} ${esc(assignee?.displayName || assignee?.username || 'Unassigned')}</small>
         </button>
       </div>`;
@@ -7280,7 +7306,7 @@ async function showProjectAccessModal(projectId) {
     .filter(u => u.id !== project.ownerId)
     .map(u => `<label class="project-editor-option">
       <input type="checkbox" name="editorIds" value="${u.id}" ${editorSet.has(u.id) ? 'checked' : ''}>
-      <span>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</span>
+      <span>${esc(u.displayName || u.username)}${u.department ? ` / ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' / Admin' : ''}</span>
     </label>`).join('');
   const pendingRows = requests.filter(r => r.status === 'pending').map(r => {
     const user = uMap[r.requesterId];
@@ -7467,7 +7493,7 @@ async function showAssignTaskModal(taskId) {
       <div class="form-group"><label>Assignee</label>
         <select name="assigneeId">
           <option value="">Unassigned</option>
-          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' ? Admin' : ''}</option>`).join('')}
+          ${users.map(u => `<option value="${u.id}" ${u.id === task.assigneeId ? 'selected' : ''}>${esc(u.displayName || u.username)}${u.department ? ` / ${departmentLabel(u.department)}` : ''}${u.role === 'admin' ? ' / Admin' : ''}</option>`).join('')}
         </select>
       </div>
       <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save assignment</button></div>
@@ -7475,8 +7501,8 @@ async function showAssignTaskModal(taskId) {
 }
 
 function assigneeChipHtml(user) {
-  if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">?</span>Unassigned</span>`;
-  const initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+  if (!user) return `<span class="assignee-chip unassigned"><span class="assignee-avatar">${ICONS.user}</span>Unassigned</span>`;
+  const initials = (user.displayName || user.username || 'U').charAt(0).toUpperCase();
   const avatarInner = avatarSrc(user)
     ? `<img src="${esc(avatarSrc(user))}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="${esc(initials)}">`
     : initials;
@@ -7628,7 +7654,7 @@ function userProfileStats(userOrId, projects = [], tasks = []) {
   };
 }
 
-const SCORE_MASK_CHARS = ['#', '%', '?', '*', '+', '=', '~', '&'];
+const SCORE_MASK_CHARS = ['#', '%', '*', '+', '=', '~', '&'];
 
 function userHidesScore(user = null) {
   return !!(user?.hideScore || user?.hide_score);
@@ -7769,7 +7795,7 @@ async function showUserProfileModal(userId) {
   const tagline = (user.tagline || '').trim();
   const aboutHtml = bio
     ? esc(bio)
-    : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet ? ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, currently carrying ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+    : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet - ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, currently carrying ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
 
   const actionsRight = isSelf
     ? `<button type="button" class="pcard-btn pcard-btn--primary" data-action="edit-my-profile">Edit profile</button>`
@@ -7828,7 +7854,7 @@ async function showUserProfileModal(userId) {
       </div>
 
       ${userClassrooms.length ? `<div class="pcard-section pcard-spaces">
-        <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces ? ${userClassrooms.length}<span class="pcard-caret">?</span></button>
+        <button type="button" class="pcard-section-h pcard-spaces-h" data-pcard-toggle="spaces">Spaces (${userClassrooms.length})<span class="pcard-caret">${ICONS.chevronDown}</span></button>
         <div class="pcard-spaces-list" data-spaces hidden>
           ${userClassrooms.map(c => `<button type="button" class="pcard-space" data-action="open-classroom" data-classroom-id="${c.id}">${esc(c.name)}</button>`).join('')}
         </div>
@@ -8256,7 +8282,7 @@ async function showProfileModal() {
   const recentHtml = recent ? `<div class="pcard-recent">${formatActivityMessage(recent, uMap)}<small>${timeAgo(recent.createdAt)}</small></div>` : `<div class="pcard-recent pcard-recent--empty">No recent activity yet.</div>`;
   const bio = (user.bio || '').trim();
   const tagline = (user.tagline || '').trim();
-  const aboutHtml = bio ? esc(bio) : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet ? ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
+  const aboutHtml = bio ? esc(bio) : (tagline ? esc(tagline) : `<span class="pcard-muted">No bio yet - ${esc(departmentLabel(user.department || '') || 'team member')}${workload ? `, ${workload} open task${workload === 1 ? '' : 's'}` : ''}.</span>`);
 
   const avatarPreview = avatarUrl
     ? `<img id="profile-avatar-preview" src="${esc(avatarUrl)}" class="pcard-avatar-img" alt="${esc(initials)}">`
@@ -8374,15 +8400,15 @@ async function showProfileModal() {
       const file = e.target.files?.[0];
       if (!file) return;
       if (file.size > 3 * 1024 * 1024) { showToast('Image too large (max 3 MB)', 'warning'); return; }
-      if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready ? try again in a moment.', 'error'); return; }
+      if (!window.DriveStorage?.uploadAvatar) { showToast('Photo storage is not ready. Try again in a moment.', 'error'); return; }
       const localUrl = URL.createObjectURL(file);
       setAvatarPreview(localUrl);
-      showToast('Uploading photo?');
+      showToast('Uploading photo...');
       try {
         const driveId = await window.DriveStorage.uploadAvatar(file);
         if (driveIdInput) driveIdInput.value = driveId;
         if (changedInput) changedInput.value = '1';
-        showToast('Photo ready ? click Save profile to apply.', 'success');
+        showToast('Photo ready. Click Save profile to apply.', 'success');
       } catch (err) {
         setAvatarPreview(avatarUrl);
         showToast(err?.message || 'Photo upload failed.', 'error');
@@ -8510,6 +8536,12 @@ async function renderProfilePage() {
         </form>
 
         <aside class="profile-page-panel profile-page-sidebar">
+          <div class="profile-page-side-id" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+            <div class="profile-page-side-photo">${avatarFrame(avatarUrl)}</div>
+            <h2>${esc(user.displayName || user.username)}</h2>
+            <p>@${esc(user.username)}</p>
+            <span>${esc(user.tagline || departmentLabel(user.department || '') || 'Team member')}</span>
+          </div>
           <div class="profile-page-panel-head"><h2>Snapshot</h2></div>
           <div class="profile-page-stat-list">
             <div><span>Open tasks</span><strong>${openTasks}</strong></div>
@@ -8622,14 +8654,14 @@ function showOnboardingModal(force = false) {
             <span class="howto-step-icon">${ICONS.user}</span>
             <div>
               <strong>Classrooms & your personal space</strong>
-              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> ? anything there is hidden from others until you invite a collaborator.</p>
+              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> - anything there is hidden from others until you invite a collaborator.</p>
             </div>
           </li>
           <li>
             <span class="howto-step-icon">${ICONS.user}</span>
             <div>
               <strong>See your teammates' work</strong>
-              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' ? except for admins, who can see everything' : ''}.</p>
+              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' - except for admins, who can see everything' : ''}.</p>
             </div>
           </li>
           <li>
@@ -8643,7 +8675,7 @@ function showOnboardingModal(force = false) {
         <p class="text-muted text-sm" style="margin-top:14px">Want the full picture? Open the <strong>User guide</strong> from Support any time.</p>
         <div class="form-actions">
           <a href="#/guide" class="btn btn-ghost" data-action="close-howto">${ICONS.file} Full guide</a>
-          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it ? let's go</button>
+          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it - let's go</button>
         </div>
       </div>
     </div>`;
@@ -8735,10 +8767,10 @@ const SUPPORT_CHANGELOG = [
     'Admins can trigger live announcements and active-session logout requests.',
   ] },
   { version: '3.3.3', date: '2026-06-25', highlights: [
-    'Fixed document storage staying "not authorized" after a password change ? file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
+    'Fixed document storage staying "not authorized" after a password change - file-storage sign-in no longer depends on your app password, so it keeps working through password resets.',
   ] },
   { version: '3.3.2', date: '2026-06-25', highlights: [
-    'Fixed Google Drive file access dropping to "not authorized" ? sign-in sessions now stay valid across devices and app restarts.',
+    'Fixed Google Drive file access dropping to "not authorized" - sign-in sessions now stay valid across devices and app restarts.',
     'More detailed Diagnostics: storage session state, environment panel, and a one-click "Reconnect storage" button.',
   ] },
   { version: '3.3.1', date: '2026-06-25', minor: true },
@@ -8760,7 +8792,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.2.0', date: '2026-06-24', highlights: [
     'One-time-password accounts with a forced first-login password change.',
     'Private personal spaces, hidden from others until you invite a collaborator.',
-    'Profile customization ? avatar, tagline, and accent/cover colours.',
+    'Profile customization - avatar, tagline, and accent/cover colours.',
     'A searchable in-app user guide.',
   ], adminNotes: [
     'Create users with a one-time password and assign their classrooms at creation.',
@@ -8776,7 +8808,7 @@ const SUPPORT_CHANGELOG = [
   { version: '3.1.2', date: '2026-06-20', minor: true },
   { version: '3.1.1', date: '2026-06-20', minor: true },
   { version: '3.1.0', date: '2026-06-19', highlights: [
-    'File storage moved to Google Drive ? faster and more scalable; existing files were migrated automatically.',
+    'File storage moved to Google Drive - faster and more scalable; existing files were migrated automatically.',
   ] },
   { version: '3.0.11', date: '2026-06-18', minor: true },
   { version: '3.0.10', date: '2026-06-18', minor: true },
@@ -8868,7 +8900,7 @@ async function renderSupportPage() {
   content.innerHTML = `
     <div class="view-page support-page">
       <div class="projects-page-header">
-        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help ? Updates ? About</span></div>
+        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help - Updates - About</span></div>
       </div>
       <div class="support-grid">
         <section class="dash-panel support-card">
@@ -8898,7 +8930,7 @@ async function renderSupportPage() {
         </section>
         <section class="dash-panel support-card support-card-wide">
           <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
-          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace ? projects, boards, notes, and documents in one app.</p>
+          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace - projects, boards, notes, and documents in one app.</p>
           <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, Quill, jsPDF, SortableJS, and Electron. Made by Everlasting.</p>
         </section>
         <section class="dash-panel support-card support-card-wide">
@@ -8913,7 +8945,7 @@ const GUIDE_SECTIONS = [
   {
     id: 'start', icon: 'sparkles', title: 'Getting started',
     entries: [
-      { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password ? pick something only you know.' },
+      { t: 'Signing in', d: 'Enter the username and one-time password your admin gave you. On first sign-in you\'ll be asked to set your own password - pick something only you know.' },
       { t: 'The sidebar', d: 'Switch between Projects, Tasks, Calendar and Notifications from the left rail. Settings contains support and diagnostics. Your sync status shows live at the bottom.' },
       { t: 'Light & dark', d: 'Use the theme toggle to switch between the light and dark themes. Your choice is remembered on this device.' }
     ]
@@ -8921,8 +8953,8 @@ const GUIDE_SECTIONS = [
   {
     id: 'projects', icon: 'target', title: 'Projects & tasks',
     entries: [
-      { t: 'Create a project', d: 'Projects page ? New Project. Give it a name, description, type and priority, then choose the classroom (or your personal space) it belongs to.' },
-      { t: 'Add tasks', d: 'Open a project ? Add Task. Tasks can have assignees, due dates, priorities and a workflow step. New Task from the Tasks page lets you pick the project.' },
+      { t: 'Create a project', d: 'Projects page - New Project. Give it a name, description, type and priority, then choose the classroom (or your personal space) it belongs to.' },
+      { t: 'Add tasks', d: 'Open a project - Add Task. Tasks can have assignees, due dates, priorities and a workflow step. New Task from the Tasks page lets you pick the project.' },
       { t: 'Track progress', d: 'Each project shows completion, milestones and an activity log. Mark tasks done to move the progress bar.' },
       { t: 'Invite collaborators', d: 'As the owner, open a project\'s access controls to add editors. Editors can see and edit the project even if it lives in your private personal space.' }
     ]
@@ -8931,7 +8963,7 @@ const GUIDE_SECTIONS = [
     id: 'classrooms', icon: 'users', title: 'Classrooms & your personal space',
     entries: [
       { t: 'What is a classroom?', d: 'A classroom is a shared workspace grouping related projects. An admin decides which classrooms you can access.' },
-      { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else ? until you add them as a collaborator.' },
+      { t: 'Your personal space', d: 'Everyone gets a private "[Your name]\'s Space". Projects you put there are hidden from everyone else until you add them as a collaborator.' },
       { t: 'Sharing personal work', d: 'Add someone as an editor on a personal-space project to let just that person in. Remove them to make it private again.' }
     ]
   },
@@ -8945,7 +8977,7 @@ const GUIDE_SECTIONS = [
   {
     id: 'profile', icon: 'user', title: 'Profile & account',
     entries: [
-      { t: 'Customize your profile', d: 'My Profile ? set an avatar, a tagline, and accent + cover colors. A live preview shows how your profile header will look.' },
+      { t: 'Customize your profile', d: 'My Profile - set an avatar, a tagline, and accent + cover colors. A live preview shows how your profile header will look.' },
       { t: 'Change your password', d: 'Use "Request password change" in My Profile. An admin confirms it and issues a fresh one-time password for you to reset.' }
     ]
   },
@@ -8953,15 +8985,15 @@ const GUIDE_SECTIONS = [
     id: 'diagnostics', icon: 'alertTriangle', title: 'Troubleshooting',
     entries: [
       { t: 'Diagnostics tab', d: 'Settings > Diagnostics shows storage authorization, cloud-sync state and any issues captured for support. Use "Copy report" or "Send to admin" when reporting a problem.' },
-      { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed ? reconnect and it will retry automatically.' }
+      { t: 'Sync status', d: 'Green means everything is synced. Amber means pending/syncing. Red means a sync failed - reconnect and it will retry automatically.' }
     ]
   },
   {
     id: 'admin', icon: 'crown', title: 'Admin tools', adminOnly: true,
     entries: [
-      { t: 'Create users', d: 'Admin ? Add User. Pick the classrooms they can access; the app generates a one-time password to share. They set their own password on first sign-in.' },
+      { t: 'Create users', d: 'Admin - Add User. Pick the classrooms they can access; the app generates a one-time password to share. They set their own password on first sign-in.' },
       { t: 'Issue a one-time password', d: 'Use "Send OTP" on a user to reset their password to a temp value they must change at next login. Handy when someone requests a reset.' },
-      { t: 'Manage classrooms', d: 'Settings ? Classrooms to create, rename or remove shared classrooms. Personal spaces are private and never shown here.' }
+      { t: 'Manage classrooms', d: 'Settings - Classrooms to create, rename or remove shared classrooms. Personal spaces are private and never shown here.' }
     ]
   }
 ];
@@ -9102,7 +9134,7 @@ function teamMemberCardHtml(member, { compact = false } = {}) {
     <span class="team-flow-avatar" ${userColorStyle(u)}>${avatar}</span>
     <span class="team-flow-main">
       <strong>${esc(name)}</strong>
-      <small>${esc(member.stats.position)}${u.department ? ` ? ${esc(departmentLabel(u.department))}` : ''}</small>
+      <small>${esc(member.stats.position)}${u.department ? ` - ${esc(departmentLabel(u.department))}` : ''}</small>
     </span>
     <span class="team-flow-presence">${presenceDotHtml(u)}</span>
     ${compact ? '' : `<span class="team-flow-work">
@@ -9171,7 +9203,7 @@ function renderProjectRoomsHtml(members, projects = [], tasks = []) {
     const nextTask = room.open.sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')))[0];
     return `<article class="team-room-card">
       <div class="team-room-head">
-        <div><strong>${esc(room.project.name)}</strong><small>${esc(STAT_CFG[room.project.status]?.l || room.project.status || 'Active')} ? ${room.open.length} open task${room.open.length === 1 ? '' : 's'}</small></div>
+        <div><strong>${esc(room.project.name)}</strong><small>${esc(STAT_CFG[room.project.status]?.l || room.project.status || 'Active')} - ${room.open.length} open task${room.open.length === 1 ? '' : 's'}</small></div>
         ${badge(`${room.people.length} ${room.people.length === 1 ? 'member' : 'members'}`, 'blue')}
       </div>
       <div class="team-room-progress">${progressBar(room.progress, 'sm')}<span>${room.progress}%</span></div>
@@ -9216,7 +9248,7 @@ async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
     <div class="dash-panel-head team-lite-head">
       <div>
         <h3>Team View</h3>
-        <span class="projects-page-count">${visibleUsers.length} visible ? ${active} online ? ${idle} idle ? ${blocked} blocked</span>
+        <span class="projects-page-count">${visibleUsers.length} visible - ${active} online - ${idle} idle - ${blocked} blocked</span>
       </div>
       <div class="team-lite-tabs" role="tablist" aria-label="Team view">
         ${tabs.map(([key, label]) => `<button type="button" class="team-lite-tab ${view === key ? 'active' : ''}" data-action="team-view-tab" data-team-view="${key}">${label}</button>`).join('')}
@@ -9435,7 +9467,7 @@ async function renderCalendarPage() {
               <button type="button" class="btn-icon" data-action="delete-calendar-event" data-id="${it.id}" title="Delete">${ICONS.trash}</button></div>`;
           }
           if (it.kind === 'due') {
-            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">Due ? ${esc(it.projectName)}</span>
+            return `<div class="cal-side-item"><strong>${esc(it.title)}</strong><span class="text-muted text-sm">Due - ${esc(it.projectName)}</span>
               <a href="#/projects/${it.projectId}" class="btn btn-sm btn-ghost">Open</a></div>`;
           }
           if (it.kind === 'birthday') {
@@ -9454,7 +9486,7 @@ async function renderCalendarPage() {
         <div class="cal-toolbar">
           <button type="button" class="btn btn-ghost" data-action="calendar-prev-month">${ICONS.arrowLeft}</button>
           <button type="button" class="btn btn-ghost" data-action="calendar-today">Today</button>
-          <button type="button" class="btn btn-ghost" data-action="calendar-next-month">?</button>
+          <button type="button" class="btn btn-ghost" data-action="calendar-next-month">${ICONS.arrowRight}</button>
         </div>
       </div>
       <div class="calendar-summary-grid">${summaryCards}</div>
@@ -9496,7 +9528,18 @@ async function renderActivityPage() {
   const log = await DB.getActivityLog({ limit: 200 });
   const users = await DB.getUsers();
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
-  const ACTION_ICON = { created:'??', updated:'??', deleted:'???', uploaded:'??', logged_in:'??', logged_out:'??', noted:'??', completed:'?', assigned:'??', task_done:'?' };
+  const ACTION_ICON = {
+    created: ICONS.plus,
+    updated: ICONS.edit,
+    deleted: ICONS.trash,
+    uploaded: ICONS.upload,
+    logged_in: ICONS.logIn,
+    logged_out: ICONS.logOut,
+    noted: ICONS.file,
+    completed: ICONS.checkCircle,
+    assigned: ICONS.user,
+    task_done: ICONS.checkCircle
+  };
   content.innerHTML = `
     <div class="projects-page-header">
       <div class="projects-page-title"><h1>Activity Log</h1><span class="projects-page-count">${log.length} entries</span></div>
@@ -9506,8 +9549,8 @@ async function renderActivityPage() {
       ${log.length === 0 ? emptyState({ icon:'activity', title:'No activity yet', description:'Actions taken in the app appear here.' })
         : log.map(entry => {
           const who = uMap[entry.userId];
-          const init = who ? (who.displayName || who.username || '?').charAt(0).toUpperCase() : '?';
-          const icon = ACTION_ICON[entry.action] || '?';
+          const init = who ? (who.displayName || who.username || 'U').charAt(0).toUpperCase() : '-';
+          const icon = ACTION_ICON[entry.action] || ICONS.clock;
           return `<div class="activity-page-row">
             <span class="activity-page-icon">${icon}</span>
             <span class="dash-act-av" ${userColorStyle(who)}>${init}</span>
@@ -9538,12 +9581,12 @@ async function renderAboutPage() {
     { version: '3.1.10', date: 'June 2026', features: ['Document storage sign-in fixed so users can open Drive-backed files reliably', 'Legacy Supabase documents remain available during Drive migration', 'Theme toggle added to login/recovery screens', 'Dark-mode contrast improved for login, cloud sync, and startup database-check messages', 'Projects sticky header clearance and dark frosted styling polished'] },
     { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme'] },
     { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map'] },
-    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed ? always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
+    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed - always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
     { version: '3.1.5', date: 'June 2026', features: ['Notebook-style Notes with titles, search, Quill formatting, autosave, and fallback editor', 'Quick task creation with multiline paste, advanced details on demand, and note/meeting-text task import', 'Momentum task header, focus filters, cleaner task cards, and stronger project brief/focus layout', 'Local vendor bundles for SortableJS, jsPDF, D3, Floating UI, and Quill'] },
-    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt ? always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
+    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt - always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
     { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
-    { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app ? files now load from Google Drive'] },
-    { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) ? existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
+    { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app - files now load from Google Drive'] },
+    { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) - existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
     { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
     { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports'] },
     { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
@@ -9584,7 +9627,7 @@ async function renderAboutPage() {
         <div class="dash-panel-head"><h3>Core Features</h3></div>
         <div class="features-grid">
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.folder}</div>
             <strong>Projects</strong>
             <p>Create projects, track status from planning to completion, set milestones, and filter by department.</p>
           </div>
@@ -9594,27 +9637,27 @@ async function renderAboutPage() {
             <p>List, Board, Timeline, and Flow diagram views. Drag-to-reorder, priority sorting, and dependency tracking.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.checkCircle}</div>
             <strong>Rich Notes</strong>
             <p>Add formatted notes to tasks with bold, italics, lists, and links. Persistent, auto-saved editing.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.cloud}</div>
             <strong>File Attachments</strong>
             <p>Drag & drop files, image previews, and full document support on projects and individual tasks.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.userCog}</div>
             <strong>Dashboard & Reports</strong>
             <p>Admin telemetry, monthly reports with PDF export, activity logs, and team analytics.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.bell}</div>
             <strong>Team Tiles</strong>
             <p>Tile-based team visibility with member status, contribution ranks, departments, and quick profile access.</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon">??</div>
+            <div class="feature-icon">${ICONS.download}</div>
             <strong>Smart Notifications</strong>
             <p>Get notified of assignments, completions, and project updates with customizable preferences.</p>
           </div>
@@ -9628,7 +9671,7 @@ async function renderAboutPage() {
             <div class="release-item${i === 0 ? ' release-latest' : ''}">
               <div class="release-badge">v${r.version}</div>
               <div class="release-content">
-                <h4>${r.version} ? ${r.date}</h4>
+                <h4>${r.version} - ${r.date}</h4>
                 <ul>${r.features.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
               </div>
             </div>
@@ -9651,7 +9694,7 @@ async function renderAboutPage() {
         <div class="dash-panel-head"><h3>Credits</h3></div>
         <p><strong>Created by:</strong> Everlasting</p>
         <p><strong>Email:</strong> <a href="mailto:procurement@subzeromotors.com">procurement@subzeromotors.com</a></p>
-        <p><strong>Built with:</strong> ?? for teams that get things done</p>
+        <p><strong>Built with:</strong> Care for teams that get things done</p>
       </section>
     </div>`;
 }
@@ -9671,21 +9714,21 @@ function showAboutModal() {
         </div>
         <div>
           <div class="about-app-name">Orbitrack</div>
-          <div class="about-version">Version ${esc(getAppVersion())} ? Built by Everlasting</div>
+          <div class="about-version">Version ${esc(getAppVersion())} - Built by Everlasting</div>
         </div>
       </div>
-      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports ? all in one place.</p>
+      <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports - all in one place.</p>
       <div class="about-features">
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Projects</strong><span> ? Status tracking, milestones, activity, documents, and project details in a focused slide drawer.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">?</span><div><strong>Tasks</strong><span> ? List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Task Details</strong><span> ? Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Files</strong><span> ? Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Calendar</strong><span> ? Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Dashboard &amp; Reports</strong><span> ? Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
-        <div class="about-feature-row"><span class="about-feature-icon">??</span><div><strong>Notifications</strong><span> ? Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.folder}</span><div><strong>Projects</strong><span> - Status tracking, milestones, activity, documents, and project details in a focused slide drawer.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.checkCircle}</span><div><strong>Tasks</strong><span> - List &amp; Board views, drag-to-reorder, priority sorting, grouped by project.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.edit}</span><div><strong>Task Details</strong><span> - Click any task to add notes, tracking numbers, custom fields, and file attachments.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.paperclip}</span><div><strong>Files</strong><span> - Drag &amp; drop files to projects or individual tasks. Images show live previews.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.calendar}</span><div><strong>Calendar</strong><span> - Summary cards, filterable day chips, agenda review, birthdays, events, and due work.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.gauge}</span><div><strong>Dashboard &amp; Reports</strong><span> - Admin telemetry, monthly reports, activity log, brief-style HTML, and PDF export.</span></div></div>
+        <div class="about-feature-row"><span class="about-feature-icon">${ICONS.bell}</span><div><strong>Notifications</strong><span> - Assignment and completion alerts with in-app bell and themed confirmation dialogs.</span></div></div>
       </div>
       <div class="about-footer">
-        <span class="text-muted text-sm">Local-first with secure cloud sync ? Built with ??</span>
+        <span class="text-muted text-sm">Local-first with secure cloud sync - built with care</span>
       </div>
       <div class="form-actions"><button class="btn btn-primary" data-action="close-modal">Close</button></div>
     </div>`);
@@ -9711,7 +9754,7 @@ async function showTaskDetailModal(taskId) {
     if (a.blob && url) blobUrls.push(url);
     return `<div class="td-file-card">
       <button type="button" class="td-file-preview" data-action="preview-attachment" data-id="${a.id}">
-        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span style="font-size:1.6rem">${a.mimeType === 'application/pdf' ? '??' : '??'}</span>`}
+        ${isImg && url ? `<img src="${esc(url)}" alt="${esc(a.fileName)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : `<span class="td-file-icon">${a.mimeType === 'application/pdf' ? ICONS.file : ICONS.paperclip}</span>`}
       </button>
       <span class="td-file-name">${esc(a.fileName)}</span>
       ${editable ? `<button class="btn-icon td-file-del" data-action="delete-attachment" data-id="${a.id}" title="Remove">${ICONS.trash}</button>` : ''}
@@ -9769,7 +9812,7 @@ async function showTaskDetailModal(taskId) {
               <span class="td-blocker-status td-blocker-status--${esc(st.status)}">${esc(st.status)}</span>
             </label>`).join('')}
         </div>
-        <p class="text-muted text-sm" style="margin-top:6px">Tick the tasks that must finish first ? they appear as links on the Map.</p>
+        <p class="text-muted text-sm" style="margin-top:6px">Tick the tasks that must finish first - they appear as links on the Map.</p>
       </div>` : ''}
       ${editable ? `
       <div class="td-section" id="td-custom-fields-section">
@@ -9970,7 +10013,7 @@ async function handleFormSubmit(e) {
       const editId = form.dataset.editId;
       const _submitBtn = form.querySelector('[type=submit]');
       if (_submitBtn?.disabled) return;
-      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving?' : 'Creating?'; }
+      if (_submitBtn) { _submitBtn.disabled = true; _submitBtn.textContent = editId ? 'Saving...' : 'Creating...'; }
       if (editId) {
         const sv = fd.get('status'); if (sv) data.status = sv;
         const existing = await DB.getProject(Number(editId));
@@ -10130,7 +10173,7 @@ async function handleFormSubmit(e) {
       const reqId = await DB.requestProjectAccess({ projectId, requesterId: uid, message });
       const requester = await DB.getUser(uid);
       const who = requester?.displayName || requester?.username || 'Someone';
-      const msgSnippet = message ? `: "${message.slice(0, 120)}${message.length > 120 ? '?' : ''}"` : '';
+      const msgSnippet = message ? `: "${message.slice(0, 120)}${message.length > 120 ? '...' : ''}"` : '';
       await notifyUser({
         userId: project.ownerId,
         type: 'access_request',
@@ -10249,7 +10292,7 @@ async function handleFormSubmit(e) {
       const newAssignee = newAssigneeId ? await DB.getUser(newAssigneeId) : null;
       await recordProjectActivity({
         userId: uid, projectId: project.id, action: 'updated', entityType: 'task', entityId: taskId,
-        details: `${task.title}${newAssignee ? ` ? ${newAssignee.displayName || newAssignee.username}` : ' ? unassigned'}`,
+        details: `${task.title}${newAssignee ? ` - ${newAssignee.displayName || newAssignee.username}` : ' - unassigned'}`,
         discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} reassigned task "${task.title}" in "${project.name}"${newAssignee ? ` to ${newAssignee.displayName || newAssignee.username}` : ' to nobody'}.`
       });
       showToast('Task reassigned', 'success');
@@ -10278,7 +10321,7 @@ async function handleFormSubmit(e) {
       await recordProjectActivity({
         userId: uid, projectId: data.projectId, action: 'noted', entityType: 'update',
         details: data.content.slice(0, 200),
-        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '?' : ''}`
+        discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} added a project note to "${project?.name || 'a project'}": ${data.content.slice(0, 140)}${data.content.length > 140 ? '...' : ''}`
       });
     } else if (type === 'add-user') {
       const username = fd.get('username')?.trim();
@@ -10302,7 +10345,7 @@ async function handleFormSubmit(e) {
       // the cloud id-remap and produced mis-owned / duplicate personal spaces.
       bustWorkspaceCache();
       await router(); // refresh the admin user list behind the modal
-      showCredentialModal(username, password, { title: 'User created ? share these' });
+      showCredentialModal(username, password, { title: 'User created - share these' });
       return;
     } else if (type === 'add-calendar-event') {
       const dayKey = form.dataset.day;
@@ -10339,7 +10382,7 @@ async function handleFormSubmit(e) {
       const role = fd.get('role');
       if (!username) { showToast('Username is required', 'warning'); return; }
       if (!displayName) { showToast('Display name is required', 'warning'); return; }
-      if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2?32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
+      if (!/^[a-z0-9_.-]{2,32}$/.test(username)) { showToast('Username: 2-32 chars, lowercase letters, digits, _ . -', 'warning'); return; }
       const s = getSession();
       const isSelf = targetId === s.userId;
       const changes = { username, displayName, email, department, color, birthDate, gender, phone, address, hoursLoggedTotal };
@@ -10352,7 +10395,7 @@ async function handleFormSubmit(e) {
       }
       if (isSelf) {
         const updated = await DB.getUser(targetId);
-        if (updated) setSession(updated);
+        if (updated) setSession(updated, { remember: !!getTrustedSession() });
         updateSidebarUser();
       }
       showToast('User updated', 'success');
@@ -10382,7 +10425,7 @@ async function handleFormSubmit(e) {
       if (isAdmin()) profileData.department = department;
       await DB.updateUser(s.userId, profileData, s.userId);
       const updated = await DB.getUser(s.userId);
-      if (updated) setSession(updated);
+      if (updated) setSession(updated, { remember: !!getTrustedSession() });
       bustWorkspaceCache();
       updateSidebarUser();
       showToast('Profile updated', 'success');
@@ -10493,7 +10536,7 @@ async function handleFormSubmit(e) {
     }
     console.error(err);
     const msg = err?.message || err?.details || 'Something went wrong';
-    showToast(msg.includes('duplicate key') ? 'Could not save ? try refreshing the page' : msg, 'error');
+    showToast(msg.includes('duplicate key') ? 'Could not save. Try refreshing the page' : msg, 'error');
   }
 }
 
@@ -10631,8 +10674,8 @@ const actions = {
       try {
         if (window.SyncEngineV3) await SyncEngineV3.pull();
         else if (window.SyncEngine) {
-          await SyncEngine.pull();
           if (SyncEngine.flush) await SyncEngine.flush();
+          await SyncEngine.pull();
         } else if (DB.retrySyncNow) {
           await DB.retrySyncNow();
         }
@@ -10720,9 +10763,9 @@ const actions = {
   'send-announcement': (b) => showAnnouncementModal(b.dataset.userId ? Number(b.dataset.userId) : null),
   'edit-project': (b) => showProjectModal(resolveProjectIdFromAction(b)),
   'delete-project': async (b) => {
-    if (!canDeleteProject()) { showToast('Only admins can delete projects', 'error'); return; }
     const p = await DB.getProject(Number(b.dataset.id));
     if (!p) { showToast('Project not found', 'error'); return; }
+    if (!canDeleteProject(p)) { showToast('Only project owners and admins can delete projects', 'error'); return; }
     if (!await showConfirmDialog({
       title: 'Delete project?',
       message: 'Delete this project and all its data? This cannot be undone.',
@@ -10731,7 +10774,7 @@ const actions = {
     })) return;
     await DB.deleteProject(p.id, actorId());
     await recordProjectActivity({
-      userId: actorId(), projectId: p.id, action: 'deleted', entityType: 'project',
+      userId: actorId(), projectId: null, action: 'deleted', entityType: 'project', entityId: p.id,
       details: p.name,
       discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} deleted project "${p.name}".`
     });
@@ -11057,8 +11100,8 @@ const actions = {
     showToast('Syncing...', 'info');
     try {
       if (window.SyncEngine) {
-        await SyncEngine.pull();
         await SyncEngine.flush();
+        await SyncEngine.pull();
       } else if (DB.retrySyncNow) {
         await DB.retrySyncNow();
       } else if (DB.flushPendingSync) {
@@ -11084,10 +11127,11 @@ const actions = {
   },
   'sync-retry-now': async () => {
     if (window.SyncEngine && SyncEngine.retry) {
-      showToast('Retrying sync?', 'info');
+      showToast('Retrying sync...', 'info');
       try {
-        await SyncEngine.pull();
         await SyncEngine.retry();
+        if (SyncEngine.flush) await SyncEngine.flush();
+        await SyncEngine.pull();
         bustWorkspaceCache();
         await getWorkspaceData(true).catch(() => null);
       } catch (_) {}
@@ -11112,7 +11156,7 @@ const actions = {
     bustWorkspaceCache();
     hideModal();
     if (window.SyncEngine) await SyncEngine.pull();
-    showToast('Cache cleared ? reloading fresh data from the cloud?', 'info');
+    showToast('Cache cleared - reloading fresh data from the cloud...', 'info');
     await router();
   },
   'sync-copy-errors': async () => {
@@ -11126,7 +11170,7 @@ const actions = {
       await navigator.clipboard.writeText(text);
       showToast('Errors copied to clipboard', 'success');
     } catch (_) {
-      showToast('Could not copy ? see browser console (F12)', 'warning');
+      showToast('Could not copy. See browser console (F12)', 'warning');
       console.log(text);
     }
   },
@@ -11153,12 +11197,12 @@ const actions = {
       : (DB.getSyncQueueDetails ? DB.getSyncQueueDetails() : []);
     const job = jobs[idx];
     if (!job?.lastError) return;
-    const description = `[${job.type}] ${job.summary || '?'}\nAttempts: ${job.attempts || 0}\n\n${job.lastError}`;
+    const description = `[${job.type}] ${job.summary || 'No summary'}\nAttempts: ${job.attempts || 0}\n\n${job.lastError}`;
     try {
       const title = await fileSyncErrorReport(description);
-      showToast(`Report "${title}" sent ? error copied to clipboard`, 'success');
+      showToast(`Report "${title}" sent - error copied to clipboard`, 'success');
     } catch (_) {
-      showToast('Could not send report ? try using the Report a Bug button instead', 'warning');
+      showToast('Could not send report. Try using the Report a Bug button instead', 'warning');
     }
   },
   'sync-report-all': async () => {
@@ -11170,9 +11214,9 @@ const actions = {
     const description = `Cloud sync diagnostics (${lines.length} issue${lines.length === 1 ? '' : 's'})\n\n${lines.join('\n\n')}`;
     try {
       const title = await fileSyncErrorReport(description);
-      showToast(`Report "${title}" sent ? errors copied to clipboard`, 'success');
+      showToast(`Report "${title}" sent - errors copied to clipboard`, 'success');
     } catch (_) {
-      showToast('Could not send report ? try using the Report a Bug button instead', 'warning');
+      showToast('Could not send report. Try using the Report a Bug button instead', 'warning');
     }
   },
   'user-logout': async () => {
@@ -11189,7 +11233,7 @@ const actions = {
   'show-about': () => { closeUserMenu(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
-    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving?';
+    const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
     try {
       const taskId = Number(b.dataset.id);
       const title = document.querySelector('[data-td="title"]')?.value?.trim();
@@ -11273,7 +11317,7 @@ const actions = {
     form.dataset.projectId = String(projectId);
     form.dataset.after = afterId || '';
     form.dataset.status = status;
-    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name?" maxlength="200" autocomplete="off">
+    form.innerHTML = `<input class="task-qaf-input" type="text" placeholder="Task name" maxlength="200" autocomplete="off">
       <div class="task-qaf-btns">
         <button class="btn btn-sm btn-primary" data-action="confirm-quick-task" data-project-id="${projectId}" data-after="${afterId || ''}" data-status="${status}">Add</button>
         <button class="btn btn-sm btn-ghost" data-action="cancel-quick-task" data-project-id="${projectId}">Cancel</button>
@@ -11382,7 +11426,7 @@ const actions = {
   'copy-credentials': async (b) => {
     const text = `Username: ${b.dataset.username}\nTemp password: ${b.dataset.password}`;
     try { await navigator.clipboard.writeText(text); showToast('Credentials copied', 'success'); }
-    catch (_) { showToast('Copy failed ? select the text manually', 'warning'); }
+    catch (_) { showToast('Copy failed. Select the text manually', 'warning'); }
   },
   'request-password-change': async () => {
     const s = getSession(); if (!s) return;
@@ -11471,7 +11515,7 @@ const actions = {
         discordLine: `${getSession()?.displayName || getSession()?.username || 'Someone'} removed ${row.documentType ? `${documentTypeLabel(row.documentType).toLowerCase()} ` : ''}file "${row.fileName}" from "${p.name}".`
       });
       setUploadProgress({
-        title: 'Updating documents?',
+        title: 'Updating documents...',
         detail: row.fileName || '',
         percent: 82,
         state: 'uploading'
@@ -11686,7 +11730,12 @@ window.WTTasks = {
 
 /* ???? Toast ???? */
 
-const TOAST_ICONS = { success: '?', error: '?', warning: '!', info: 'i' };
+const TOAST_ICONS = {
+  success: ICONS.checkCircle,
+  error: ICONS.alertTriangle,
+  warning: ICONS.alertTriangle,
+  info: ICONS.info
+};
 
 const TOAST_MAX_VISIBLE = 3;
 
@@ -11702,7 +11751,7 @@ function formatUploadBytes(n) {
 }
 
 function setUploadProgress({
-  title = 'Uploading?',
+  title = 'Uploading...',
   detail = '',
   percent = null,
   indeterminate = false,
@@ -11729,7 +11778,7 @@ function setUploadProgress({
   if (pctEl) {
     if (state === 'complete') pctEl.textContent = 'Done';
     else if (state === 'error') pctEl.textContent = 'Failed';
-    else if (clamped == null) pctEl.textContent = '?';
+    else if (clamped == null) pctEl.textContent = '--';
     else pctEl.textContent = `${clamped}%`;
   }
 }
@@ -11778,7 +11827,7 @@ async function uploadFilesWithProgress({
       : '';
     setUploadProgress({
       title: countLabel,
-      detail: [file?.name, sizeLabel].filter(Boolean).join(' ? '),
+      detail: [file?.name, sizeLabel].filter(Boolean).join(' - '),
       percent: driveProgress ? overall : (fileProgress >= 1 ? ((index + 1) / total) * uploadShare * 100 : null),
       indeterminate: !driveProgress && fileProgress < 1,
       state: 'uploading'
@@ -11819,7 +11868,7 @@ async function uploadFilesWithProgress({
 
   if (uploaded) {
     setUploadProgress({
-      title: 'Updating documents?',
+      title: 'Updating documents...',
       detail: uploaded === 1 ? (list[0]?.name || '') : `${uploaded} file${uploaded === 1 ? '' : 's'} uploaded`,
       percent: Math.round(uploadShare * 100),
       state: 'uploading'
@@ -11832,7 +11881,7 @@ async function uploadFilesWithProgress({
       }
     }
     setUploadProgress({
-      title: 'Refreshing?',
+      title: 'Refreshing...',
       detail: 'Finishing up',
       percent: 96,
       state: 'uploading'
@@ -12242,12 +12291,12 @@ function rankingExplanationBodyHtmlV2() {
 function rankingExplanationBodyHtml() {
   return rankingExplanationBodyHtmlV2();
   const tiers = [
-    { l: 'Pawn', r: '0 ? 24', tone: 'muted' },
-    { l: 'Scout', r: '25 ? 59', tone: 'amber' },
-    { l: 'Pilot', r: '60 ? 109', tone: 'green' },
-    { l: 'Navigator', r: '110 ? 179', tone: 'blue' },
-    { l: 'Commander', r: '180 ? 299', tone: 'purple' },
-    { l: 'Architect', r: '300 ? 459', tone: 'purple' },
+    { l: 'Pawn', r: '0-24', tone: 'muted' },
+    { l: 'Scout', r: '25-59', tone: 'amber' },
+    { l: 'Pilot', r: '60-109', tone: 'green' },
+    { l: 'Navigator', r: '110-179', tone: 'blue' },
+    { l: 'Commander', r: '180-299', tone: 'purple' },
+    { l: 'Architect', r: '300-459', tone: 'purple' },
     { l: 'Orbital', r: '460+', tone: 'purple' },
   ];
   const milestones = [
@@ -12376,7 +12425,7 @@ async function renderUsers() {
 
   const compact = state.userCardView === 'mini';
   const cards = enriched.map(({ u, stats }, i) => {
-    const initials = (u.displayName || u.username || '?').charAt(0).toUpperCase();
+    const initials = (u.displayName || u.username || 'U').charAt(0).toUpperCase();
     const avatarInner = avatarSrc(u)
       ? `<img src="${esc(avatarSrc(u))}" alt="${esc(initials)}">`
       : initials;
@@ -12403,7 +12452,7 @@ async function renderUsers() {
       </div>
       <div class="user-card-info">
         <div class="user-card-name">${esc(u.displayName || u.username)}</div>
-        <div class="user-card-sub">@${esc(u.username)}${u.department ? ` ? ${departmentLabel(u.department)}` : ''}</div>
+        <div class="user-card-sub">@${esc(u.username)}${u.department ? ` - ${departmentLabel(u.department)}` : ''}</div>
         <div class="user-card-badges">
           ${rankBadge}
           ${badge(stats.position, 'accent')}
@@ -12423,7 +12472,7 @@ async function renderUsers() {
 
   content.innerHTML = `
     <div class="view-header">
-      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} ? ranked by contribution${userHidesScore(viewer) ? ' ? scores scrambled for you' : ''}</p></div>
+      <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} - ranked by contribution${userHidesScore(viewer) ? ' - scores scrambled for you' : ''}</p></div>
       <div class="view-actions user-view-actions">
         <div class="team-lite-tabs user-card-view-tabs" role="group" aria-label="User card view">
           <button type="button" class="team-lite-tab ${compact ? '' : 'active'}" data-action="user-card-view" data-user-card-view="full" title="Expanded user cards">Expanded</button>
@@ -12902,7 +12951,7 @@ async function init() {
     installGlobalErrorReporting();
     applyPerformanceMode();
     if (window.WT_SUPABASE_ERROR) {
-      showToast('Cloud database unavailable ? using browser-only storage for now.', 'warning');
+      showToast('Cloud database unavailable - using browser-only storage for now.', 'warning');
     }
     document.getElementById('auth-content').addEventListener('submit', handleAuth);
     window.addEventListener('wt-sync-status', () => {
@@ -12913,7 +12962,7 @@ async function init() {
     window.addEventListener('wt-sync-error', (e) => {
       const { summary, error } = e.detail || {};
       const label = summary ? `"${summary}"` : 'A change';
-      const hint = error ? ` ? ${error.slice(0, 120)}` : '';
+      const hint = error ? ` - ${error.slice(0, 120)}` : '';
       showToast(`Cloud sync failed: ${label} couldn't be saved${hint}`, 'error');
       updateOfflineSyncBanner();
     });

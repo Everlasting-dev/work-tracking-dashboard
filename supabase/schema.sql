@@ -14,6 +14,12 @@ create table if not exists public.wt_users (
   color text not null default '',
   bio text not null default '',
   avatar_base64 text not null default '',
+  avatar_drive_id text,
+  avatar_updated_at timestamptz,
+  tagline text not null default '',
+  accent_color text not null default '',
+  cover_color text not null default '',
+  hide_from_team_map boolean not null default false,
   last_seen_at timestamptz,
   last_seen_ip text,
   created_at timestamptz not null default now()
@@ -33,6 +39,12 @@ alter table public.wt_users add column if not exists phone text not null default
 alter table public.wt_users add column if not exists address text not null default '';
 alter table public.wt_users add column if not exists hours_logged_total numeric not null default 0;
 alter table public.wt_users add column if not exists hide_score boolean not null default false;
+alter table public.wt_users add column if not exists avatar_drive_id text;
+alter table public.wt_users add column if not exists avatar_updated_at timestamptz;
+alter table public.wt_users add column if not exists tagline text not null default '';
+alter table public.wt_users add column if not exists accent_color text not null default '';
+alter table public.wt_users add column if not exists cover_color text not null default '';
+alter table public.wt_users add column if not exists hide_from_team_map boolean not null default false;
 -- Trophy shelf (earned achievements) + team-map blob emoji decorations, both jsonb arrays.
 alter table public.wt_users add column if not exists trophies jsonb not null default '[]'::jsonb;
 alter table public.wt_users add column if not exists blob_reactions jsonb not null default '[]'::jsonb;

@@ -1507,18 +1507,32 @@ const SupabaseDB = {
 
   async getUsersLite() {
     if (this._isOffline()) return this.getUsers();
-    let preserveHideScore = false;
-    let { data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS).order('id');
-    if (error && this._isMissingColumn(error)) {
-      preserveHideScore = true;
-      ({ data, error } = await this._sb().from('wt_users').select(this._USER_LITE_COLS.replace(',hide_score', '')).order('id'));
+    const cols = this._USER_LITE_COLS.split(',');
+    const dropped = new Set();
+    let data = null;
+    let error = null;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      ({ data, error } = await this._sb().from('wt_users').select(cols.join(',')).order('id'));
+      if (!error || !this._isMissingColumn(error)) break;
+      const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').toLowerCase();
+      const missing = cols.find(col => msg.includes(col.toLowerCase()));
+      if (!missing) break;
+      dropped.add(missing);
+      cols.splice(cols.indexOf(missing), 1);
+      console.warn('[SupabaseDB] wt_users column missing, retrying roster pull without:', missing);
     }
     if (error) throw error;
     return (data || []).map(r => {
       const u = this._mapUser(r);
       // No avatar in this payload — signal the caller to preserve the cached one.
       delete u.avatarBase64;
-      if (preserveHideScore) delete u.hideScore;
+      if (dropped.has('hide_score')) delete u.hideScore;
+      if (dropped.has('hide_from_team_map')) delete u.hideFromTeamMap;
+      if (dropped.has('avatar_drive_id')) delete u.avatarDriveId;
+      if (dropped.has('avatar_updated_at')) delete u.avatarUpdatedAt;
+      if (dropped.has('tagline')) delete u.tagline;
+      if (dropped.has('accent_color')) delete u.accentColor;
+      if (dropped.has('cover_color')) delete u.coverColor;
       return u;
     });
   },
@@ -1578,29 +1592,25 @@ const SupabaseDB = {
       if (conflict && conflict.id !== id) throw new Error('Username already taken');
       patch.username = next;
     }
-    let { error } = await this._sb().from('wt_users').update(patch).eq('id', id);
-    if (error && this._isMissingColumn(error)) {
-      delete patch.department;
-      delete patch.color;
-      delete patch.bio;
-      delete patch.avatar_base64;
-      delete patch.avatar_drive_id;
-      delete patch.avatar_updated_at;
-      delete patch.tagline;
-      delete patch.accent_color;
-      delete patch.cover_color;
-      delete patch.hide_from_team_map;
-      delete patch.hide_score;
-      delete patch.trophies;
-      delete patch.blob_reactions;
-      ({ error } = await this._sb().from('wt_users').update(patch).eq('id', id));
+    let savedPatch = { ...patch };
+    let error = null;
+    const missingColumnText = (err) => [err?.message, err?.details, err?.hint].filter(Boolean).join(' ').toLowerCase();
+    for (let attempt = 0; attempt < 16; attempt++) {
+      if (!Object.keys(savedPatch).length) break;
+      ({ error } = await this._sb().from('wt_users').update(savedPatch).eq('id', id));
+      if (!error || !this._isMissingColumn(error)) break;
+      const msg = missingColumnText(error);
+      const missing = Object.keys(savedPatch).find(col => msg.includes(col.toLowerCase()));
+      if (!missing) break;
+      delete savedPatch[missing];
+      console.warn('[SupabaseDB] wt_users column missing, retrying profile save without:', missing);
     }
     if (error) throw error;
-    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username', bio: 'bio', avatar_base64: 'profile photo' };
+    const fieldLabels = { display_name: 'display name', email: 'email', role: 'role', department: 'department', discord_id: 'Discord ID', color: 'color', username: 'username', bio: 'bio', avatar_base64: 'profile photo', avatar_drive_id: 'profile photo', tagline: 'status', accent_color: 'accent color', cover_color: 'cover color', hide_from_team_map: 'team visibility', hide_score: 'score privacy' };
     if (actorUserId) {
       await this.logActivity({
         userId: actorUserId, action: 'updated', entityType: 'user', entityId: id,
-        details: Object.keys(patch).map(k => fieldLabels[k] || k).join(', ')
+        details: Object.keys(savedPatch).map(k => fieldLabels[k] || k).join(', ')
       });
     }
   },

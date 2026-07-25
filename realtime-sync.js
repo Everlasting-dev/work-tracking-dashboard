@@ -41,6 +41,28 @@ const RealtimeSync = (() => {
     try { await table.put(row); } catch (err) { console.warn('[RealtimeSync] put failed', err); }
   }
 
+  async function _deleteProjectLocal(ldb, projectId) {
+    const pid = Number(projectId);
+    if (!Number.isFinite(pid) || !ldb?.projects) return;
+    await ldb.tasks?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.milestones?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.updates?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.attachments?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.activityLog?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.projectAccessRequests?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.taskDependencies?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.projects.delete(pid).catch(() => {});
+  }
+
+  async function _deleteTaskLocal(ldb, taskId) {
+    const tid = Number(taskId);
+    if (!Number.isFinite(tid) || !ldb?.tasks) return;
+    await ldb.tasks.delete(tid).catch(() => {});
+    await ldb.taskDependencies?.where('fromTaskId').equals(tid).delete().catch(() => {});
+    await ldb.taskDependencies?.where('toTaskId').equals(tid).delete().catch(() => {});
+    await ldb.attachments?.where('taskId').equals(tid).delete().catch(() => {});
+  }
+
   function _mapNotification(r) {
     return window.SupabaseDB?._mapNotification?.(r) || {
       id: r.id, userId: r.user_id, type: r.type, entityType: r.entity_type,
@@ -157,7 +179,10 @@ const RealtimeSync = (() => {
   async function _handleNotification(row, eventType) {
     const mapped = _mapNotification(row);
     const ldb = window.LocalDB?.db;
-    if (ldb?.notifications) await _put(ldb.notifications, mapped);
+    if (ldb?.notifications) {
+      if (eventType === 'DELETE' && row.id) await ldb.notifications.delete(row.id).catch(() => {});
+      else await _put(ldb.notifications, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-notification', {
       detail: { row: mapped, eventType }
     }));
@@ -202,7 +227,10 @@ const RealtimeSync = (() => {
   async function _handleActivityLog(row, eventType) {
     const mapped = _mapActivity(row);
     const ldb = window.LocalDB?.db;
-    if (ldb?.activityLog) await _put(ldb.activityLog, mapped);
+    if (ldb?.activityLog) {
+      if (eventType === 'DELETE' && row.id) await ldb.activityLog.delete(row.id).catch(() => {});
+      else await _put(ldb.activityLog, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-activity', {
       detail: { row: mapped, eventType }
     }));
@@ -211,7 +239,10 @@ const RealtimeSync = (() => {
   async function _handleAccessRequest(row, eventType) {
     const mapped = _mapAccessRequest(row);
     const ldb = window.LocalDB?.db;
-    if (ldb?.projectAccessRequests) await _put(ldb.projectAccessRequests, mapped);
+    if (ldb?.projectAccessRequests) {
+      if (eventType === 'DELETE' && row.id) await ldb.projectAccessRequests.delete(row.id).catch(() => {});
+      else await _put(ldb.projectAccessRequests, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-access-request', {
       detail: { row: mapped, eventType }
     }));
@@ -241,33 +272,52 @@ const RealtimeSync = (() => {
 
   async function _handleUser(row, eventType) {
     const mapped = _mapUser(row);
-    if (!mapped) return;
+    if (!mapped && eventType !== 'DELETE') return;
     const ldb = window.LocalDB?.db;
-    if (ldb?.users) await _put(ldb.users, mapped);
+    if (ldb?.users) {
+      if (eventType === 'DELETE' && row.id) {
+        await ldb.users.delete(row.id).catch(() => {});
+        await ldb.notifications?.where('userId').equals(row.id).delete().catch(() => {});
+        await ldb.userClassrooms?.where('userId').equals(row.id).delete().catch(() => {});
+        await ldb.userFavorites?.where('userId').equals(row.id).delete().catch(() => {});
+        await ldb.userFavorites?.where('favoriteUserId').equals(row.id).delete().catch(() => {});
+      } else {
+        await _put(ldb.users, mapped);
+      }
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-user', { detail: { row: mapped, eventType } }));
   }
 
   async function _handleProject(row, eventType) {
     const mapped = _mapProject(row);
-    if (!mapped) return;
+    if (!mapped && eventType !== 'DELETE') return;
     const ldb = window.LocalDB?.db;
-    if (ldb?.projects) await _put(ldb.projects, mapped);
+    if (ldb?.projects) {
+      if (eventType === 'DELETE' && row.id) await _deleteProjectLocal(ldb, row.id);
+      else await _put(ldb.projects, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-project', { detail: { row: mapped, eventType } }));
   }
 
   async function _handleTask(row, eventType) {
     const mapped = _mapTask(row);
-    if (!mapped) return;
+    if (!mapped && eventType !== 'DELETE') return;
     const ldb = window.LocalDB?.db;
-    if (ldb?.tasks) await _put(ldb.tasks, mapped);
+    if (ldb?.tasks) {
+      if (eventType === 'DELETE' && row.id) await _deleteTaskLocal(ldb, row.id);
+      else await _put(ldb.tasks, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-task', { detail: { row: mapped, eventType } }));
   }
 
   async function _handleUpdate(row, eventType) {
     const mapped = _mapUpdate(row);
-    if (!mapped) return;
+    if (!mapped && eventType !== 'DELETE') return;
     const ldb = window.LocalDB?.db;
-    if (ldb?.updates) await _put(ldb.updates, mapped);
+    if (ldb?.updates) {
+      if (eventType === 'DELETE' && row.id) await ldb.updates.delete(row.id).catch(() => {});
+      else await _put(ldb.updates, mapped);
+    }
     window.dispatchEvent(new CustomEvent('wt-realtime-update', { detail: { row: mapped, eventType } }));
   }
 

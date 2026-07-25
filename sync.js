@@ -626,6 +626,69 @@ const SyncEngine = (() => {
     await table.bulkPut(valid).catch(() => {});
   }
 
+  function _pendingCreateIds(method) {
+    return new Set(
+      (_queue || [])
+        .filter(o => o?.method === method && o.status !== 'done')
+        .map(o => Number(o.args?.[0]?.id ?? o.localId))
+        .filter(n => Number.isFinite(n))
+    );
+  }
+
+  async function _deleteTaskLocal(ldb, taskId) {
+    const tid = Number(taskId);
+    if (!Number.isFinite(tid) || !ldb?.tasks) return;
+    await ldb.tasks.delete(tid).catch(() => {});
+    await ldb.taskDependencies?.where('fromTaskId').equals(tid).delete().catch(() => {});
+    await ldb.taskDependencies?.where('toTaskId').equals(tid).delete().catch(() => {});
+    await ldb.attachments?.where('taskId').equals(tid).delete().catch(() => {});
+  }
+
+  async function _deleteProjectLocal(ldb, projectId) {
+    const pid = Number(projectId);
+    if (!Number.isFinite(pid) || !ldb?.projects) return;
+    await ldb.tasks?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.milestones?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.updates?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.attachments?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.activityLog?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.projectAccessRequests?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.taskDependencies?.where('projectId').equals(pid).delete().catch(() => {});
+    await ldb.projects.delete(pid).catch(() => {});
+  }
+
+  async function _reconcileProjects(ldb, remoteProjects) {
+    if (!Array.isArray(remoteProjects) || !ldb?.projects) return;
+    try {
+      const remoteIds = new Set(remoteProjects.map(p => Number(p.id)).filter(Number.isFinite));
+      const pendingIds = _pendingCreateIds('createProject');
+      const locals = await ldb.projects.toArray();
+      const stale = locals.filter(p => !remoteIds.has(Number(p.id)) && !pendingIds.has(Number(p.id)));
+      for (const p of stale) await _deleteProjectLocal(ldb, p.id);
+      if (stale.length) {
+        console.warn('[SyncEngine] removed projects missing from cloud:', stale.map(p => `${p.id} (${p.name || ''})`).join(', '));
+      }
+    } catch (err) {
+      console.warn('[SyncEngine] project reconcile skipped:', err);
+    }
+  }
+
+  async function _reconcileTasks(ldb, remoteTasks) {
+    if (!Array.isArray(remoteTasks) || !ldb?.tasks) return;
+    try {
+      const remoteIds = new Set(remoteTasks.map(t => Number(t.id)).filter(Number.isFinite));
+      const pendingIds = _pendingCreateIds('createTask');
+      const locals = await ldb.tasks.toArray();
+      const stale = locals.filter(t => !remoteIds.has(Number(t.id)) && !pendingIds.has(Number(t.id)));
+      for (const t of stale) await _deleteTaskLocal(ldb, t.id);
+      if (stale.length) {
+        console.warn('[SyncEngine] removed tasks missing from cloud:', stale.map(t => `${t.id} (${t.title || ''})`).join(', '));
+      }
+    } catch (err) {
+      console.warn('[SyncEngine] task reconcile skipped:', err);
+    }
+  }
+
   // Merge roster rows (fetched WITHOUT avatar_base64 to save egress) into local
   // users, preserving each user's cached avatar unless a fresh blob was fetched
   // this cycle (avatarMap holds only the avatars that actually changed).
@@ -657,6 +720,11 @@ const SyncEngine = (() => {
       let next = { ...r, avatarBase64 };
       if (!Object.prototype.hasOwnProperty.call(r, 'hideScore') && prev && Object.prototype.hasOwnProperty.call(prev, 'hideScore')) {
         next.hideScore = !!prev.hideScore;
+      }
+      for (const field of ['hideFromTeamMap', 'avatarDriveId', 'avatarUpdatedAt', 'tagline', 'accentColor', 'coverColor']) {
+        if (!Object.prototype.hasOwnProperty.call(r, field) && prev && Object.prototype.hasOwnProperty.call(prev, field)) {
+          next[field] = prev[field];
+        }
       }
       const pending = pendingUserPatches[r.id];
       if (pending) next = { ...next, ...pending };
@@ -809,8 +877,8 @@ const SyncEngine = (() => {
         chatActivity, calendarEvents
       ] = await Promise.allSettled([
         sb.getUsersLite ? sb.getUsersLite() : sb.getUsers(),
-        sb.getProjects(),
-        sb.getTasks(),
+        sb._fetchRemoteProjects ? sb._fetchRemoteProjects() : sb.getProjects(),
+        sb._fetchRemoteTasks ? sb._fetchRemoteTasks() : sb.getTasks(),
         sb.getDepartments(),
         sb.getClassrooms ? sb.getClassrooms() : Promise.resolve([]),
         sb._sb().from('wt_milestones').select('*').then(({ data, error }) => {
@@ -922,8 +990,18 @@ const SyncEngine = (() => {
         await _bulkPutUsers(ldb.users, users.value, avatarMap);
         await _reconcileUsers(ldb, users.value);
       }
-      if (projects.status      === 'fulfilled') await _bulkPut(ldb.projects,              _normalizeProjects(projects.value));
-      if (tasks.status         === 'fulfilled') await _bulkPut(ldb.tasks,                 _normalizeTasks(tasks.value));
+      if (projects.status      === 'fulfilled') {
+        const normalizedProjects = _normalizeProjects(projects.value);
+        await _bulkPut(ldb.projects, normalizedProjects);
+        if (sb._shadowSetCollection) sb._shadowSetCollection('projects', normalizedProjects);
+        await _reconcileProjects(ldb, normalizedProjects);
+      }
+      if (tasks.status         === 'fulfilled') {
+        const normalizedTasks = _normalizeTasks(tasks.value);
+        await _bulkPut(ldb.tasks, normalizedTasks);
+        if (sb._shadowSetCollection) sb._shadowSetCollection('tasks', normalizedTasks);
+        await _reconcileTasks(ldb, normalizedTasks);
+      }
       if (departments.status   === 'fulfilled') {
         await _bulkPutByKey(ldb.departments, departments.value, 'key');
         if (window.LocalDB?.ensureDefaultDepartments) await window.LocalDB.ensureDefaultDepartments();
