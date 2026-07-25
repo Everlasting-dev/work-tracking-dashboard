@@ -95,7 +95,7 @@ function timeAgo(iso) {
 
 function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
 function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.10'; }
+function getAppVersion() { return window.WT_APP_VERSION || '3.5.11'; }
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -8536,11 +8536,11 @@ async function renderProfilePage() {
         </form>
 
         <aside class="profile-page-panel profile-page-sidebar">
-          <div class="profile-page-side-id" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
-            <div class="profile-page-side-photo">${avatarFrame(avatarUrl)}</div>
-            <h2>${esc(user.displayName || user.username)}</h2>
+          <div class="profile-page-side-id" id="profile-side-id" style="--pc-accent:${esc(accentHex)};--pc-cover:${esc(coverHex)}">
+            <div class="profile-page-side-photo" data-profile-side-photo>${avatarFrame(avatarUrl)}</div>
+            <h2 id="profile-side-name">${esc(user.displayName || user.username)}</h2>
             <p>@${esc(user.username)}</p>
-            <span>${esc(user.tagline || departmentLabel(user.department || '') || 'Team member')}</span>
+            <span id="profile-side-tag">${esc(user.tagline || departmentLabel(user.department || '') || 'Team member')}</span>
           </div>
           <div class="profile-page-panel-head"><h2>Snapshot</h2></div>
           <div class="profile-page-stat-list">
@@ -8562,14 +8562,29 @@ function bindProfilePageInteractions(user, avatarUrl, initials) {
   if (!root) return;
   const driveIdInput = root.querySelector('#profile-avatar-drive-id');
   const changedInput = root.querySelector('#profile-avatar-changed');
-  const frames = () => root.querySelectorAll('[data-profile-avatar-frame], [data-profile-avatar-frame-small]');
+  const preview = root.querySelector('#profile-cust-preview');
+  const sideId = root.querySelector('#profile-side-id');
+  const accentInput = root.querySelector('#profile-accent-input');
+  const coverInput = root.querySelector('#profile-cover-input');
+  const tagInput = root.querySelector('#profile-tagline-input');
+  const nameInput = root.querySelector('[name="displayName"]');
+  const fallbackTag = departmentLabel(user.department || '') || 'Team member';
+  const frames = () => root.querySelectorAll('[data-profile-avatar-frame], [data-profile-avatar-frame-small], [data-profile-side-photo]');
   const setAvatarPreview = (src) => {
     frames().forEach(frame => {
+      const small = frame.hasAttribute('data-profile-avatar-frame-small');
       frame.innerHTML = src
-        ? `<img src="${esc(src)}" class="${frame.hasAttribute('data-profile-avatar-frame-small') ? 'profile-page-avatar-img profile-page-avatar-img--small' : 'profile-page-avatar-img'}" alt="avatar">`
-        : `<div class="${frame.hasAttribute('data-profile-avatar-frame-small') ? 'profile-page-avatar-initials profile-page-avatar-initials--small' : 'profile-page-avatar-initials'}" ${userColorStyle(user)}>${initials}</div>`;
+        ? `<img src="${esc(src)}" class="${small ? 'profile-page-avatar-img profile-page-avatar-img--small' : 'profile-page-avatar-img'}" alt="avatar">`
+        : `<div class="${small ? 'profile-page-avatar-initials profile-page-avatar-initials--small' : 'profile-page-avatar-initials'}" ${userColorStyle(user)}>${initials}</div>`;
     });
     root.querySelector('#profile-avatar-remove')?.classList.toggle('hidden', !src);
+  };
+  const setThemeVars = (accent, cover) => {
+    [preview, sideId, root.querySelector('.profile-page-header')].forEach((el) => {
+      if (!el) return;
+      if (accent) el.style.setProperty('--pc-accent', accent);
+      if (cover) el.style.setProperty('--pc-cover', cover);
+    });
   };
 
   root.querySelector('#profile-avatar-input')?.addEventListener('change', async (e) => {
@@ -8597,26 +8612,39 @@ function bindProfilePageInteractions(user, avatarUrl, initials) {
     setAvatarPreview('');
   });
 
-  const preview = root.querySelector('#profile-cust-preview');
-  const accentInput = root.querySelector('#profile-accent-input');
-  const coverInput = root.querySelector('#profile-cover-input');
-  const tagInput = root.querySelector('#profile-tagline-input');
-  const nameInput = root.querySelector('[name="displayName"]');
   if (accentInput) accentInput.addEventListener('input', () => {
-    preview?.style.setProperty('--pc-accent', accentInput.value);
-    root.querySelector('.profile-page-header')?.style.setProperty('--pc-accent', accentInput.value);
+    setThemeVars(accentInput.value, null);
   });
   if (coverInput) coverInput.addEventListener('input', () => {
-    preview?.style.setProperty('--pc-cover', coverInput.value);
-    root.querySelector('.profile-page-header')?.style.setProperty('--pc-cover', coverInput.value);
+    setThemeVars(null, coverInput.value);
   });
   if (tagInput) tagInput.addEventListener('input', () => {
-    const el = root.querySelector('#profile-cust-tag');
-    if (el) el.textContent = tagInput.value.trim() || 'Your tagline appears here';
+    const tag = tagInput.value.trim();
+    const cust = root.querySelector('#profile-cust-tag');
+    const side = root.querySelector('#profile-side-tag');
+    if (cust) cust.textContent = tag || 'Your tagline appears here';
+    if (side) side.textContent = tag || fallbackTag;
+    const headerTag = root.querySelector('.profile-page-identity span');
+    if (headerTag) {
+      if (tag) headerTag.textContent = tag;
+      else headerTag.remove();
+    } else if (tag) {
+      const identity = root.querySelector('.profile-page-identity > div');
+      if (identity) {
+        const span = document.createElement('span');
+        span.textContent = tag;
+        identity.appendChild(span);
+      }
+    }
   });
   if (nameInput) nameInput.addEventListener('input', () => {
-    const el = root.querySelector('#profile-cust-name');
-    if (el) el.textContent = nameInput.value.trim() || user.username;
+    const name = nameInput.value.trim() || user.username;
+    const cust = root.querySelector('#profile-cust-name');
+    const side = root.querySelector('#profile-side-name');
+    const header = root.querySelector('.profile-page-identity h1');
+    if (cust) cust.textContent = name;
+    if (side) side.textContent = name;
+    if (header) header.textContent = name;
   });
 }
 
@@ -8728,6 +8756,13 @@ function showWhatsNewModal(force = false, attempt = 0) {
 
 
 const SUPPORT_CHANGELOG = [
+  { version: '3.5.11', date: '2026-07-25', highlights: [
+    'Project owners can delete their own projects; sync no longer wipes local data when optional profile columns are missing.',
+    'My Profile sidebar scrolls with the page and live-previews photo, name, tagline, and colors.',
+    'Mobile profile and project UI polish carried through for the hosted and desktop builds.',
+  ], adminNotes: [
+    'Apply migration 20260725_profile_project_sync_fixes.sql so wt_users.hide_score and related profile columns exist in production.',
+  ] },
   { version: '3.5.10', date: '2026-07-18', highlights: [
     'Theme choices are simpler, with Black and day themes only.',
     'Team graph controls were cleaned up so the toolbar button opens and closes the graph.',

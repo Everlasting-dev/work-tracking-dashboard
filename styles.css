@@ -12967,8 +12967,9 @@ body.theme-black .mobile-bottom-nav {
 }
 
 .profile-page-sidebar {
-  position: sticky;
-  top: 92px;
+  position: static;
+  top: auto;
+  align-self: start;
 }
 
 .profile-page-stat-list {
@@ -13348,7 +13349,9 @@ body.theme-black .project-card-private-ghost {
 .profile-page-sidebar {
   grid-column: 1;
   grid-row: 1;
-  top: 88px;
+  position: static;
+  top: auto;
+  align-self: start;
 }
 
 .profile-page-panel {
@@ -13377,6 +13380,8 @@ body.theme-black .project-card-private-ghost {
   padding-bottom: 18px;
   margin-bottom: 18px;
   border-bottom: 1px solid #eef3f7;
+  border-left: 4px solid var(--pc-accent, #2b9fd8);
+  padding-left: 12px;
 }
 
 .profile-page-side-photo {

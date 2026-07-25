@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.5.11
+
+### Fixed
+- **Roster sync safety** - missing optional `wt_users` columns (including `hide_score`) no longer strip `id` from the lite select or delete local users during reconcile.
+- **Project / task reconcile** - remote rows without usable ids no longer drive mass local deletions.
+- **My Profile sidebar** - contact card scrolls with the page instead of sticking, and live-previews photo, name, tagline, and accent/cover colors.
+
+### Changed
+- **Project deletes** - owners can delete their own projects (admins still can); mobile project cards expose the control where allowed.
+- **Profile schema** - migration adds production `hide_score` and related profile customization columns when absent.
+
 ## 3.5.3
 
 ### Changed

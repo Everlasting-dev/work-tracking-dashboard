@@ -111,6 +111,32 @@ const SupabaseDB = {
     return msg.includes('pgrst204') || msg.includes('schema cache') || msg.includes('column') || msg.includes('could not find');
   },
 
+  // Which column is an error complaining about? Restricted to the columns we
+  // actually asked for. This MUST be an exact match: a naive substring scan
+  // matches 'id' inside 'hide_score' and drops the primary key from the select,
+  // which silently yields id-less rows (they get filtered out by the sync's
+  // _bulkPutUsers, and _reconcileUsers then deletes every local user as a ghost).
+  _missingColumnName(error, cols) {
+    const raw = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ');
+    if (!raw) return null;
+    const msg = raw.toLowerCase();
+    const pool = (cols || []).map(c => String(c).trim().toLowerCase()).filter(Boolean);
+    const inPool = name => (pool.includes(name) ? name : null);
+
+    // Postgres 42703: `column wt_users.hide_score does not exist`
+    let m = msg.match(/column\s+(?:[a-z0-9_]+\.)?"?([a-z0-9_]+)"?\s+does not exist/);
+    if (m && inPool(m[1])) return m[1];
+    // PostgREST PGRST204: `Could not find the 'hide_score' column of 'wt_users'`
+    m = msg.match(/could not find the ['"]?([a-z0-9_]+)['"]?\s+column/);
+    if (m && inPool(m[1])) return m[1];
+
+    // Last resort: whole-word match, longest first so 'hide_score' wins over 'id'.
+    for (const col of [...pool].sort((a, b) => b.length - a.length)) {
+      if (new RegExp(`(^|[^a-z0-9_])${col}([^a-z0-9_]|$)`).test(msg)) return col;
+    }
+    return null;
+  },
+
   _isMissingTable(error) {
     const msg = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
     return msg.includes('pgrst205') || msg.includes('relation') || msg.includes('does not exist') || msg.includes('could not find the table');
@@ -1505,6 +1531,11 @@ const SupabaseDB = {
   // avatar_updated_at marker changes (see getUserAvatarsByIds + the sync pull).
   _USER_LITE_COLS: 'id,username,display_name,email,password_hash,salt,role,created_at,department,discord_id,color,bio,avatar_drive_id,avatar_updated_at,birth_date,gender,phone,address,hours_logged_total,last_seen_at,last_seen_ip,must_change_password,tagline,accent_color,cover_color,hide_from_team_map,hide_score',
 
+  // Columns the fallback must never drop. Without id the rows are unusable and,
+  // worse, they look like a valid roster to the sync reconciler. If the server
+  // ever claims one of these is missing we fail the pull loudly instead.
+  _USER_LITE_REQUIRED_COLS: ['id'],
+
   async getUsersLite() {
     if (this._isOffline()) return this.getUsers();
     const cols = this._USER_LITE_COLS.split(',');
@@ -1514,11 +1545,10 @@ const SupabaseDB = {
     for (let attempt = 0; attempt < 16; attempt++) {
       ({ data, error } = await this._sb().from('wt_users').select(cols.join(',')).order('id'));
       if (!error || !this._isMissingColumn(error)) break;
-      const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').toLowerCase();
-      const missing = cols.find(col => msg.includes(col.toLowerCase()));
-      if (!missing) break;
+      const missing = this._missingColumnName(error, cols);
+      if (!missing || this._USER_LITE_REQUIRED_COLS.includes(missing)) break;
       dropped.add(missing);
-      cols.splice(cols.indexOf(missing), 1);
+      cols.splice(cols.findIndex(c => c.toLowerCase() === missing), 1);
       console.warn('[SupabaseDB] wt_users column missing, retrying roster pull without:', missing);
     }
     if (error) throw error;

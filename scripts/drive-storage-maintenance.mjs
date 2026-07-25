@@ -107,13 +107,56 @@ async function checkDriveRoot(accessToken) {
   return data;
 }
 
+function redactedArgs(args) {
+  return args.map((arg) =>
+    String(arg).replace(
+      /^(GOOGLE_REFRESH_TOKEN|GOOGLE_DRIVE_ROOT_FOLDER_ID)=.+$/,
+      "$1=[redacted]",
+    )
+  );
+}
+
+function supabaseCandidates() {
+  const candidates = [];
+  if (process.env.SUPABASE_CLI) {
+    candidates.push({ cmd: process.env.SUPABASE_CLI, prefix: [] });
+  }
+  if (process.platform === "win32") {
+    // npm installs Supabase as PowerShell/CMD shims on Windows. Node can fail to
+    // spawn those shims directly, so prefer the real JS entrypoint when present.
+    const npmRoot = process.env.APPDATA ? resolve(process.env.APPDATA, "npm") : "";
+    const npmEntrypoint = npmRoot
+      ? resolve(npmRoot, "node_modules", "supabase", "dist", "supabase.js")
+      : "";
+    if (npmEntrypoint && existsSync(npmEntrypoint)) {
+      candidates.push({ cmd: process.execPath, prefix: [npmEntrypoint] });
+    }
+    candidates.push(
+      { cmd: "supabase.exe", prefix: [] },
+      { cmd: "supabase.cmd", prefix: [] },
+      { cmd: "supabase", prefix: [] },
+    );
+  } else {
+    candidates.push({ cmd: "supabase", prefix: [] });
+  }
+  return candidates;
+}
+
 function runSupabase(args) {
-  const candidates = process.platform === "win32" ? ["supabase.cmd", "supabase"] : ["supabase"];
   let last;
-  for (const cmd of candidates) {
-    const res = spawnSync(cmd, args, { cwd: ROOT, stdio: "inherit", shell: false });
+  for (const candidate of supabaseCandidates()) {
+    const res = spawnSync(candidate.cmd, [...candidate.prefix, ...args], {
+      cwd: ROOT,
+      env: { ...process.env, SUPABASE_TELEMETRY: process.env.SUPABASE_TELEMETRY || "false" },
+      stdio: "inherit",
+      shell: false,
+    });
     if (!res.error) {
-      if (res.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed with exit ${res.status}`);
+      if (res.status !== 0) {
+        throw new Error(
+          `Supabase CLI command failed with exit ${res.status}: ${redactedArgs(args).join(" ")}`,
+        );
+      }
       return;
     }
     last = res.error;

@@ -661,6 +661,10 @@ const SyncEngine = (() => {
     if (!Array.isArray(remoteProjects) || !ldb?.projects) return;
     try {
       const remoteIds = new Set(remoteProjects.map(p => Number(p.id)).filter(Number.isFinite));
+      if (remoteIds.size !== remoteProjects.length) {
+        console.warn('[SyncEngine] project reconcile skipped: remote rows without usable ids');
+        return;
+      }
       const pendingIds = _pendingCreateIds('createProject');
       const locals = await ldb.projects.toArray();
       const stale = locals.filter(p => !remoteIds.has(Number(p.id)) && !pendingIds.has(Number(p.id)));
@@ -677,6 +681,10 @@ const SyncEngine = (() => {
     if (!Array.isArray(remoteTasks) || !ldb?.tasks) return;
     try {
       const remoteIds = new Set(remoteTasks.map(t => Number(t.id)).filter(Number.isFinite));
+      if (remoteIds.size !== remoteTasks.length) {
+        console.warn('[SyncEngine] task reconcile skipped: remote rows without usable ids');
+        return;
+      }
       const pendingIds = _pendingCreateIds('createTask');
       const locals = await ldb.tasks.toArray();
       const stale = locals.filter(t => !remoteIds.has(Number(t.id)) && !pendingIds.has(Number(t.id)));
@@ -1060,7 +1068,13 @@ const SyncEngine = (() => {
   async function _reconcileUsers(ldb, remoteUsers) {
     try {
       if (!Array.isArray(remoteUsers) || !remoteUsers.length || !ldb?.users) return;
-      const remoteIds = new Set(remoteUsers.map(u => Number(u.id)));
+      const remoteIds = new Set(remoteUsers.map(u => Number(u.id)).filter(Number.isFinite));
+      // Never let a malformed payload drive deletions. If the roster lost its id
+      // column, every id is NaN and all local users would look like ghosts.
+      if (remoteIds.size !== remoteUsers.length) {
+        console.warn('[SyncEngine] user reconcile skipped: remote roster has rows without usable ids');
+        return;
+      }
       const pendingIds = new Set(_queue
         .filter(o => o.method === 'createUser' && o.status !== 'done')
         .map(o => Number(o.args?.[0]?.id ?? o.localId))
