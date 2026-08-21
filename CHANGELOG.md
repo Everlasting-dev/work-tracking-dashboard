@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- Desktop auto-updates no longer disable Windows code-signature verification;
+  unsigned updates now fail closed under the updater default.
+- Executive React authentication no longer verifies legacy password hashes in
+  browser code or embeds a reusable password derivation pepper. Username/email
+  password login now routes through a Supabase Edge Function boundary.
+- Added a staging-first Supabase RLS migration that removes the blanket
+  `wt_anon_all` policy from core private workspace tables.
+
+### Documentation
+- Added local update audit/workplan/log docs for the vanilla Electron update.
+- Added Tauri migration, Supabase security, Executive UI system, implementation
+  log, local runbook, and public release checklist docs.
+
+### Changed
+- Added a Tauri v2 desktop shell scaffold for the Executive React app while
+  keeping Electron available as rollback.
+- Standardized the Executive workspace navigation around Dashboard, Projects,
+  Tasks, Calendar, Files, Team, Reports, and Settings.
+- Added focused React/Vitest coverage for auth/session, projects, tasks, files,
+  sync queue behavior, and reporting calculations.
+
+### Verification
+- `npm run verify:vanilla` passed and the local Electron installer rebuilt with
+  publish disabled.
+- `npm --prefix orbitrack-react run verify` passed.
+- `npm --prefix orbitrack-react run tauri:build` produced a local Windows NSIS
+  installer after installing Rust and Visual Studio Build Tools.
+
 ## 3.5.11
 
 ### Fixed

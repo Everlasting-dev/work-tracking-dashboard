@@ -72,30 +72,21 @@ function setupSpellcheckObserver() {
   });
 }
 
-function formatDateShort(iso) {
-  if (!iso) return '';
-  // Accept both date-only ("2026-06-24") and full ISO timestamps
-  // ("2026-06-24T12:00:00Z"); guard against unparseable input.
-  const datePart = String(iso).split('T')[0];
-  const d = new Date(datePart + 'T00:00:00');
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const _dateUtils = window.WTDateUtils;
+if (!_dateUtils) {
+  throw new Error('WTDateUtils failed to load. Check date-utils.js script order in index.html.');
 }
-
-function timeAgo(iso) {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  return formatDateShort(iso.split('T')[0]);
-}
-
-function isOverdue(d) { return d && d < new Date().toISOString().split('T')[0]; }
-function isDueSoon(d) { if (!d) return false; const diff = (new Date(d+'T00:00:00') - new Date()) / 864e5; return diff >= 0 && diff <= 3; }
-function getAppVersion() { return window.WT_APP_VERSION || '3.5.11'; }
+const {
+  formatDateShort,
+  timeAgo,
+  isOverdue,
+  isDueSoon,
+  getAppVersion,
+  formatMonthInput,
+  monthRange,
+  dateInRange,
+  completedAtForReport
+} = _dateUtils;
 // Update splash screen version display
 window.addEventListener('load', () => {
   const splashVer = document.getElementById('splash-app-version');
@@ -302,29 +293,6 @@ function documentTypeLabel(type) {
   if (type === 'shipping-list') return 'Shipping list';
   if (type === 'waybill') return 'Waybill';
   return 'General file';
-}
-function formatMonthInput(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
-function monthRange(monthInput) {
-  const safe = /^\d{4}-\d{2}$/.test(monthInput || '') ? monthInput : formatMonthInput();
-  const [yy, mm] = safe.split('-').map(Number);
-  const start = new Date(Date.UTC(yy, mm - 1, 1));
-  const end = new Date(Date.UTC(yy, mm, 1));
-  const label = start.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  return { safe, start, end, label };
-}
-function dateInRange(iso, start, end) {
-  if (!iso) return false;
-  const dt = new Date(iso);
-  return dt >= start && dt < end;
-}
-function completedAtForReport(project) {
-  if (!project) return null;
-  if (project.completedAt) return project.completedAt;
-  return project.status === 'completed' ? project.updatedAt : null;
 }
 function projectDepartmentValue(project, uMap = {}) {
   return project?.department || uMap?.[project?.ownerId]?.department || '';

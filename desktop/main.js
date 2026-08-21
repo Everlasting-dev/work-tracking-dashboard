@@ -309,7 +309,8 @@ function configureAutoUpdater() {
   // can never fully block updates — the app self-heals on next launch.
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
-  autoUpdater.verifyUpdateCodeSignature = false;
+  // Preserve electron-updater's default signature verification. Unsigned Windows
+  // updates must fail closed rather than being installed automatically.
 
   autoUpdater.on('checking-for-update', () => {
     sendUpdateStatus({ state: 'checking', message: 'Checking for updates...' });
