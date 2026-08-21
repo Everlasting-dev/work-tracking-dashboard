@@ -22,12 +22,17 @@ From `orbitrack-react/`:
 - `npm run verify` runs lint, build, and tests.
 - `npm run tauri:dev` starts the Tauri desktop shell.
 - `npm run tauri:build` creates the Windows Tauri installer once Rust is installed.
+- `deno test --allow-env supabase/functions/tests/` checks Supabase Edge Function helpers.
 
 ## Last Local Check
 
 - `npm --prefix orbitrack-react run tauri -- info`: passed environment detection for WebView2, MSVC, rustc, cargo, rustup, and the stable MSVC Rust toolchain.
 - `npm --prefix orbitrack-react run tauri:build`: passed.
 - Installer output: `orbitrack-react\src-tauri\target\release\bundle\nsis\Orbitrack Executive_3.5.11_x64-setup.exe`.
+- Executive login with existing vanilla credentials requires the deployed
+  `auth-password-login` Edge Function; the local installer will not fix remote
+  login until that function is deployed to the Supabase project used by
+  `VITE_SUPABASE_URL`.
 
 ## Security Model
 

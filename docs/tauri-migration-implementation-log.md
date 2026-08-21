@@ -10,6 +10,9 @@ Date: 2026-08-21
 - Added Vitest configuration and focused domain tests.
 - Removed browser-side password hash/salt verification and fixed password pepper derivation from Executive React auth.
 - Added `auth-password-login` Edge Function for server-side username/email resolution, password sign-in, and service-role account linking.
+- Added a server-side legacy PBKDF2 compatibility bridge so existing vanilla
+  `wt_users` passwords can be verified once at the Edge Function boundary and
+  converted into linked Supabase Auth sessions.
 - Added staging-first RLS migration: `supabase/migrations/20260821_secure_executive_rls.sql`.
 - Updated primary navigation to Dashboard, Projects, Tasks, Calendar, Files, Team, Reports, Settings.
 - Added `/calendar` and `/onboarding` routes.
@@ -30,10 +33,15 @@ Date: 2026-08-21
 - `npm run verify:vanilla`: passed.
 - `npm run dist:win:local`: passed and produced `release\Orbitrack-Setup-3.5.11.exe`.
 - `rg` search found no `DRIVE_PEPPER`, `password_hash`, `salt`, deterministic password derivation, or client `signUp()` usage in `orbitrack-react/src`.
+- Installed Deno with `winget install DenoLand.Deno`.
+- `deno check supabase/functions/auth-password-login/index.ts`: passed.
+- `deno test --allow-env supabase/functions/tests/`: passed, 17 tests.
+- Deployed `auth-password-login` to Supabase project `ubheoxzwzfhzccotulmt`
+  with `--no-verify-jwt`; dummy hosted login check returned the expected 401.
 
 ## Blockers
 
-- Deploy `auth-password-login` and the RLS migration to staging before testing real sign-in.
+- Deploy the updated `auth-password-login` and the RLS migration to staging before testing real sign-in.
 - Add Supabase integration tests against a local/staging Supabase project before production.
 
 ## Not Done
