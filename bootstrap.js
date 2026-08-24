@@ -1,7 +1,14 @@
 /* bootstrap.js - startup and splash handoff for WorkTracker. */
 
-// Safety net: force dismiss after 12s if boot hangs (error path only)
-setTimeout(() => { if (!_splashReady) { _splashReady = true; hideSplash(); } }, 12000);
+// Safety net: after 12s the splash always comes down, whether boot hung or the
+// loader was held open. Nothing else can rescue a held splash, so this must not
+// be gated on _splashReady.
+// It stays armed deliberately: once boot succeeds it is a harmless no-op, but a
+// splash held open past 12s has no other way out.
+setTimeout(() => {
+  _splashReady = true;
+  forceSplashDismiss();
+}, 12000);
 
 applyTheme();
 applyUiDensity();

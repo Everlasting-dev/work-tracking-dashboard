@@ -17,6 +17,12 @@
 
   var DB = function () { return window.DB || window.LocalDB; };
   function isAdmin() { try { return (window.getSession ? getSession()?.role : null) === 'admin'; } catch (_) { return false; } }
+  // alert() blocks the whole Electron window and looks nothing like the app.
+  // Fall back to it only if the toast host has not loaded.
+  function notify(message, type) {
+    if (typeof window.showToast === 'function') { window.showToast(message, type || 'info'); return; }
+    console.warn('[reports]', message);
+  }
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function fmtDate(v) { if (!v) return '—'; var d = new Date(v); return isNaN(d) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
   function fmtDateTime(v) { if (!v) return '—'; var d = new Date(v); return isNaN(d) ? '—' : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
@@ -222,7 +228,7 @@
   async function open() {
     if (!isAdmin()) { try { window.showToast?.('Reports are available to admins only.', 'info'); } catch (_) {} return; }
     var db = DB();
-    if (!db || !db.getProjects) { alert('Project data not available yet.'); return; }
+    if (!db || !db.getProjects) { notify('Project data not available yet.', 'warning'); return; }
     var shared = await fetchShared();
     var projects = shared.projects.slice().sort(function (a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
     var owners = {}; projects.forEach(function (p) { if (p.ownerId != null) owners[Number(p.ownerId)] = true; });
@@ -297,12 +303,12 @@
     var ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
     try {
       var datas = await gatherMany(ids, opts.shared);
-      if (!datas.length) { alert('No matching projects found.'); return; }
+      if (!datas.length) { notify('No matching projects found.', 'info'); return; }
       var title = opts.title || (datas.length === 1 ? (datas[0].project.name || 'Project') + ' — Report' : 'Projects Report (' + datas.length + ')');
       var doc = buildDoc(datas, title);
       showPreview(doc.html, title, doc.file);
     } catch (err) {
-      alert('Could not build report: ' + (err && err.message || err));
+      notify('Could not build report: ' + (err && err.message || err), 'error');
     }
   }
 

@@ -8,11 +8,16 @@
   let lastManualCheck = false;
 
   function setVersion(version) {
+    if (!version) return;
     window.WT_APP_VERSION = version;
     document.querySelectorAll('.splash-version').forEach((el) => {
       el.textContent = `v${version}`;
     });
   }
+
+  // The bridge exposes the packaged version synchronously, so correct the seed
+  // from boot-version.js before the IPC round-trip settles.
+  setVersion(desktop.packageVersion);
 
   function ensureNotice() {
     if (updateNotice) return updateNotice;
@@ -113,7 +118,7 @@
 
     if (status.state === 'available') {
       showNotice({
-        title: `WorkTracker ${status.version} is available`,
+        title: `Orbitrack ${status.version} is available`,
         message: 'Downloading quietly in the background.',
         progress: 0
       });
@@ -131,7 +136,7 @@
 
     if (status.state === 'downloaded') {
       showNotice({
-        title: `WorkTracker ${status.version} is ready`,
+        title: `Orbitrack ${status.version} is ready`,
         message: 'Restart when convenient to finish updating.',
         canInstall: true,
         progress: 100

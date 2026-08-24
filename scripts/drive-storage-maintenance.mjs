@@ -110,10 +110,23 @@ async function checkDriveRoot(accessToken) {
 function redactedArgs(args) {
   return args.map((arg) =>
     String(arg).replace(
-      /^(GOOGLE_REFRESH_TOKEN|GOOGLE_DRIVE_ROOT_FOLDER_ID)=.+$/,
+      /^(GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN|GOOGLE_DRIVE_ROOT_FOLDER_ID)=.+$/,
       "$1=[redacted]",
     )
   );
+}
+
+function googleSecretArgs() {
+  const args = [
+    `GOOGLE_CLIENT_ID=${required("GOOGLE_CLIENT_ID")}`,
+    `GOOGLE_CLIENT_SECRET=${required("GOOGLE_CLIENT_SECRET")}`,
+    `GOOGLE_REFRESH_TOKEN=${required("GOOGLE_REFRESH_TOKEN")}`,
+    `GOOGLE_DRIVE_ROOT_FOLDER_ID=${required("GOOGLE_DRIVE_ROOT_FOLDER_ID")}`,
+  ];
+  if (process.env.FILE_MAX_BYTES) {
+    args.push(`FILE_MAX_BYTES=${process.env.FILE_MAX_BYTES}`);
+  }
+  return args;
 }
 
 function supabaseCandidates() {
@@ -190,8 +203,7 @@ async function main() {
       "set",
       "--project-ref",
       ref,
-      `GOOGLE_REFRESH_TOKEN=${required("GOOGLE_REFRESH_TOKEN")}`,
-      `GOOGLE_DRIVE_ROOT_FOLDER_ID=${required("GOOGLE_DRIVE_ROOT_FOLDER_ID")}`,
+      ...googleSecretArgs(),
     ]);
     console.log("[ok] Supabase Drive secrets updated.");
   }

@@ -37,6 +37,35 @@ if (-not $asset) {
 }
 Write-Host ("      Latest version: {0}" -f $ver) -ForegroundColor Gray
 
+# Compare against what is installed. Without this the script installs whatever
+# the latest release happens to be, which silently downgrades a newer local
+# build back to the published version.
+$installedVer = $null
+foreach ($root in @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if (-not $root) { continue }
+    $exe = Join-Path $root 'Programs\Orbitrack\Orbitrack.exe'
+    if (-not (Test-Path $exe)) { $exe = Join-Path $root 'Orbitrack\Orbitrack.exe' }
+    if (Test-Path $exe) {
+        try { $installedVer = (Get-Item $exe).VersionInfo.ProductVersion } catch {}
+        if ($installedVer) { break }
+    }
+}
+if ($installedVer) {
+    Write-Host ("      Installed version: {0}" -f $installedVer) -ForegroundColor Gray
+    try {
+        $latestParsed    = [version]($ver -replace '^[vV]', '')
+        $installedParsed = [version]($installedVer -replace '^[vV]', '')
+        if ($latestParsed -le $installedParsed) {
+            Write-Host ''
+            Write-Host ("Orbitrack {0} is already installed. Nothing to update." -f $installedVer) -ForegroundColor Green
+            Write-Host '      (The published release is not newer than this build.)' -ForegroundColor DarkGray
+            return
+        }
+    } catch {
+        Write-Host '      Could not compare versions; continuing.' -ForegroundColor DarkGray
+    }
+}
+
 # [2/3] Download -----------------------------------------------------------
 $dest = Join-Path $env:TEMP $asset.name
 Write-Host ("[2/3] Downloading {0}" -f $asset.name)

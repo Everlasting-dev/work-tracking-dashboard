@@ -23,6 +23,48 @@
   // Supabase Auth account's password to this exact value — keep the pepper in sync.
   const DRIVE_PEPPER = "Orb1track$Drive$2026$kx9";
   function drivePassword(uid) { return `orbtrk_${Number(uid)}_${DRIVE_PEPPER}`; }
+  function legacyPassword(password) { return (password && password.length >= 6) ? password : `wtk_${password || ""}_orbitrack`; }
+  function cleanUsername(username) {
+    return String(username || "user").toLowerCase().replace(/[^a-z0-9._-]/g, "") || "user";
+  }
+  function authEmailCandidates(username, email) {
+    if (email && String(email).includes("@")) return [String(email).trim().toLowerCase()];
+    const clean = cleanUsername(username);
+    // @worktracker.app is the legacy Auth identity used by the vanilla app and
+    // auth-password-login. Keep @orbitrack.local as a compatibility fallback for
+    // builds that briefly generated Orbitrack-branded synthetic emails.
+    return [`${clean}@worktracker.app`, `${clean}@orbitrack.local`];
+  }
+  function activeUserId(userId) {
+    return Number(userId || window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId || 0);
+  }
+  // A rate-limit or server error says nothing about which identity is correct,
+  // so continuing through the candidate matrix just spends more of a budget that
+  // is already exhausted — and repeated bursts are what trips Supabase's auth
+  // limiter in the first place.
+  function isFatalAuthError(error) {
+    if (!error) return false;
+    const status = Number(error.status || 0);
+    if (status === 429 || status >= 500) return true;
+    return /rate limit|too many requests/i.test(String(error.message || ''));
+  }
+
+  async function signInWithCandidates(client, emails, passwords) {
+    let last = null;
+    for (const email of emails) {
+      for (const password of passwords) {
+        if (!email || !password) continue;
+        const res = await client.auth.signInWithPassword({ email, password });
+        last = { ...res, email, password };
+        if (!res.error && res.data?.session) return last;
+        if (isFatalAuthError(res.error)) {
+          console.warn('[drive-auth] aborting sign-in attempts:', res.error?.message || res.error);
+          return last;
+        }
+      }
+    }
+    return last;
+  }
 
   // The backend needs a real Supabase Auth JWT. Call this during login (after the
   // app's own auth) to establish/refresh the Supabase Auth session under the
@@ -31,41 +73,53 @@
   async function ensureAuthSession({ username, email, password, userId }) {
     const client = sb();
     if (!client?.auth) return null;
-    const mail = (email && email.includes("@")) ? email : `${String(username || "user").toLowerCase().replace(/[^a-z0-9._-]/g, "")}@orbitrack.local`;
+    const emails = authEmailCandidates(username, email);
     // The Drive-storage Auth password is a STABLE per-user value derived from the
     // user's id — INDEPENDENT of the app password. This is the durable fix for the
     // recurring "authorization missing": app password changes (OTP/reset) used to
     // desync the Auth password and lock the user out of Drive forever. Must match
     // the one-time admin resync (drivePassword in the resync script). Falls back to
     // the legacy app-password derivation only if the user id is unknown.
-    const uid = Number(userId || window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId || 0);
-    const pw = uid ? drivePassword(uid) : ((password && password.length >= 6) ? password : `wtk_${password || ""}_orbitrack`);
+    const uid = activeUserId(userId);
+    const stablePw = uid ? drivePassword(uid) : "";
+    const passwords = [...new Set([stablePw, legacyPassword(password)].filter(Boolean))];
     let { data } = await client.auth.getSession();
     if (data?.session?.access_token) {
-      const appUid = window.getSession?.()?.userId || window.WT_getActiveSession?.()?.userId;
+      const appUid = activeUserId(uid);
       if (appUid && data.session.user?.id) {
         const { data: linked } = await client.from("wt_users")
           .select("id")
           .eq("auth_user_id", data.session.user.id)
           .maybeSingle();
-        if (Number(linked?.id) === Number(appUid)) return data.session;
+        if (Number(linked?.id) === Number(appUid)) {
+          if (stablePw) client.auth.updateUser({ password: stablePw }).catch(() => {});
+          return data.session;
+        }
         await client.auth.signOut().catch(() => {});
       } else {
         return data.session;
       }
     }
-    // Try sign-in; if the account doesn't exist yet, sign up then sign in.
-    let res = await client.auth.signInWithPassword({ email: mail, password: pw });
-    if (res.error) {
-      await client.auth.signUp({ email: mail, password: pw });
-      res = await client.auth.signInWithPassword({ email: mail, password: pw });
+    // Try sign-in first. Stable password is preferred; legacy app-password auth
+    // remains as a rescue path for accounts that have not been resynced yet.
+    let res = await signInWithCandidates(client, emails, passwords);
+    if (res?.error && !isFatalAuthError(res.error)) {
+      const { error: signUpError } = await client.auth.signUp({ email: emails[0], password: passwords[0] });
+      // Only the identity that was just provisioned can newly succeed, so retry
+      // that one pair instead of replaying the whole candidate matrix.
+      if (!isFatalAuthError(signUpError)) {
+        res = await signInWithCandidates(client, [emails[0]], [passwords[0]]);
+      }
     }
-    if (res.error) return null;
+    if (!res || res.error) return null;
+    if (stablePw && res.password !== stablePw) {
+      await client.auth.updateUser({ password: stablePw }).catch(() => {});
+    }
     // Link the auth uuid to the app user row so wt_my_id()/RLS resolve.
     try {
-      const uid = window.getSession?.()?.userId;
-      if (uid && res.data?.user?.id && window.SupabaseDB?._client) {
-        await window.SupabaseDB._client.from("wt_users").update({ auth_user_id: res.data.user.id }).eq("id", uid);
+      const appUid = activeUserId(uid);
+      if (appUid && res.data?.user?.id && window.SupabaseDB?._client) {
+        await window.SupabaseDB._client.from("wt_users").update({ auth_user_id: res.data.user.id }).eq("id", appUid);
       }
     } catch (_) {}
     return res.data?.session || null;

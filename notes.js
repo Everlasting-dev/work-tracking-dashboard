@@ -8,6 +8,12 @@ let _notesSaveTimers = {};
 let _noteSavePatches = {};
 let _notesEventsBound = false;
 let _renderSerial = 0;
+let _notesSearchTimer = null;
+let _notesSearchRunning = false;
+let _notesSearchDirty = false;
+let _notesSearchValue = '';
+let _notesSearchCaret = 0;
+let _notesSuppressEditorFocus = false;
 
 function stripNoteHtml(html) {
   const div = document.createElement('div');
@@ -170,6 +176,60 @@ async function renderNotesPanel(focusNoteId = null) {
   _mountActiveEditor(activeNote);
 }
 
+function scheduleNotesSearch(input) {
+  _notesSearchValue = input?.value || '';
+  _notesSearchCaret = input ? (input.selectionStart ?? _notesSearchValue.length) : _notesSearchValue.length;
+  state.notesSearch = _notesSearchValue;
+  _notesSearchDirty = true;
+  clearTimeout(_notesSearchTimer);
+  _notesSearchTimer = setTimeout(() => {
+    runNotesSearch().catch(err => console.warn('[notes] search render rejected', err));
+  }, 280);
+}
+
+async function runNotesSearch() {
+  if (_notesSearchRunning) {
+    _notesSearchDirty = true;
+    return;
+  }
+  // The drawer stays in the DOM when closed, so without this a timer that
+  // outlived the close rebuilds a hidden panel and remounts its editor.
+  if (!_notesPanelOpen) {
+    _notesSearchDirty = false;
+    return;
+  }
+  _notesSearchRunning = true;
+  _notesSearchDirty = false;
+  _notesSuppressEditorFocus = true;
+  // Capture before the await: focus may legitimately have moved into the note
+  // editor while the debounce was pending, and stealing it back is the exact
+  // jump this debounce exists to prevent.
+  const wasFocused = document.activeElement?.id === 'notes-panel-search';
+  try {
+    await renderNotesPanel(_activeNoteId);
+    const next = document.getElementById('notes-panel-search');
+    if (next) {
+      next.value = _notesSearchValue;
+      if (wasFocused) next.focus({ preventScroll: true });
+      try {
+        const pos = Math.min(_notesSearchCaret, next.value.length);
+        next.setSelectionRange(pos, pos);
+      } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[notes] search render failed', err);
+  } finally {
+    _notesSuppressEditorFocus = false;
+    _notesSearchRunning = false;
+    if (_notesSearchDirty && _notesPanelOpen) {
+      clearTimeout(_notesSearchTimer);
+      _notesSearchTimer = setTimeout(() => {
+        runNotesSearch().catch(err => console.warn('[notes] search render rejected', err));
+      }, 0);
+    }
+  }
+}
+
 // Lightweight fallback rich-text editor. It stores HTML, matching the Quill
 // island's contract, and keeps notes usable if a packaged editor bundle fails.
 function mountRichEditor(container, initialHTML, onChange, opts = {}) {
@@ -202,7 +262,7 @@ function mountRichEditor(container, initialHTML, onChange, opts = {}) {
   // Sanitize on paste so pasted content matches editor formatting instead of
   // arriving as styled "black boxes" or broken lists.
   area.addEventListener('paste', (e) => {
-    const cd = e.clipboardData || window.clipboardData;
+    const cd = e.clipboardData;
     if (!cd) return; // let the browser handle it if no clipboard data
     e.preventDefault();
     const html = cd.getData('text/html');
@@ -252,7 +312,7 @@ function _mountActiveEditor(note) {
   _noteEditor = mountPreferredEditor(editorEl, note.content || '', (html) => {
     scheduleNoteSave(note.id, { content: html });
   }, { placeholder: 'Write the useful version. Bullets, links, fragments, anything.' });
-  setTimeout(() => _noteEditor?.focus?.(), 40);
+  if (!_notesSuppressEditorFocus) setTimeout(() => _noteEditor?.focus?.(), 40);
 }
 
 function _teardownActiveEditor() {
@@ -273,6 +333,9 @@ function openNotesPanel(focusNoteId = null) {
 
 function closeNotesPanel() {
   _notesPanelOpen = false;
+  clearTimeout(_notesSearchTimer);
+  _notesSearchTimer = null;
+  _notesSearchDirty = false;
   _teardownActiveEditor();
   document.body.classList.remove('notes-panel-open');
   document.getElementById('notes-panel')?.classList.add('hidden');
@@ -417,8 +480,7 @@ function bindEvents() {
   document.addEventListener('input', (e) => {
     const search = e.target.closest('#notes-panel-search');
     if (search) {
-      state.notesSearch = search.value || '';
-      renderNotesPanel(_activeNoteId);
+      scheduleNotesSearch(search);
       return;
     }
     const titleInput = e.target.closest('[data-notes-title]');
@@ -428,6 +490,13 @@ function bindEvents() {
       const activeRow = document.querySelector(`.notes-list-item.active[data-note-id="${id}"] .notes-list-title`);
       if (activeRow) activeRow.textContent = titleInput.value.trim() || titleInput.getAttribute('placeholder') || 'Untitled note';
     }
+  });
+  document.addEventListener('keydown', (e) => {
+    const search = e.target.closest?.('#notes-panel-search');
+    if (!search || e.key !== 'Enter') return;
+    clearTimeout(_notesSearchTimer);
+    _notesSearchTimer = null;
+    runNotesSearch().catch(err => console.warn('[notes] search render rejected', err));
   });
 }
 

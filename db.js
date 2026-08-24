@@ -1199,13 +1199,24 @@ const LocalDB = {
       return visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     };
     if (window.DriveStorage?.enabled?.()) {
+      const local = await localRows();
       try {
         const driveRows = (await window.DriveStorage.list(projectId)).map(_mapDriveAttachment);
-        if (driveRows.length) return driveRows;
+        // Drive rows carry wt_files ids while local rows carry Dexie
+        // auto-increment ids, so the id spaces never collide and an id-based
+        // dedupe returns a file present in both indexes twice. Match on the
+        // file identity instead.
+        const dedupeKey = row => `${row.taskId ?? ''}|${row.fileName || ''}|${row.size || 0}`;
+        const seen = new Set(driveRows.map(dedupeKey));
+        const merged = [
+          ...driveRows,
+          ...local.filter(row => !seen.has(dedupeKey(row))),
+        ];
+        return merged.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       } catch (err) {
         console.warn('[attachments] drive list failed, falling back to legacy attachments:', err);
       }
-      return localRows();
+      return local;
     }
     return localRows();
   },

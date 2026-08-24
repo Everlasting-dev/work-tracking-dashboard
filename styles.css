@@ -3431,12 +3431,6 @@ html.splash-lock body {
   font-family: Consolas, "Courier New", monospace;
 }
 #splash.fade-out { opacity: 0; visibility: hidden; pointer-events: none; }
-.splash-core-wrap {
-  position: relative;
-  width: min(72vw, 420px);
-  aspect-ratio: 1;
-  flex-shrink: 0;
-}
 .splash-sphere-canvas {
   width: 100%;
   height: 100%;
@@ -3456,47 +3450,11 @@ html.splash-lock body {
   user-select: none;
   pointer-events: none;
 }
-.splash-inner {
-  position: relative;
-  z-index: 1;
-  text-align: center;
-  padding: 0 20px 8px;
-  width: 100%;
-  max-width: 360px;
-  margin: 0 auto;
-}
-.splash-edition-dot { opacity: 0.45; margin: 0 0.15em; }
-#splash.is-visible .splash-brand,
-#splash.is-visible .splash-edition,
 #splash.is-visible .splash-loader-bar,
 #splash.is-visible .splash-status,
 #splash.is-visible .splash-version,
 #splash.is-visible .splash-core-label { opacity: 1; transform: none; }
 #splash.is-visible .splash-core-label { transform: translateX(-50%); }
-.splash-brand {
-  color: #ffffff;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.38em;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  opacity: 1;
-  animation: splashFadeIn 0.4s 0.15s ease both;
-}
-.splash-edition {
-  color: rgba(255, 255, 255, 0.45);
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  margin-bottom: 24px;
-  opacity: 1;
-  animation: splashFadeIn 0.4s 0.22s ease both;
-}
-@keyframes splashEditionBreath {
-  0%, 100% { letter-spacing: 0.12em; opacity: 1; }
-  50% { letter-spacing: 0.2em; opacity: 0.85; }
-}
 @keyframes splashFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .splash-loader-bar {
   width: 180px; height: 2px;
@@ -5526,6 +5484,20 @@ body.theme-normal .dock-launcher:hover { background: rgba(17,24,39,1); }
 }
 .about-app-name { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; }
 .about-version { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.about-build-channel {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.72;
+}
+.user-menu-item-meta {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
 .about-desc { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.6; }
 .about-features { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
 .about-feature-row { display: flex; align-items: flex-start; gap: 12px; font-size: 0.88rem; }
@@ -7379,7 +7351,6 @@ body.theme-black .task-cf-more { color: #c7c7cc !important; }
 
 .auth-card::before,
 .brand-icon,
-.splash-logo-mark,
 .stat-icon-accent,
 .stat-icon-blue,
 .stat-icon-green,
@@ -7688,13 +7659,11 @@ body.theme-black .splash-status {
   color: rgba(255,255,255,0.78) !important;
 }
 
-body.theme-black .splash-edition,
 body.theme-black .splash-version {
   color: rgba(255,255,255,0.64) !important;
 }
 body.theme-black .auth-card::before,
 body.theme-black .brand-icon,
-body.theme-black .splash-logo-mark,
 body.theme-black .progress-fill,
 body.theme-black .dash-bar-fill,
 body.theme-black .profile-rank-track-fill {
@@ -7807,7 +7776,6 @@ body.theme-normal {
 
 body.theme-normal .auth-card::before,
 body.theme-normal .brand-icon,
-body.theme-normal .splash-logo-mark,
 body.theme-normal .stat-icon-accent,
 body.theme-normal .sidebar-new-project-btn,
 body.theme-normal .profile-rank-track-fill,
@@ -7944,28 +7912,36 @@ body.theme-normal .user-edit-hero {
 .admin-wide { grid-column: 1 / -1; }
 .admin-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 16px; }
 .admin-kpi {
-  border: 1px solid var(--border);
+  border: 1px solid var(--admin-tile-border);
   border-radius: var(--radius);
   padding: 14px;
-  background: color-mix(in srgb, var(--accent-light) 45%, #fff);
+  background: var(--admin-tile-bg);
 }
 .admin-kpi strong { display: block; font-size: 1.55rem; line-height: 1; color: var(--text); }
 .admin-kpi span { display: block; margin-top: 6px; color: var(--text-secondary); font-size: 0.78rem; font-weight: 750; }
 .admin-mini-calendar {
   display: grid;
-  grid-template-columns: repeat(10, minmax(24px, 1fr));
-  gap: 7px;
-  padding: 16px;
+  /* minmax(24px, ...) made the 10-column grid wider than its panel once a track
+     dropped below ~335px, and .dash-panel clipped the right-hand cells. Cells
+     shrink now instead of overflowing. */
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: clamp(4px, 0.6vw, 7px);
+  padding: clamp(10px, 1.1vw, 16px);
 }
 .admin-mini-calendar span {
   aspect-ratio: 1;
   display: grid;
   place-items: center;
   border-radius: 7px;
-  background: rgba(18, 184, 134, calc(0.14 + (var(--heat) * 0.74)));
-  color: #ffffff;
-  font-size: 0.72rem;
-  font-weight: 800;
+  /* Heat is a tint over the panel, not a saturated block. The old rule pushed a
+     fixed teal to 88% alpha, which fought every theme accent and was harsh to
+     read a 30-cell grid of. */
+  background: rgba(var(--admin-heat-rgb), calc(0.06 + (var(--heat) * 0.46)));
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  font-size: clamp(0.58rem, 0.75vw, 0.72rem);
+  font-weight: 750;
+  overflow: hidden;
 }
 .admin-user-activity-list { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
 .admin-user-activity {
@@ -7984,15 +7960,15 @@ body.theme-normal .user-edit-hero {
   height: 24px;
   border-radius: 999px;
   overflow: hidden;
-  background: #eef2f7;
+  background: var(--admin-bar-track);
 }
 .admin-user-bars span::before {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--w);
-  background: linear-gradient(90deg, var(--accent), var(--green));
-  opacity: 0.82;
+  background: linear-gradient(90deg, var(--admin-bar-from), var(--admin-bar-to));
+  opacity: 1;
 }
 .admin-user-bars b {
   position: relative;
@@ -8003,19 +7979,9 @@ body.theme-normal .user-edit-hero {
   font-weight: 600;
 }
 .admin-bar-label-on-track { color: var(--text-secondary); }
-.admin-bar-label-on-fill { color: #ffffff; }
-body.theme-black .admin-user-bars span::before {
-  background: linear-gradient(90deg, #525252, #171717) !important;
-  opacity: 1 !important;
-}
-body.theme-black .admin-bar-label-on-track { color: #525252; }
-body.theme-normal .admin-user-bars span::before {
-  background: linear-gradient(90deg, #111111, #16a34a) !important;
-  opacity: 1 !important;
-}
-body.theme-normal .admin-bar-label-on-fill {
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+.admin-bar-label-on-fill {
+  color: var(--admin-bar-label);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 .admin-activity-row {
   display: grid;
@@ -8737,82 +8703,12 @@ body.theme-black .react-flow__minimap { background: #15151a; }
   justify-content: center;
   flex: 0 0 auto;
 }
-.settings-visual-range {
-  padding: 14px 18px 16px;
-  display: grid;
-  gap: 9px;
-}
-.settings-range-labels,
-.settings-range-ticks {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.settings-range-labels span {
-  width: 28px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--accent-light);
-  color: var(--accent-text);
-  font-weight: 900;
-  font-size: 0.82rem;
-}
-.settings-range-labels strong {
-  color: var(--text);
-  font-size: 0.86rem;
-}
-.settings-range-ticks {
-  padding: 0 6px;
-}
-.settings-range-ticks i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--border-strong);
-}
-.settings-range-ticks i.active {
-  background: var(--accent);
-}
-.settings-visual-track input[type="range"] {
-  width: 100%;
-  accent-color: var(--accent);
-}
-.settings-visual-options {
+.settings-option-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  padding: 12px 14px 14px;
 }
-.settings-visual-thumb {
-  height: 74px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  padding: 10px;
-  opacity: 0.72;
-}
-.settings-visual-thumb.active {
-  opacity: 1;
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.settings-visual-thumb i {
-  display: block;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 54%, var(--card));
-  align-self: end;
-}
-.settings-visual-thumb--density.settings-visual-thumb--comfortable i { min-height: 44px; }
-.settings-visual-thumb--density.settings-visual-thumb--compact i { min-height: 32px; }
-.settings-visual-thumb--density.settings-visual-thumb--tiny i { min-height: 22px; }
-.settings-visual-thumb--performance.settings-visual-thumb--low-power i { background: #9ca3af; min-height: 18px; }
-.settings-visual-thumb--performance.settings-visual-thumb--balanced i { background: #10b981; min-height: 32px; }
-.settings-visual-thumb--performance.settings-visual-thumb--full i { background: #22c55e; min-height: 48px; }
 .storage-reconnect-form .form-actions {
   position: static;
   background: transparent;
@@ -9287,7 +9183,6 @@ body.theme-normal.theme-day-arcade {
 body.theme-normal.theme-day-arcade .auth-card::before,
 body.theme-normal.theme-day-arcade .brand-icon,
 body.theme-normal.theme-day-arcade .brand-icon-bw,
-body.theme-normal.theme-day-arcade .splash-logo-mark,
 body.theme-normal.theme-day-arcade .stat-icon-accent,
 body.theme-normal.theme-day-arcade .sidebar-new-project-btn,
 body.theme-normal.theme-day-arcade .profile-rank-track-fill,
@@ -9666,7 +9561,6 @@ body.theme-normal.theme-day-ink {
 }
 body.theme-normal.theme-day-ink .brand-icon-bw,
 body.theme-normal.theme-day-ink .auth-card::before,
-body.theme-normal.theme-day-ink .splash-logo-mark,
 body.theme-normal.theme-day-ink .project-card-v2-accent-bar,
 body.theme-normal.theme-day-ink .stat-icon-accent,
 body.theme-normal.theme-day-ink .profile-rank-track-fill {
@@ -10600,6 +10494,35 @@ body.theme-black .linear-task-row.task-done .linear-task-title {
   background: rgba(24,24,27,0.94);
   border-color: rgba(255,255,255,0.18);
   box-shadow: 0 18px 42px rgba(0,0,0,0.28);
+}
+
+/* The pill above is a hardcoded near-black surface, but --linear-text resolves
+   to the page text colour — which is DARK in the light themes, leaving a dark
+   folder icon on a dark pill (invisible). Light themes get a light pill with
+   dark iconography instead of inheriting the dark-theme surface. */
+body.theme-normal .project-detail-linear .project-panel-launcher {
+  color: var(--text) !important;
+  background: var(--card) !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16) !important;
+}
+
+body.theme-normal .project-detail-linear .project-panel-launcher:hover,
+body.theme-normal .project-detail-linear .project-panel-launcher.is-open {
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--accent-light) 70%, var(--card)) !important;
+  border-color: var(--accent) !important;
+}
+
+body.theme-normal .project-detail-linear .project-panel-launcher svg {
+  stroke: currentColor;
+}
+
+/* The count bubble sits on --accent, which is near-black in the light themes,
+   so its label has to be the light surface colour to stay legible. */
+body.theme-normal .project-panel-launcher span {
+  background: var(--accent) !important;
+  color: var(--card) !important;
 }
 
 .project-detail-linear .view-header {
@@ -12638,53 +12561,9 @@ body.theme-black .mobile-bottom-nav {
   overflow: hidden;
 }
 
-.settings-visual-range {
-  padding: 10px 14px 12px;
-  gap: 7px;
-}
-
-.settings-range-labels span {
-  width: 22px;
-  height: 22px;
-  font-size: 0.72rem;
-}
-
-.settings-range-labels strong {
-  font-size: 0.82rem;
-}
-
-.settings-range-ticks {
-  padding: 0 3px;
-}
-
-.settings-range-ticks i {
-  width: 6px;
-  height: 6px;
-}
-
-.settings-visual-track input[type="range"] {
-  height: 18px;
-}
-
-.settings-visual-track input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-}
-
-.settings-visual-track input[type="range"]::-webkit-slider-thumb {
-  width: 16px;
-  height: 16px;
-  margin-top: -6px;
-}
-
-.settings-visual-track input[type="range"]::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
-}
-
-.settings-visual-track input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+.settings-option-picker {
+  padding: 10px 14px 14px;
+  gap: 8px;
 }
 
 /* Admin project visibility */
@@ -13608,3 +13487,857 @@ body.theme-black .project-card-v2-delete {
   border-color: rgba(248, 113, 113, 0.22);
 }
 
+/* Motorsport UI polish tokens */
+:root {
+  --motorsport-bg: #0d0b0b;
+  --motorsport-panel: #161313;
+  --motorsport-panel-2: #1d1717;
+  --motorsport-line: rgba(235, 225, 225, 0.14);
+  --motorsport-line-strong: rgba(245, 238, 238, 0.28);
+  --motorsport-text: #f7f3ef;
+  --motorsport-muted: #a49a98;
+  --motorsport-red: #c92334;
+  --motorsport-red-soft: rgba(201, 35, 52, 0.16);
+}
+
+#splash {
+  background: #04131a !important;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  cursor: crosshair;
+}
+
+.splash-sphere-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.splash-spec-overlay {
+  position: absolute;
+  left: clamp(22px, 4vw, 56px);
+  right: clamp(18px, 5vw, 72px);
+  bottom: clamp(26px, 7vh, 72px);
+  z-index: 1;
+  max-width: 720px;
+  display: grid;
+  gap: 13px;
+  color: #f7f3ef;
+  pointer-events: none;
+}
+
+.splash-core-label {
+  position: static !important;
+  transform: none !important;
+  color: rgba(247,243,239,0.7) !important;
+  font-size: 0.72rem !important;
+  font-weight: 850;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase;
+}
+
+.splash-loader-bar {
+  width: min(420px, 72vw) !important;
+  height: 3px !important;
+  margin: 4px 0 0 !important;
+  background: rgba(247,243,239,0.18) !important;
+}
+
+.splash-loader-fill {
+  background: linear-gradient(90deg, #f7f3ef, #c92334) !important;
+}
+
+.splash-status,
+.splash-version,
+.splash-hint {
+  margin: 0;
+  text-align: left;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.splash-status { color: rgba(247,243,239,0.75) !important; font-size: 0.82rem !important; }
+.splash-version { color: rgba(247,243,239,0.48) !important; font-size: 0.72rem; }
+.splash-hint {
+  color: rgba(247,243,239,0.52);
+  font-size: 0.72rem;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.perf-low-power .splash-sphere-canvas { opacity: 0.5; }
+
+body.theme-black {
+  --bg: var(--motorsport-bg) !important;
+  --bg-gradient: var(--motorsport-bg) !important;
+  --card: var(--motorsport-panel) !important;
+  --sidebar-bg: #0a0909 !important;
+  --sidebar-hover: #1a1515 !important;
+  --sidebar-active-bg: #251919 !important;
+  --border: var(--motorsport-line) !important;
+  --border-light: rgba(235,225,225,0.09) !important;
+  --border-strong: var(--motorsport-line-strong) !important;
+  --text: var(--motorsport-text) !important;
+  --text-secondary: #d7cecc !important;
+  --text-muted: var(--motorsport-muted) !important;
+  --accent: var(--motorsport-red) !important;
+  --accent-hover: #e12d40 !important;
+  --accent-light: var(--motorsport-red-soft) !important;
+  --accent-text: #ffd8dc !important;
+}
+
+body.theme-black .main-content,
+body.theme-black .app-main-column,
+body.theme-black .content-area {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 220px),
+    var(--motorsport-bg) !important;
+}
+
+body.theme-black .sidebar,
+body.theme-black .projects-sticky-head,
+body.theme-black .admin-sticky-head {
+  background: rgba(11,9,9,0.96) !important;
+  border-color: var(--motorsport-line) !important;
+}
+
+body.theme-black .projects-page-title h1,
+body.theme-black .view-header h1,
+body.theme-black .brand-name {
+  font-weight: 800;
+  text-transform: none;
+}
+
+body.theme-black .projects-page-title::before,
+body.theme-black .view-header::before {
+  content: "";
+  width: 72px;
+  height: 12px;
+  flex: 0 0 auto;
+  background: repeating-linear-gradient(105deg, rgba(247,243,239,0.75) 0 8px, transparent 8px 13px);
+  opacity: 0.52;
+}
+
+body.theme-black .projects-search-input,
+body.theme-black .projects-filter-select,
+body.theme-black .status-pill,
+body.theme-black .filter-tab,
+body.theme-black .btn {
+  border-radius: 5px !important;
+}
+
+body.theme-black .project-card-v2,
+body.theme-black .dash-panel,
+body.theme-black .notes-panel,
+body.theme-black .modal {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025), transparent 42%),
+    var(--motorsport-panel) !important;
+  border-color: var(--motorsport-line) !important;
+  border-radius: 7px !important;
+}
+
+body.theme-black .project-card-v2:hover {
+  border-color: rgba(201,35,52,0.38) !important;
+  box-shadow: inset 3px 0 0 var(--motorsport-red) !important;
+}
+
+body.theme-black .project-card-v2-current-task {
+  background: rgba(201,35,52,0.08) !important;
+  border-color: rgba(201,35,52,0.24) !important;
+}
+
+body.theme-black .project-card-v2-ct-label,
+body.theme-black .project-card-v2-progress-pct {
+  color: #ffb4bd !important;
+}
+
+.notes-panel { width: min(760px, calc(100vw - 32px)); }
+.notes-notebook { grid-template-columns: minmax(210px, 254px) minmax(0, 1fr); }
+.notes-panel-head { min-height: 58px; padding-inline: 16px; }
+.notes-list-item { min-height: 72px; padding: 9px 10px; border-radius: 6px; }
+.notes-editor-head { padding: 12px 15px 8px; gap: 10px; }
+.notes-title-input { font-size: 1.05rem; font-weight: 800; }
+.notes-editor-meta { padding: 6px 15px; justify-content: flex-start; }
+.notes-editor-meta span + span { display: none; }
+.notes-save-status { min-width: 48px; }
+.notes-editor-actions .btn { min-height: 34px; }
+.notes-active-editor .ql-toolbar.ql-snow { padding: 6px 10px; }
+.notes-active-editor .ql-editor { padding: 18px 18px 34px; }
+
+body.theme-black .notes-list-pane,
+body.theme-black .notes-editor-pane,
+body.theme-black .notes-active-editor {
+  background: transparent !important;
+}
+
+body.theme-black .notes-list-item.active {
+  border-color: rgba(201,35,52,0.34) !important;
+  box-shadow: inset 3px 0 0 var(--motorsport-red) !important;
+}
+
+@media (max-width: 600px) {
+  .notes-panel { width: 100vw; }
+}
+
+/* Classic dark splash revision (native window chrome) */
+#splash {
+  background: #000 !important;
+  cursor: default !important;
+  justify-content: center !important;
+  gap: 0 !important;
+  font-family: Consolas, "Courier New", monospace !important;
+}
+
+#splash .splash-sphere-canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  image-rendering: pixelated;
+  opacity: 0.34 !important;
+}
+
+#splash .splash-red-edition-gif {
+  position: absolute !important;
+  left: 50% !important;
+  top: 42vh !important;
+  width: min(31vw, 360px) !important;
+  height: min(31vw, 360px) !important;
+  min-width: 220px !important;
+  min-height: 220px !important;
+  max-width: min(70vw, 360px) !important;
+  max-height: min(70vw, 360px) !important;
+  transform: translate(-50%, -50%) !important;
+  object-fit: contain !important;
+  mix-blend-mode: screen !important;
+  filter: saturate(1.05) contrast(1.18) drop-shadow(0 0 22px rgba(255, 0, 0, 0.2)) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+}
+
+#splash .splash-spec-overlay {
+  position: absolute !important;
+  left: 50% !important;
+  right: auto !important;
+  top: calc(42vh + min(15.5vw, 180px) + 28px) !important;
+  bottom: auto !important;
+  width: min(360px, 72vw) !important;
+  max-width: 360px !important;
+  transform: translateX(-50%) !important;
+  display: grid !important;
+  justify-items: center !important;
+  gap: 15px !important;
+  color: #fff !important;
+  text-align: center !important;
+  pointer-events: none !important;
+  z-index: 2 !important;
+}
+
+/* The hint carries the only Esc/click affordance. Hiding it stranded anyone who
+   clicked the loader on a black screen with no visible way out. */
+#splash .splash-hint {
+  display: block !important;
+  margin: 14px 0 0 !important;
+  color: rgba(247,243,239,0.42) !important;
+  font-family: Consolas, "Courier New", monospace !important;
+  font-size: 0.68rem !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+#splash .splash-core-label {
+  position: static !important;
+  left: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  margin: 0 0 32px !important;
+  color: rgba(255,185,185,0.66) !important;
+  font-family: Consolas, "Courier New", monospace !important;
+  font-size: 0.66rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.24em !important;
+  line-height: 1 !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+}
+
+#splash .splash-loader-bar {
+  width: min(235px, 54vw) !important;
+  height: 1px !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border-radius: 0 !important;
+  background: rgba(255, 175, 175, 0.22) !important;
+  opacity: 1 !important;
+}
+
+#splash .splash-loader-bar::after {
+  background: linear-gradient(90deg, transparent, rgba(255,70,70,0.24), transparent) !important;
+}
+
+#splash .splash-loader-fill {
+  height: 100% !important;
+  border-radius: 0 !important;
+  background: linear-gradient(90deg, #fff0f0, #ff2020) !important;
+}
+
+#splash .splash-status,
+#splash .splash-version {
+  margin: 4px 0 0 !important;
+  text-align: center !important;
+  font-family: Consolas, "Courier New", monospace !important;
+  line-height: 1.2 !important;
+}
+
+#splash .splash-status {
+  color: rgba(255,190,190,0.5) !important;
+  font-size: 0.74rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+}
+
+#splash .splash-version {
+  color: rgba(255,255,255,0.12) !important;
+  font-size: 0.67rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+}
+
+@media (max-width: 640px) {
+  #splash .splash-red-edition-gif {
+    width: min(68vw, 300px) !important;
+    height: min(68vw, 300px) !important;
+    min-width: 210px !important;
+    min-height: 210px !important;
+  }
+
+  #splash .splash-spec-overlay {
+    top: calc(42vh + min(34vw, 150px) + 20px) !important;
+  }
+
+  #splash .splash-core-label {
+    font-size: 0.6rem !important;
+    letter-spacing: 0.16em !important;
+  }
+}
+
+/* Red Edition splash cleanup: plain black Lite-style presentation */
+#splash {
+  --red-edition-art-size: min(38vh, 330px, 72vw);
+  --red-edition-art-half: min(19vh, 165px, 36vw);
+  background: #000 !important;
+}
+
+#splash .splash-sphere-canvas {
+  display: none !important;
+  opacity: 0 !important;
+}
+
+#splash .splash-red-edition-gif {
+  top: 39.5vh !important;
+  width: var(--red-edition-art-size) !important;
+  height: var(--red-edition-art-size) !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 72vw !important;
+  max-height: 72vh !important;
+  background: #000 !important;
+  mix-blend-mode: normal !important;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+#splash .splash-spec-overlay {
+  top: calc(39.5vh + var(--red-edition-art-half) + 18px) !important;
+  gap: 15px !important;
+}
+
+#splash .splash-core-label {
+  margin: 0 0 34px !important;
+  color: rgba(255,255,255,0.48) !important;
+  font-size: 0.64rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.28em !important;
+}
+
+#splash .splash-loader-bar {
+  width: min(235px, 54vw) !important;
+  background: rgba(255,255,255,0.28) !important;
+}
+
+#splash .splash-loader-bar::after {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent) !important;
+}
+
+#splash .splash-loader-fill {
+  background: #ffffff !important;
+}
+
+#splash .splash-status {
+  color: rgba(255,255,255,0.46) !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+}
+
+#splash .splash-version {
+  color: rgba(255,255,255,0.1) !important;
+}
+
+@media (max-width: 640px) {
+  #splash {
+    --red-edition-art-size: min(58vw, 300px, 38vh);
+    --red-edition-art-half: min(29vw, 150px, 19vh);
+  }
+
+  #splash .splash-core-label {
+    font-size: 0.58rem !important;
+    letter-spacing: 0.2em !important;
+  }
+}
+
+/* Project cards: themes may repaint, but geometry must not move. */
+:root {
+  --project-card-min-height: 320px;
+  --project-card-accent-height: 4px;
+  --project-card-footer-pad: 11px 20px;
+  --project-card-current-task-min: 50px;
+  --project-card-badge-row-min: 27px;
+}
+
+html[data-ui-density="compact"] {
+  --project-card-min-height: 278px;
+  --project-card-current-task-min: 48px;
+}
+
+html[data-ui-density="tiny"] {
+  --project-card-min-height: 248px;
+  --project-card-current-task-min: 46px;
+}
+
+.projects-grid-v2,
+body.theme-black .projects-grid-v2 {
+  gap: var(--project-card-gap, 18px) !important;
+  align-items: stretch !important;
+}
+
+.project-card-v2,
+body.theme-black .project-card-v2 {
+  box-sizing: border-box !important;
+  min-height: var(--project-card-min-height) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  transform: none !important;
+  transition: background-color var(--transition), border-color var(--transition), box-shadow var(--transition) !important;
+}
+
+.project-card-v2:hover,
+.project-card-v2:active,
+body.theme-black .project-card-v2:hover,
+body.theme-black .project-card-v2:active {
+  transform: none !important;
+}
+
+.project-card-v2-accent-bar,
+body.theme-black .project-card-v2-accent-bar {
+  display: block !important;
+  flex: 0 0 var(--project-card-accent-height) !important;
+  height: var(--project-card-accent-height) !important;
+  min-height: var(--project-card-accent-height) !important;
+}
+
+body.theme-black .project-card-v2-accent-bar {
+  background: rgba(255,255,255,0.03) !important;
+}
+
+.project-card-v2-body,
+body.theme-black .project-card-v2-body {
+  box-sizing: border-box !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: var(--project-card-pad, 18px 20px 14px) !important;
+}
+
+.project-card-v2-badges,
+body.theme-black .project-card-v2-badges {
+  min-height: var(--project-card-badge-row-min) !important;
+  gap: 5px !important;
+  margin-bottom: 11px !important;
+  align-content: flex-start !important;
+}
+
+.project-card-v2 .badge,
+body.theme-black .project-card-v2 .badge {
+  box-sizing: border-box !important;
+  min-height: 25px !important;
+  padding: 3px 10px !important;
+  border-width: 1px !important;
+  font-size: 0.73rem !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+.project-card-v2-title,
+body.theme-black .project-card-v2-title {
+  font-size: var(--project-card-title, 1.05rem) !important;
+  font-weight: 800 !important;
+  line-height: 1.3 !important;
+  margin-bottom: 6px !important;
+}
+
+.project-card-v2-notes,
+body.theme-black .project-card-v2-notes,
+body.theme-black .project-card-notes {
+  min-height: calc(0.84rem * 1.55 * 2) !important;
+  margin-bottom: 14px !important;
+  line-height: 1.55 !important;
+}
+
+.project-card-v2-progress,
+body.theme-black .project-card-v2-progress {
+  margin-top: auto !important;
+  margin-bottom: 12px !important;
+}
+
+.project-card-v2-current-task,
+body.theme-black .project-card-v2-current-task {
+  box-sizing: border-box !important;
+  min-height: var(--project-card-current-task-min) !important;
+  padding: 9px 11px !important;
+  margin-top: 6px !important;
+}
+
+.project-card-v2-footer,
+body.theme-black .project-card-v2-footer {
+  box-sizing: border-box !important;
+  flex: 0 0 auto !important;
+  min-height: 54px !important;
+  padding: var(--project-card-footer-pad) !important;
+  border-top-width: 1px !important;
+}
+
+/* Theme invariant page chrome: toggles repaint; they must not move the UI. */
+:root {
+  --orbi-main-pad-top: 24px;
+  --orbi-main-pad-x: 40px;
+  --orbi-main-pad-bottom: 32px;
+  --orbi-sticky-head-margin: calc(var(--orbi-main-pad-top) * -1) calc(var(--orbi-main-pad-x) * -1) 30px;
+  --orbi-sticky-head-padding: var(--orbi-main-pad-top) var(--orbi-main-pad-x) 18px;
+}
+
+@media (min-width: 769px) {
+  .main-content,
+  body.theme-normal .main-content,
+  body.theme-black .main-content {
+    padding: var(--orbi-main-pad-top) var(--orbi-main-pad-x) var(--orbi-main-pad-bottom) !important;
+  }
+
+  .projects-sticky-head,
+  .admin-sticky-head,
+  body.theme-normal .projects-sticky-head,
+  body.theme-normal .admin-sticky-head,
+  body.theme-black .projects-sticky-head,
+  body.theme-black .admin-sticky-head {
+    margin: var(--orbi-sticky-head-margin) !important;
+    padding: var(--orbi-sticky-head-padding) !important;
+  }
+}
+
+body.theme-black .projects-page-title::before,
+body.theme-black .view-header::before {
+  content: none !important;
+  display: none !important;
+}
+
+.projects-page-title h1,
+body.theme-normal .projects-page-title h1,
+body.theme-black .projects-page-title h1,
+.view-header h1,
+body.theme-normal .view-header h1,
+body.theme-black .view-header h1 {
+  font-size: 1.75rem !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+}
+
+.projects-page-title,
+body.theme-black .projects-page-title {
+  gap: 10px !important;
+}
+
+.sidebar,
+body.theme-normal .sidebar,
+body.theme-black .sidebar {
+  padding: 0 14px 0 !important;
+}
+
+.sidebar-brand,
+body.theme-normal .sidebar-brand,
+body.theme-black .sidebar-brand {
+  padding: 20px 8px 16px !important;
+}
+
+.brand-icon-bw,
+body.theme-normal .brand-icon-bw,
+body.theme-black .brand-icon-bw {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+}
+
+body.sidebar-collapsed .sidebar,
+body.sidebar-collapsed.theme-normal .sidebar,
+body.sidebar-collapsed.theme-black .sidebar {
+  padding: 8px 8px 10px !important;
+}
+
+body.sidebar-collapsed .sidebar-brand,
+body.sidebar-collapsed.theme-normal .sidebar-brand,
+body.sidebar-collapsed.theme-black .sidebar-brand {
+  padding: 8px 0 6px !important;
+}
+
+body.sidebar-collapsed .sidebar-nav,
+body.sidebar-collapsed.theme-normal .sidebar-nav,
+body.sidebar-collapsed.theme-black .sidebar-nav {
+  padding: 4px 0 8px !important;
+  gap: 4px !important;
+}
+
+body.sidebar-collapsed .nav-item,
+body.sidebar-collapsed.theme-normal .nav-item,
+body.sidebar-collapsed.theme-black .nav-item {
+  width: 44px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  margin: 0 auto !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+}
+
+body.sidebar-collapsed .sidebar-footer,
+body.sidebar-collapsed.theme-normal .sidebar-footer,
+body.sidebar-collapsed.theme-black .sidebar-footer {
+  gap: 6px !important;
+}
+
+body.sidebar-collapsed .sidebar-action-btn,
+body.sidebar-collapsed.theme-normal .sidebar-action-btn,
+body.sidebar-collapsed.theme-black .sidebar-action-btn {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+}
+
+.settings-option-choice {
+  text-align: left;
+}
+
+.settings-option-choice small:empty {
+  display: none;
+}
+
+/* Full power is the glassy tier, so it must READ as the most transparent one.
+   It previously used a higher alpha (74%) than Balanced (82% from the base rule)
+   yet looked more solid, because a backdrop blur averages whatever is behind it
+   and visually fills the translucency back in. Compensating with a much lower
+   alpha makes the tiers land in the order the setting implies:
+   Full = see-through + blurred, Balanced = lightly see-through, Low = solid. */
+body.perf-full .projects-sticky-head,
+body.perf-full .admin-sticky-head {
+  background: color-mix(in srgb, var(--bg) 52%, transparent) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.2) !important;
+  backdrop-filter: blur(18px) saturate(1.2) !important;
+}
+
+body.perf-full .project-card-v2,
+body.perf-full .dash-panel,
+body.perf-full .section-card,
+body.perf-full .notes-panel,
+body.perf-full .modal {
+  background: color-mix(in srgb, var(--card) 88%, transparent) !important;
+}
+
+body.perf-full.theme-black .projects-sticky-head,
+body.perf-full.theme-black .admin-sticky-head {
+  background: color-mix(in srgb, var(--motorsport-bg) 50%, transparent) !important;
+}
+
+body.perf-full.theme-black .project-card-v2,
+body.perf-full.theme-black .dash-panel,
+body.perf-full.theme-black .section-card,
+body.perf-full.theme-black .notes-panel,
+body.perf-full.theme-black .modal {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.022), transparent 46%),
+    color-mix(in srgb, var(--motorsport-panel) 82%, transparent) !important;
+}
+
+/* No blur below Full: it is the expensive part. Balanced keeps a hint of
+   translucency; Low Power is opaque so nothing composites at all. */
+body.perf-balanced .projects-sticky-head,
+body.perf-low-power .projects-sticky-head,
+body.perf-balanced .admin-sticky-head,
+body.perf-low-power .admin-sticky-head {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+body.perf-balanced .projects-sticky-head,
+body.perf-balanced .admin-sticky-head {
+  background: color-mix(in srgb, var(--bg) 88%, transparent) !important;
+}
+
+body.perf-balanced.theme-black .projects-sticky-head,
+body.perf-balanced.theme-black .admin-sticky-head {
+  background: color-mix(in srgb, var(--motorsport-bg) 88%, transparent) !important;
+}
+
+body.perf-low-power .projects-sticky-head,
+body.perf-low-power .admin-sticky-head {
+  background: var(--bg) !important;
+}
+
+body.perf-low-power.theme-black .projects-sticky-head,
+body.perf-low-power.theme-black .admin-sticky-head {
+  background: var(--motorsport-bg) !important;
+}
+
+@media (max-width: 760px) {
+  .settings-option-picker {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+
+/* ── Theme-invariant control metrics ──────────────────────────────────────────
+   Black mode gave the projects search input min-height 50px and the status
+   pills min-height 38px, while Normal mode inherited 41px / 31px from the base
+   rules. The 23px difference accumulated in the sticky header and shoved the
+   whole project grid up and down every time the theme was toggled. Both themes
+   now share one set of box metrics. Black is the default theme, so these are
+   Black's existing values — its appearance is unchanged and Normal stops
+   drifting. Colours stay per-theme; only geometry is pinned here. */
+:root {
+  --orbi-search-min-height: 50px;
+  --orbi-pill-min-height: 38px;
+  --orbi-pill-padding: 7px 15px;
+  --orbi-pill-border-width: 1px;
+  --orbi-projects-controls-gap: 12px;
+  --orbi-page-header-min-height: 42px;
+}
+
+.projects-search-input,
+.projects-filter-select,
+body.theme-normal .projects-search-input,
+body.theme-normal .projects-filter-select,
+body.theme-black .projects-search-input,
+body.theme-black .projects-filter-select {
+  min-height: var(--orbi-search-min-height) !important;
+}
+
+.status-pill,
+.filter-tab,
+body.theme-normal .status-pill,
+body.theme-normal .filter-tab,
+body.theme-black .status-pill,
+body.theme-black .filter-tab {
+  min-height: var(--orbi-pill-min-height) !important;
+  padding: var(--orbi-pill-padding) !important;
+  border-width: var(--orbi-pill-border-width) !important;
+  border-style: solid !important;
+}
+
+.projects-controls,
+body.theme-normal .projects-controls,
+body.theme-black .projects-controls {
+  gap: var(--orbi-projects-controls-gap) !important;
+}
+
+/* Residual 1.4px: the page-header row is sized by its tallest line box, and the
+   two themes use different chrome fonts, so the baseline differs fractionally.
+   Pin the row height (Black's value) instead of chasing font metrics. */
+.projects-page-header,
+body.theme-normal .projects-page-header,
+body.theme-black .projects-page-header {
+  min-height: var(--orbi-page-header-min-height) !important;
+}
+
+
+/* Loader artwork is optional. app.js removes the <img> if the asset is missing
+   or fails to decode, so the splash degrades to clean type on black rather than
+   a broken-image icon — a repo checkout without assets/ still boots normally. */
+#splash.splash-no-art .splash-spec-overlay {
+  position: static !important;
+  transform: none !important;
+  top: auto !important;
+  left: auto !important;
+}
+
+#splash.splash-no-art {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+
+/* ── Admin overview palette ───────────────────────────────────────────────────
+   These three widgets (Workspace Pulse tiles, Activity Histogram, User Activity
+   bars) all had hardcoded colours that assumed a light background: an
+   --accent-light/#fff mix, a fixed teal heat ramp, and a #eef2f7 bar track.
+   On the dark theme that produced washed-out mauve tiles, a saturated green
+   grid fighting the red accent, and bright white bar tracks with dark fills —
+   contrast inverted against everything around them. Both themes now read from
+   the same tokens, tuned per theme, so the widgets stay calm and legible. */
+/* Declared on `body`, not :root. The theme palettes are set on body.theme-*, and
+   a custom property composed with var() resolves against the element it is
+   DECLARED on — so declaring these on :root (html) made var(--green) resolve to
+   the light-theme default #111111 and painted near-black bars in every theme. */
+body {
+  --admin-tile-bg: color-mix(in srgb, var(--accent-light) 55%, var(--card));
+  --admin-tile-border: var(--border);
+  --admin-heat-rgb: 22, 163, 74;
+  --admin-bar-track: rgba(15, 23, 42, 0.07);
+  --admin-bar-from: color-mix(in srgb, var(--green) 45%, #ffffff);
+  --admin-bar-to: var(--green);
+  --admin-bar-label: #ffffff;
+}
+
+body.theme-black {
+  /* A hint of the Motorsport red over the panel, not a light slab. */
+  --admin-tile-bg: color-mix(in srgb, var(--motorsport-red) 7%, var(--motorsport-panel-2, #1d1717)) !important;
+  --admin-tile-border: var(--motorsport-line, rgba(235,225,225,0.14)) !important;
+  --admin-heat-rgb: 201, 35, 52 !important;
+  --admin-bar-track: rgba(255, 255, 255, 0.055) !important;
+  --admin-bar-from: rgba(201, 35, 52, 0.42) !important;
+  --admin-bar-to: #c92334 !important;
+  --admin-bar-label: #fdecee !important;
+}
+
+/* The day variants keep their own accents rather than inheriting Motorsport red. */
+body.theme-normal.theme-day-ink {
+  --admin-heat-rgb: 24, 24, 27;
+  --admin-bar-from: rgba(39, 39, 42, 0.32);
+  --admin-bar-to: #3f3f46;
+}
+
+.admin-mini-calendar span { transition: background var(--transition); }
+
+
+/* The admin two-column grid used a 980px VIEWPORT breakpoint, which ignores the
+   sidebar. With the sidebar expanded (260-300px) a ~1100px window left each
+   track near 300px — narrow enough that the 30-cell histogram was clipped by its
+   own panel. Collapse to one column while the window can still be that tight. */
+@media (max-width: 1240px) {
+  .admin-tab-grid,
+  .admin-workspace-grid,
+  .admin-data-grid {
+    grid-template-columns: 1fr;
+  }
+}

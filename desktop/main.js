@@ -74,6 +74,11 @@ const reactDevMode = process.env.WT_REACT_DEV === '1'; // use the Vite dev serve
 const reactDevUrl = process.env.WT_REACT_URL || 'http://127.0.0.1:5175/';
 const reactStartRoute = process.env.WT_REACT_ROUTE || '#/admin/overview';
 const isExecutiveBlack = useReactApp && (process.env.WT_EXECUTIVE_BLACK === '1' || packageMeta.executiveBlack === true || launchMode === 'executive');
+// The window keeps the native OS frame. Kept as a constant so the security
+// status the renderer reads is derived from the value actually passed to
+// BrowserWindow rather than restated by hand.
+const WINDOW_HAS_NATIVE_FRAME = true;
+let cspInstalled = false;
 
 function getPackageMeta() {
   try {
@@ -98,7 +103,22 @@ function reactUrlWithRoute(url) {
 function isSafeExternalUrl(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
-    return ['https:', 'http:', 'mailto:'].includes(parsed.protocol);
+    // http: is deliberately excluded: nothing in the app needs to open a
+    // cleartext page, and allowing it lets a renderer defect launch the
+    // default browser at an arbitrary drive-by download.
+    return ['https:', 'mailto:'].includes(parsed.protocol);
+  } catch (_) {
+    return false;
+  }
+}
+
+// A dev-server URL comes from the environment, so it must be pinned to loopback
+// before it can be handed to loadURL with the preload bridge attached.
+function isLocalDevUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(parsed.hostname);
   } catch (_) {
     return false;
   }
@@ -136,6 +156,7 @@ function createWindow() {
     title: isExecutiveBlack ? 'Executive Black' : (app.getName() || 'Orbitrack'),
     backgroundColor: '#000000',
     autoHideMenuBar: true,
+    frame: WINDOW_HAS_NATIVE_FRAME,
     show: false,
     icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     webPreferences: {
@@ -151,16 +172,20 @@ function createWindow() {
     }
   });
 
-  if (useReactApp && reactDevMode) {
+  // The dev-server branch is gated on isDev and loopback: in a packaged build
+  // WT_REACT_DEV=1 plus WT_REACT_URL would otherwise be enough to render a
+  // remote origin in the main window with the privileged preload attached.
+  if (useReactApp && reactDevMode && isDev && isLocalDevUrl(reactDevUrl)) {
     bootLog('load-react-dev', reactUrlWithRoute(reactDevUrl));
     mainWindow.loadURL(reactUrlWithRoute(reactDevUrl));
   } else if (useReactApp) {
+    if (reactDevMode) bootLog('load-react-dev-refused', reactDevUrl);
     const reactIndex = path.join(__dirname, '..', 'orbitrack-react', 'dist', 'index.html');
     bootLog('load-react-built', reactIndex);
     mainWindow.loadFile(reactIndex, {
       hash: reactStartRoute.replace(/^#/, '')
     });
-  } else if (isDev && useModularApp) {
+  } else if (isDev && useModularApp && isLocalDevUrl(modularDevUrl)) {
     bootLog('load-modular-dev', modularUrlWithRoute(modularDevUrl));
     mainWindow.loadURL(modularUrlWithRoute(modularDevUrl));
   } else if (useModularApp) {
@@ -181,6 +206,16 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     bootLog('did-fail-load', `${errorCode} ${errorDescription} ${validatedURL}`);
   });
+
+  // With WT_BOOT_LOG=1, renderer console output lands in boot.log. Renderer
+  // errors are otherwise invisible without opening DevTools by hand, which makes
+  // things like a Content-Security-Policy refusal hard to spot in a packaged run.
+  if (bootLogEnabled) {
+    mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      if (level < 1) return; // skip plain console.log noise
+      bootLog('renderer-console', `[${level}] ${message} (${sourceId}:${line})`);
+    });
+  }
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     bootLog('render-process-gone', JSON.stringify(details));
   });
@@ -248,6 +283,7 @@ function createWindow() {
     if (menu.items.length) menu.popup();
   });
 }
+
 
 function createMenu() {
   Menu.setApplicationMenu(null);
@@ -356,14 +392,68 @@ function configureAutoUpdater() {
   });
 }
 
-ipcMain.handle('app:get-version', () => app.getVersion());
-ipcMain.handle('shell:open-external', async (_event, url) => {
+// Only the app's own top frame may drive privileged IPC. Without this a nested
+// frame — e.g. the blob: PDF preview iframe — could call updater:install.
+function fromMainFrame(event) {
+  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+  if (!wc) return false;
+  try {
+    return event?.senderFrame === wc.mainFrame;
+  } catch (_) {
+    // senderFrame throws if the frame was disposed mid-call.
+    return false;
+  }
+}
+
+// Reported to the renderer's Local Health panel. Every field is read back from
+// live state: a hardcoded set of `true`s made the panel structurally incapable
+// of ever reporting a problem, which is worse than showing nothing.
+function collectSecurityStatus() {
+  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+  let prefs = {};
+  try { prefs = wc?.getLastWebPreferences?.() || {}; } catch (_) { prefs = {}; }
+  let signatureVerification = true;
+  try {
+    if (autoUpdater && typeof autoUpdater.verifyUpdateCodeSignature === 'boolean') {
+      signatureVerification = autoUpdater.verifyUpdateCodeSignature;
+    }
+  } catch (_) {}
+  return {
+    desktop: true,
+    platform: process.platform,
+    vanillaFrameless: !WINDOW_HAS_NATIVE_FRAME,
+    contextIsolation: prefs.contextIsolation !== false,
+    nodeIntegration: prefs.nodeIntegration === true,
+    sandbox: prefs.sandbox !== false,
+    webSecurity: prefs.webSecurity !== false,
+    externalNavigationGuard: true,
+    contentSecurityPolicy: cspInstalled,
+    updateSignatureVerification: signatureVerification,
+    // This build is not Authenticode-signed, so say so rather than implying a
+    // trusted update path exists.
+    signedBuild: false
+  };
+}
+
+// Guarded like the rest, so "every ipcMain.handle validates its sender" holds
+// with no exceptions to reason about — even for a read-only value.
+ipcMain.handle('app:get-version', (event) => (fromMainFrame(event) ? app.getVersion() : null));
+ipcMain.handle('desktop:get-security-status', (event) => {
+  if (!fromMainFrame(event)) return null;
+  return collectSecurityStatus();
+});
+ipcMain.handle('shell:open-external', async (event, url) => {
+  if (!fromMainFrame(event)) return false;
   if (!isSafeExternalUrl(url)) return false;
   await shell.openExternal(url);
   return true;
 });
-ipcMain.handle('updater:check', () => checkForUpdates({ manual: true }));
-ipcMain.handle('updater:install', () => {
+ipcMain.handle('updater:check', (event) => {
+  if (!fromMainFrame(event)) return null;
+  return checkForUpdates({ manual: true });
+});
+ipcMain.handle('updater:install', (event) => {
+  if (!fromMainFrame(event)) return;
   if (!isDev && autoUpdater) {
     try {
       const verPath = path.join(app.getPath('userData'), 'last-installed-version');
@@ -373,10 +463,64 @@ ipcMain.handle('updater:install', () => {
   }
 });
 
+// Content-Security-Policy for the packaged renderer. The app loads every script
+// from disk and installs no inline handlers, so script-src can stay at 'self'
+// with no 'unsafe-inline'/'unsafe-eval'. Inline *styles* are unavoidable: the
+// views build HTML with style="" attributes throughout.
+// `file:` is listed alongside 'self' because a file:// document has an opaque
+// origin, so 'self' does not reliably match its own sibling files in Chromium.
+// It still blocks every remote script/style origin, which is the point.
+const RENDERER_CSP = [
+  "default-src 'self' file:",
+  "script-src 'self' file:",
+  "style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' file: data: https://fonts.gstatic.com",
+  // blob: covers generated report/preview objects; the Drive hosts serve
+  // profile-photo thumbnails.
+  "img-src 'self' file: data: blob: https://drive.google.com https://*.googleusercontent.com",
+  "media-src 'self' file: data: blob:",
+  "connect-src 'self' file: data: blob: https://*.supabase.co wss://*.supabase.co https://*.googleapis.com",
+  // The PDF preview renders a blob: URL inside an iframe.
+  "frame-src 'self' file: blob:",
+  "worker-src 'self' file: blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'"
+].join('; ');
+
+// Permissions the app actually uses. Everything else is denied rather than
+// left to Electron's permissive default.
+const ALLOWED_PERMISSIONS = new Set(['notifications', 'clipboard-sanitized-write', 'fullscreen']);
+
+function hardenSession(targetSession) {
+  // Only stamp the policy on locally-loaded content. A Vite dev server needs
+  // inline scripts and a ws: connection for HMR, and that path is dev-only.
+  targetSession.webRequest.onHeadersReceived((details, callback) => {
+    if (!details.url.startsWith('file://')) {
+      callback({});
+      return;
+    }
+    const responseHeaders = { ...(details.responseHeaders || {}) };
+    delete responseHeaders['content-security-policy'];
+    delete responseHeaders['Content-Security-Policy'];
+    responseHeaders['Content-Security-Policy'] = [RENDERER_CSP];
+    callback({ responseHeaders });
+  });
+  cspInstalled = true;
+
+  targetSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    const granted = ALLOWED_PERMISSIONS.has(permission);
+    if (!granted) bootLog('permission-denied', permission);
+    callback(granted);
+  });
+  targetSession.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+}
+
 app.whenReady().then(() => {
   bootLog('app-ready');
   app.setAppUserModelId(packageMeta.orbitaskAppId || 'com.everlasting.worktracker');
   session.defaultSession.setSpellCheckerLanguages(['en-US']);
+  hardenSession(session.defaultSession);
   createWindow();
   createMenu();
   configureAutoUpdater();

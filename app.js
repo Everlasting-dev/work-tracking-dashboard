@@ -101,18 +101,50 @@ function setSplashStatus(msg) {
 }
 let _splashDismissPending = false;
 let _splashReady = false;
+// Every scheduled splash step is tracked so a forced dismissal (Esc, boot
+// failsafe) can cancel it. Without this, a queued fade fires against a node
+// that was already removed.
+let _splashFadeTimer = null;
+let _splashRemoveTimer = null;
+let _splashKeyHandler = null;
 
-function hideSplash() {
+const SPLASH_HINT_DEFAULT = 'Press Esc to skip ahead once loading finishes.';
+
+function setSplashHint(msg) {
+  const el = document.getElementById('splash-hint');
+  if (el && msg) el.textContent = msg;
+}
+
+function clearSplashTimers() {
+  if (_splashFadeTimer) { clearTimeout(_splashFadeTimer); _splashFadeTimer = null; }
+  if (_splashRemoveTimer) { clearTimeout(_splashRemoveTimer); _splashRemoveTimer = null; }
+}
+
+function unlockSplashScroll() {
+  document.documentElement.classList.remove('splash-lock');
+}
+
+// The loader runs to completion on its own. There is deliberately no way to
+// pause or hold it open: click-to-hold left users stranded on an opaque overlay.
+function hideSplash(opts = {}) {
   const el = document.getElementById('splash');
-  if (!el || el.classList.contains('fade-out')) return;
+  if (!el) { unlockSplashScroll(); return; }
+  if (el.classList.contains('fade-out')) return;
   const minMs = 3200;
-  const wait = Math.max(0, minMs - (Date.now() - _splashShownAt));
-  setTimeout(() => {
+  const wait = opts.force ? 0 : Math.max(0, minMs - (Date.now() - _splashShownAt));
+  clearSplashTimers();
+  _splashFadeTimer = setTimeout(() => {
+    _splashFadeTimer = null;
     el.classList.add('fade-out');
     window.SplashSphere?.stop?.();
-    setTimeout(() => {
+    _splashRemoveTimer = setTimeout(() => {
+      _splashRemoveTimer = null;
       el.remove();
-      document.documentElement.classList.remove('splash-lock');
+      unlockSplashScroll();
+      if (_splashKeyHandler) {
+        document.removeEventListener('keydown', _splashKeyHandler);
+        _splashKeyHandler = null;
+      }
     }, 500);
   }, wait);
 }
@@ -126,9 +158,40 @@ function requestSplashDismiss() {
   _splashDismissPending = true;
   if (_splashReady) hideSplash();
 }
+function forceSplashDismiss() {
+  hideSplash({ force: true });
+}
+function bindSplashInteractions() {
+  const splash = document.getElementById('splash');
+  if (!splash || splash.dataset.bound === 'true') return;
+  splash.dataset.bound = 'true';
+  setSplashHint(SPLASH_HINT_DEFAULT);
+  // If the loader artwork is missing (or fails to decode), drop the element so
+  // the splash shows clean type on black instead of a broken-image icon.
+  const loaderArt = document.getElementById('splash-red-edition');
+  if (loaderArt) {
+    const dropArt = () => { loaderArt.remove(); splash.classList.add('splash-no-art'); };
+    loaderArt.addEventListener('error', dropArt);
+    if (loaderArt.complete && loaderArt.naturalWidth === 0) dropArt();
+  }
+  _splashKeyHandler = (event) => {
+    if (event.key !== 'Escape') return;
+    const liveSplash = document.getElementById('splash');
+    if (!liveSplash || liveSplash.classList.contains('fade-out')) return;
+    if (_splashReady || _splashDismissPending) {
+      event.preventDefault();
+      forceSplashDismiss();
+    } else {
+      setSplashHint('Still preparing the local workspace...');
+    }
+  };
+  document.addEventListener('keydown', _splashKeyHandler);
+}
 const _splashDelay = (ms) => new Promise(r => setTimeout(r, ms));
 window.setSplashStatus = setSplashStatus;
 window.hideSplash = hideSplash;
+window.forceSplashDismiss = forceSplashDismiss;
+bindSplashInteractions();
 
 /* ???? UI v3: Classroom themes ???? */
 function _seededRng(seed) {
@@ -513,6 +576,8 @@ let _usersCacheAt = 0;
 let _webhooksCache = null;
 let _webhooksCacheAt = 0;
 let _workspaceFetchPromise = null;
+let _projectAttachmentCountCache = new Map();
+let _projectAttachmentCountCacheAt = 0;
 let initialCloudSyncChecked = false;
 
 function isCloudMode() {
@@ -692,6 +757,8 @@ function bustWorkspaceCache() {
   _usersCacheAt = 0;
   _webhooksCache = null;
   _webhooksCacheAt = 0;
+  _projectAttachmentCountCache = new Map();
+  _projectAttachmentCountCacheAt = 0;
   _workspaceFetchPromise = null;
   try {
     sessionStorage.removeItem(SESSION_CACHE_KEY);
@@ -703,6 +770,25 @@ function bustWorkspaceCache() {
     window.SupabaseDB._shadowState.complete = { projects: false, tasks: false, departments: false, users: false, updates: false };
     try { window.SupabaseDB._persistShadowState(); } catch(_) {}
   }
+}
+
+async function getProjectAttachmentCountCached(projectId) {
+  const id = Number(projectId);
+  if (!id || !DB.getAttachments) return 0;
+  const now = Date.now();
+  if (now - _projectAttachmentCountCacheAt > WORKSPACE_CACHE_MS) {
+    _projectAttachmentCountCache = new Map();
+    _projectAttachmentCountCacheAt = now;
+  }
+  if (_projectAttachmentCountCache.has(id)) return _projectAttachmentCountCache.get(id);
+  let count = 0;
+  try {
+    count = (await DB.getAttachments(id)).length;
+  } catch (_) {
+    count = 0;
+  }
+  _projectAttachmentCountCache.set(id, count);
+  return count;
 }
 
 function patchTaskInCache(taskId, changes) {
@@ -1074,34 +1160,83 @@ function avatarSrc(u) {
   return u.avatarBase64 || '';
 }
 
-// Debounced re-render for in-view search inputs. Coalesces bursts of keystrokes
-// into a single re-render after the user pauses, so the <input> is not destroyed
-// mid-typing (which caused character reordering/drops and lag). Reads the live
-// value at fire time and restores the caret after the view rebuilds.
-let _searchRenderTimer = null;
-let _searchRenderPending = null;
-function _debounceSearchRender(kind, inputId, setState, renderFn) {
-  _searchRenderPending = { kind, inputId, setState, renderFn };
-  clearTimeout(_searchRenderTimer);
-  _searchRenderTimer = setTimeout(async () => {
-    const job = _searchRenderPending;
-    _searchRenderPending = null;
-    if (!job) return;
-    const live = document.getElementById(job.inputId);
-    const value = live ? (live.value || '') : '';
-    const caret = live ? (live.selectionStart ?? value.length) : value.length;
-    job.setState(value);
+// Search inputs live inside views that rebuild their whole HTML. Keep the typed
+// value in state immediately, but delay the expensive rebuild until the user
+// pauses. If another input arrives while a render is already running, queue one
+// more pass and restore the live value/caret after each rebuild.
+const SEARCH_RENDER_DELAY_MS = 320;
+const _searchRenderJobs = new Map();
+function _scheduleSearchRender(kind, inputId, setState, renderFn, delay = SEARCH_RENDER_DELAY_MS) {
+  let job = _searchRenderJobs.get(kind);
+  if (!job) {
+    job = { timer: null, running: false, dirty: false, latestValue: '', caret: 0, inputId, setState, renderFn };
+    _searchRenderJobs.set(kind, job);
+  }
+  job.inputId = inputId;
+  job.setState = setState;
+  job.renderFn = renderFn;
+  job.route = window.location.hash;
+  const live = document.getElementById(inputId);
+  job.latestValue = live ? (live.value || '') : job.latestValue;
+  job.caret = live ? (live.selectionStart ?? job.latestValue.length) : job.latestValue.length;
+  job.setState(job.latestValue);
+  job.dirty = true;
+  clearTimeout(job.timer);
+  job.timer = setTimeout(() => {
+    _runSearchRender(kind).catch(err => console.warn(`[search] ${kind} render rejected`, err));
+  }, delay);
+}
+
+async function _runSearchRender(kind) {
+  const job = _searchRenderJobs.get(kind);
+  if (!job) return;
+  if (job.running) {
+    job.dirty = true;
+    return;
+  }
+  // A pending render belongs to the view that owns the search box. Running it
+  // after the user navigated away would repaint the old view over the new
+  // route, so drop it if the route moved or the input is gone.
+  if (job.route !== window.location.hash || !document.getElementById(job.inputId)) {
+    job.dirty = false;
+    return;
+  }
+  job.running = true;
+  job.dirty = false;
+  const wasFocused = document.activeElement?.id === job.inputId;
+  try {
     await job.renderFn();
+  } catch (err) {
+    console.warn(`[search] ${kind} render failed`, err);
+    try {
+      recordUserIssue({ level: 'warn', source: 'search', message: `${kind} search render failed: ${err?.message || err}` });
+    } catch (_) {}
+  } finally {
     const next = document.getElementById(job.inputId);
     if (next) {
-      // If the user kept typing during the async render, the freshly-rendered input
-      // carries the stale (fire-time) value ? re-sync to the latest typed value and
-      // put the caret at the end so no keystrokes are lost or reordered.
-      if (next.value !== value) { next.value = value; }
-      next.focus();
-      try { next.setSelectionRange(next.value.length, next.value.length); } catch (_) {}
+      next.value = job.latestValue;
+      if (wasFocused) next.focus({ preventScroll: true });
+      try {
+        const pos = Math.min(job.caret, next.value.length);
+        next.setSelectionRange(pos, pos);
+      } catch (_) {}
     }
-  }, 260);
+    job.running = false;
+    if (job.dirty) {
+      clearTimeout(job.timer);
+      job.timer = setTimeout(() => {
+        _runSearchRender(kind).catch(err => console.warn(`[search] ${kind} render rejected`, err));
+      }, 0);
+    }
+  }
+}
+
+function _flushSearchRender(kind) {
+  const job = _searchRenderJobs.get(kind);
+  if (!job) return;
+  clearTimeout(job.timer);
+  job.timer = null;
+  _runSearchRender(kind).catch(err => console.warn(`[search] ${kind} flush failed`, err));
 }
 
 function projectMatchesSearch(project, owner, query) {
@@ -1860,11 +1995,13 @@ function showAuthError(msg, tone = 'error') {
 async function ensureDriveStorageSession(user, password) {
   if (!window.DriveStorage?.enabled?.() || !user || !password) return null;
   if (isOffline()) return null;
-  const email = user.email || `${user.username}@worktracker.app`;
+  const userId = user.id ?? user.userId;
+  const username = user.username || getSession()?.username || '';
+  const email = user.email || '';
   try {
     return await withTimeout(window.DriveStorage.ensureAuthSession({
-      userId: user.id,
-      username: user.username,
+      userId,
+      username,
       email,
       password
     }), 3500, null);
@@ -2468,6 +2605,7 @@ window.WTDiagnostics = {
   recordIssue: recordUserIssue,
   getIssueLog: getUserIssueLog,
   clearIssueLog: clearUserIssueLog,
+  getHealthSnapshot: getLocalHealthSnapshot,
   buildReport: buildDiagnosticsText
 };
 
@@ -2689,6 +2827,7 @@ function renderUserMenu() {
     <button type="button" class="user-menu-item" data-action="reload-and-sync">${ICONS.cloud || ICONS.refresh} Reload &amp; sync</button>
     ${adminItems}
     <hr class="user-menu-divider">
+    <button type="button" class="user-menu-item" data-action="show-about">${ICONS.info || ICONS.sparkles || ''} About Orbitrack <span class="user-menu-item-meta">v${esc(getAppVersion())}</span></button>
     <button type="button" class="user-menu-item user-menu-item-danger" data-action="user-logout">${ICONS.logOut} Log Out</button>`;
 }
 
@@ -2776,8 +2915,8 @@ async function renderProjects() {
     .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username));
   const deptOptions = [...new Set(all.map(p => projectDepartmentValue(p, uMap)).filter(Boolean))].sort();
   const attachmentCounts = {};
-  await Promise.all(all.map(async p => {
-    try { attachmentCounts[p.id] = (await DB.getAttachments(p.id)).length; } catch (_) { attachmentCounts[p.id] = 0; }
+  await Promise.all(pData.map(async p => {
+    attachmentCounts[p.id] = await getProjectAttachmentCountCached(p.id);
   }));
 
   // Current in-progress task per project (first doing task found)
@@ -2796,7 +2935,6 @@ async function renderProjects() {
 
   const teamHint = !isAdmin() && effectiveWorkspaceScope() === 'mine'
     ? `<p class="text-muted text-sm workspace-hint" style="margin-bottom:12px">Use <strong>Everyone</strong> to browse teammates' projects (read-only).</p>` : '';
-
   content.innerHTML = `
     <div class="projects-sticky-head">
     <div class="projects-page-header">
@@ -5279,23 +5417,15 @@ async function renderAdminTabbed() {
   if (active === 'dashboard') mountDashboardQuickNote(window._pendingDashQuickNote || null);
 }
 
-function settingsVisualRangeHtml({ kind, current, options }) {
-  const index = Math.max(0, options.findIndex(opt => opt.key === current));
-  const value = index < 0 ? 0 : index;
-  const left = kind === 'performance' ? '&#9711;' : 'S';
-  const right = kind === 'performance' ? '&#9889;' : 'L';
-  return `<div class="settings-visual-range settings-visual-range--compact" data-settings-visual="${esc(kind)}">
-    <div class="settings-range-labels" aria-hidden="true">
-      <span>${left}</span>
-      <strong>${esc(options[value]?.label || current)}</strong>
-      <span>${right}</span>
-    </div>
-    <div class="settings-visual-track">
-      <input type="range" min="0" max="${options.length - 1}" step="1" value="${value}" data-settings-range="${esc(kind)}" aria-label="${esc(kind)} setting">
-    </div>
-    <div class="settings-range-ticks" aria-hidden="true">
-      ${options.map((opt, idx) => `<i class="${idx === value ? 'active' : ''}"></i>`).join('')}
-    </div>
+function settingsOptionPickerHtml({ kind, current, options }) {
+  const action = kind === 'performance' ? 'set-performance-mode' : 'set-ui-density';
+  const datasetName = kind === 'performance' ? 'mode' : 'density';
+  return `<div class="settings-option-picker settings-option-picker--${esc(kind)}">
+    ${options.map(opt => `<button type="button" class="settings-performance-option settings-option-choice ${current === opt.key ? 'active' : ''}" data-action="${action}" data-${datasetName}="${esc(opt.key)}">
+      <strong>${esc(opt.label)}</strong>
+      <span>${esc(opt.description || '')}</span>
+      <small>${esc(opt.meta || '')}</small>
+    </button>`).join('')}
   </div>`;
 }
 
@@ -5305,9 +5435,9 @@ function renderAppearanceSettingsHtml() {
   const density = getUiDensity();
   const themeLabel = mode === 'black' ? 'Black' : (DAY_THEME_VARIANTS[variant]?.label || 'Day');
   const densityOptions = [
-    { key: 'comfortable', label: UI_DENSITIES.comfortable.label },
-    { key: 'compact', label: UI_DENSITIES.compact.label },
-    { key: 'tiny', label: UI_DENSITIES.tiny.label }
+    { key: 'comfortable', label: UI_DENSITIES.comfortable.label, description: UI_DENSITIES.comfortable.description, meta: 'Large cards' },
+    { key: 'compact', label: UI_DENSITIES.compact.label, description: UI_DENSITIES.compact.description, meta: 'Balanced' },
+    { key: 'tiny', label: UI_DENSITIES.tiny.label, description: UI_DENSITIES.tiny.description, meta: 'Most dense' }
   ];
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
@@ -5335,7 +5465,7 @@ function renderAppearanceSettingsHtml() {
       ${badge(UI_DENSITIES[density].label, 'purple')}
     </div>
     <div class="section-body">
-      ${settingsVisualRangeHtml({ kind: 'density', current: density, options: densityOptions })}
+      ${settingsOptionPickerHtml({ kind: 'density', current: density, options: densityOptions })}
     </div>
   </section>`;
 }
@@ -5343,9 +5473,9 @@ function renderAppearanceSettingsHtml() {
 function renderPerformanceSettingsHtml({ compact = false } = {}) {
   const current = getPerformanceMode();
   const performanceOptions = [
-    { key: 'low-power', label: PERFORMANCE_MODES['low-power'].label },
-    { key: 'balanced', label: PERFORMANCE_MODES.balanced.label },
-    { key: 'full', label: PERFORMANCE_MODES.full.label }
+    { key: 'low-power', label: PERFORMANCE_MODES['low-power'].label, description: 'Minimum motion and background work.', meta: 'Quietest' },
+    { key: 'balanced', label: PERFORMANCE_MODES.balanced.label, description: 'Stable visuals with lighter effects.', meta: 'Recommended' },
+    { key: 'full', label: PERFORMANCE_MODES.full.label, description: 'More translucent polish and normal realtime.', meta: 'Most visual' }
   ];
   return `<section class="section-card settings-foundation-card">
     <div class="section-header">
@@ -5355,7 +5485,7 @@ function renderPerformanceSettingsHtml({ compact = false } = {}) {
       ${badge(PERFORMANCE_MODES[current].label, current === 'low-power' ? 'amber' : current === 'full' ? 'purple' : 'green')}
     </div>
     <div class="section-body">
-      ${settingsVisualRangeHtml({ kind: 'performance', current, options: performanceOptions })}
+      ${settingsOptionPickerHtml({ kind: 'performance', current, options: performanceOptions })}
     </div>
     ${compact ? '' : '<p class="text-muted text-sm" style="padding:0 20px 18px">Low Power also pauses the global realtime channel. Critical changes still sync on manual refresh and normal background pulls.</p>'}
   </section>`;
@@ -5444,6 +5574,7 @@ async function renderDiagnosticsSettingsHtml() {
   const syncStatus = _getSyncStatus();
   const jobs = getSyncQueueDetails();
   const issues = getUserIssueLog();
+  const localHealth = await getLocalHealthSnapshot();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
   const failedJobs = jobs.filter(j => j.lastError || j.status === 'failed');
   const storageHealthPending = auth.code === 'health_check_unavailable';
@@ -5457,6 +5588,7 @@ async function renderDiagnosticsSettingsHtml() {
     </article>`).join('') || '<p class="text-secondary text-sm">No warnings or errors have been shown to this user yet.</p>';
 
   return `<div class="diagnostics-grid settings-diagnostics-grid">
+    ${localHealthCardHtml(localHealth)}
     <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
       <div class="dash-panel-head"><h3>Document storage</h3>${badge(storageBadgeLabel, storageBadgeTone)}</div>
       <p class="diagnostics-big">${esc(auth.message || '')}</p>
@@ -6368,6 +6500,108 @@ function issueLevelBadge(level) {
   return badge(level || 'Info', 'blue');
 }
 
+function formatLocalBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = n;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatCacheAge(at) {
+  const t = Number(at || 0);
+  if (!t) return 'Not available';
+  const seconds = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+async function getLocalHealthSnapshot() {
+  const persisted = loadPersistedWorkspaceCache();
+  const cacheSource = _workspaceCache ? 'memory' : persisted ? 'persisted' : 'empty';
+  const cacheAt = _workspaceCacheAt || persisted?.at || 0;
+  const cacheData = _workspaceCache || persisted || {};
+  const queue = getSyncQueueDetails();
+  // _getSyncStatus() proxies to whichever sync engine is loaded; an undefined
+  // return used to reject this whole snapshot and with it the Diagnostics page.
+  const syncStatus = _getSyncStatus() || {};
+  const issues = getUserIssueLog();
+  const errors = issues.filter(issue => issue.level === 'error').length;
+  const warnings = issues.filter(issue => issue.level === 'warning').length;
+  let estimate = null;
+  try { estimate = await navigator.storage?.estimate?.(); } catch (_) { estimate = null; }
+  let desktopSecurity = null;
+  try { desktopSecurity = await window.workTrackerDesktop?.getSecurityStatus?.(); } catch (_) { desktopSecurity = null; }
+  const storagePct = estimate?.quota ? Math.round((Number(estimate.usage || 0) / Number(estimate.quota || 1)) * 100) : null;
+  // Count the queue the same way the reported figure below does, so the check
+  // and the number on the card can never disagree.
+  const failedJobs = Number(syncStatus.failed || queue.filter(j => j.lastError || j.status === 'failed').length || 0);
+  const isDesktop = !!desktopSecurity;
+  const secureDesktop = !isDesktop || !!(desktopSecurity.contextIsolation && !desktopSecurity.nodeIntegration && desktopSecurity.sandbox && desktopSecurity.webSecurity);
+  const checks = [
+    { ok: typeof indexedDB !== 'undefined', label: 'IndexedDB available' },
+    { ok: cacheSource !== 'empty', label: 'Workspace cache present' },
+    { ok: storagePct == null || storagePct < 90, label: 'Storage headroom available' },
+    { ok: !failedJobs, label: 'No failed sync jobs' },
+    { ok: errors === 0, label: 'No captured error events' },
+    { ok: secureDesktop, label: isDesktop ? 'Desktop sandbox locked' : 'Desktop sandbox (desktop app only)' }
+  ];
+  return {
+    ok: checks.every(check => check.ok),
+    checks,
+    cache: {
+      source: cacheSource,
+      age: formatCacheAge(cacheAt),
+      projects: (cacheData.projects || []).length,
+      tasks: (cacheData.tasks || []).length,
+      users: (cacheData.users || []).length
+    },
+    storage: {
+      usage: estimate ? formatLocalBytes(estimate.usage) : 'Unknown',
+      quota: estimate ? formatLocalBytes(estimate.quota) : 'Unknown',
+      percent: storagePct
+    },
+    sync: {
+      pending: Number(syncStatus.pending || queue.length || 0),
+      failed: failedJobs,
+      enabled: !!syncStatus.enabled
+    },
+    issues: { total: issues.length, errors, warnings },
+    desktopSecurity
+  };
+}
+
+function localHealthCardHtml(health) {
+  const failing = (health.checks || []).filter(check => !check.ok).map(check => check.label);
+  const security = health.desktopSecurity;
+  const securityText = security
+    ? `${security.contextIsolation ? 'isolated' : 'not isolated'} / ${security.sandbox ? 'sandbox' : 'no sandbox'}`
+    : 'Web or unavailable';
+  return `
+    <section class="dash-panel diagnostics-card diagnostics-card--${health.ok ? 'ok' : 'warn'} diagnostics-local-health">
+      <div class="dash-panel-head"><h3>Local health</h3>${badge(health.ok ? 'Healthy' : 'Review', health.ok ? 'green' : 'amber')}</div>
+      <div class="diagnostics-kpis">
+        <span><strong>${health.cache.projects}</strong><small>Projects</small></span>
+        <span><strong>${health.cache.tasks}</strong><small>Tasks</small></span>
+        <span><strong>${health.sync.pending}</strong><small>Queued</small></span>
+      </div>
+      <dl class="diagnostics-meta">
+        <div><dt>Cache</dt><dd>${esc(health.cache.source)} (${esc(health.cache.age)})</dd></div>
+        <div><dt>Local storage</dt><dd>${esc(health.storage.usage)} / ${esc(health.storage.quota)}${health.storage.percent == null ? '' : ` (${health.storage.percent}%)`}</dd></div>
+        <div><dt>Issue log</dt><dd>${health.issues.total} total, ${health.issues.errors} errors</dd></div>
+        <div><dt>Desktop guard</dt><dd>${esc(securityText)}</dd></div>
+      </dl>
+      ${failing.length ? `<p class="text-muted text-sm">Review: ${esc(failing.join(', '))}</p>` : '<p class="text-muted text-sm">Local cache, storage, and desktop guards look ready.</p>'}
+    </section>`;
+}
+
 async function buildDiagnosticsText({ forceAuth = false } = {}) {
   const s = getActiveSession?.() || getSession?.() || {};
   const auth = await getStorageAuthStatusSafe({ force: forceAuth });
@@ -6375,6 +6609,7 @@ async function buildDiagnosticsText({ forceAuth = false } = {}) {
   const jobs = getSyncQueueDetails();
   const issues = getUserIssueLog();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+  const localHealth = await getLocalHealthSnapshot();
 
   const lines = [
     'Orbitrack diagnostics',
@@ -6383,6 +6618,15 @@ async function buildDiagnosticsText({ forceAuth = false } = {}) {
     `Route: ${window.location.hash || '#/projects'}`,
     `Online: ${online ? 'yes' : 'no'}`,
     `User agent: ${typeof navigator === 'undefined' ? '' : (navigator.userAgent || '')}`,
+    '',
+    'Local health',
+    `Status: ${localHealth.ok ? 'healthy' : 'needs review'}`,
+    `Cache: ${localHealth.cache.source} (${localHealth.cache.age})`,
+    `Projects/tasks/users: ${localHealth.cache.projects}/${localHealth.cache.tasks}/${localHealth.cache.users}`,
+    `Local storage: ${localHealth.storage.usage} / ${localHealth.storage.quota}${localHealth.storage.percent == null ? '' : ` (${localHealth.storage.percent}%)`}`,
+    `Queued/failed sync: ${localHealth.sync.pending}/${localHealth.sync.failed}`,
+    `Issue log: ${localHealth.issues.total} total, ${localHealth.issues.errors} errors`,
+    `Desktop sandbox: ${localHealth.desktopSecurity ? JSON.stringify(localHealth.desktopSecurity) : 'web/unavailable'}`,
     '',
     'Authorization',
     `Storage provider: ${window.DriveStorage?.enabled?.() ? 'google_drive' : 'default/off'}`,
@@ -6472,6 +6716,7 @@ async function renderDiagnosticsPage() {
   const syncStatus = _getSyncStatus();
   const jobs = getSyncQueueDetails();
   const issues = getUserIssueLog();
+  const localHealth = await getLocalHealthSnapshot();
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
   const failedJobs = jobs.filter(j => j.lastError || j.status === 'failed');
   const storageHealthPending = auth.code === 'health_check_unavailable';
@@ -6516,6 +6761,7 @@ async function renderDiagnosticsPage() {
         </div>
       </div>
       <div class="diagnostics-grid">
+        ${localHealthCardHtml(localHealth)}
         <section class="dash-panel diagnostics-card diagnostics-card--${auth.ok ? 'ok' : 'warn'}">
           <div class="dash-panel-head"><h3>Document storage</h3>${badge(storageBadgeLabel, storageBadgeTone)}</div>
           <p class="diagnostics-big">${esc(auth.message || '')}</p>
@@ -8695,6 +8941,14 @@ function showWhatsNewModal(force = false, attempt = 0) {
     return;
   }
   const version = getAppVersion();
+  // Read the bullets from the changelog instead of hardcoding them. The seen-key
+  // is version-scoped, so every bump re-opens this modal — with a hardcoded list
+  // it reliably showed the previous release's notes under the new number.
+  const release = SUPPORT_CHANGELOG.find(rel => rel.version === version) || SUPPORT_CHANGELOG[0];
+  const bullets = (release?.highlights || []).slice(0, 4);
+  const bulletHtml = bullets.length
+    ? bullets.map(item => `<li><span>${esc(item)}</span></li>`).join('')
+    : '<li><span>Stability and polish across the workspace.</span></li>';
   ov.innerHTML = `<div class="modal whats-new-modal">
     <div class="modal-header">
       <h2>What's new in v${esc(version)}</h2>
@@ -8706,9 +8960,7 @@ function showWhatsNewModal(force = false, attempt = 0) {
         <div><strong>A cleaner workspace is ready.</strong><p class="text-muted text-sm">Here are the bits worth noticing first.</p></div>
       </div>
       <ul class="whats-new-list">
-        <li><strong>Octane-style black UI</strong><span>The workspace now lands closer to the reference dashboard look.</span></li>
-        <li><strong>Profile is a full page</strong><span>Avatar, bio, and personal details have room to breathe.</span></li>
-        <li><strong>Team graph toggle</strong><span>Open or close the lightweight team chart from one highlighted control.</span></li>
+        ${bulletHtml}
       </ul>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" data-action="goto-support">Learn more</button>
@@ -8723,7 +8975,22 @@ function showWhatsNewModal(force = false, attempt = 0) {
 }
 
 
+// Changelog dates are ISO strings; the About timeline shows a month label.
+function releaseMonthLabel(iso) {
+  const parsed = new Date(`${String(iso || '').slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return String(iso || '');
+  return parsed.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+// Single source of truth for release notes: the Support tab, the What's New
+// modal, and the About surfaces all read this list.
 const SUPPORT_CHANGELOG = [
+  { version: '3.6.0', date: '2026-08-22', highlights: [
+    'Hardened desktop shell: stricter content security, tighter link handling, and a narrower privileged bridge.',
+    'Steadier fast typing in Projects, Tasks, and Notes search, with fewer focus jumps and no stale results.',
+    'Cleaner, more reliable startup screen that always hands off to the app.',
+    'Local Health diagnostics now report real desktop security and sync state.',
+  ] },
   { version: '3.5.11', date: '2026-07-25', highlights: [
     'Project owners can delete their own projects; sync no longer wipes local data when optional profile columns are missing.',
     'My Profile sidebar scrolls with the page and live-previews photo, name, tagline, and colors.',
@@ -8883,65 +9150,9 @@ function renderSupportSettingsHtml() {
 }
 
 async function renderSupportPage() {
+  // The Support view lives in Settings; this route just selects that tab.
   state.settingsTab = 'support';
   await renderSettings();
-  return;
-  const content = document.getElementById('content');
-  const isDesktop = !!window.workTrackerDesktop?.isDesktop;
-  const isAdm = isAdmin();
-  const changelogHtml = SUPPORT_CHANGELOG.map(rel => {
-    const head = `<div class="support-changelog-head"><strong>v${esc(rel.version)}</strong><span class="text-muted text-sm">${esc(rel.date)}</span></div>`;
-    if (rel.minor) {
-      return `<div class="support-changelog-item support-changelog-minor">${head}<p class="text-muted text-sm">Minor fixes &amp; improvements.</p></div>`;
-    }
-    const hi = (rel.highlights || []).map(i => `<li>${esc(i)}</li>`).join('');
-    const adm = (isAdm && Array.isArray(rel.adminNotes) && rel.adminNotes.length)
-      ? `<p class="support-changelog-admin-label">${ICONS.crown || ''} Admin</p><ul class="support-changelog-admin">${rel.adminNotes.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`
-      : '';
-    return `<div class="support-changelog-item">${head}<ul>${hi}</ul>${adm}</div>`;
-  }).join('');
-  content.innerHTML = `
-    <div class="view-page support-page">
-      <div class="projects-page-header">
-        <div class="projects-page-title"><h1>Support</h1><span class="projects-page-count">Help - Updates - About</span></div>
-      </div>
-      <div class="support-grid">
-        <section class="dash-panel support-card">
-          <div class="dash-panel-head"><h3>Help</h3></div>
-          <p class="text-muted text-sm">Guides and onboarding for Orbitrack.</p>
-          <div class="support-actions">
-            <a href="#/guide" class="btn btn-primary">${ICONS.book || ICONS.file} User guide</a>
-            <button type="button" class="btn btn-ghost" data-action="user-show-howto">${ICONS.sparkles} Quick tour</button>
-          </div>
-        </section>
-        <section class="dash-panel support-card">
-          <div class="dash-panel-head"><h3>Feedback</h3></div>
-          <p class="text-muted text-sm">Report issues or request improvements.</p>
-          <div class="support-actions">
-            <button type="button" class="btn btn-primary" data-action="report-bug">${ICONS.alertTriangle} Report a bug</button>
-            <button type="button" class="btn btn-ghost" data-action="send-announcement">${ICONS.send} Announcement</button>
-            <button type="button" class="btn btn-ghost" data-action="settings-tab" data-tab="diagnostics">${ICONS.file} Diagnostics</button>
-          </div>
-        </section>
-        <section class="dash-panel support-card">
-          <div class="dash-panel-head"><h3>Updates</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
-          <p class="text-muted text-sm">${isDesktop ? 'Check for desktop app updates.' : 'Install the desktop app for automatic updates.'}</p>
-          <div class="support-actions">
-            <button type="button" class="btn btn-primary" data-action="check-updates">${ICONS.refresh} Check for updates</button>
-            ${isAdm ? '<a href="#/activity" class="btn btn-ghost">Project activity log</a>' : ''}
-          </div>
-        </section>
-        <section class="dash-panel support-card support-card-wide">
-          <div class="dash-panel-head"><h3>About Orbitrack</h3><span class="projects-page-count">v${esc(getAppVersion())}</span></div>
-          <p class="text-secondary text-sm" style="padding:0 4px 8px">Orbitrack is a desktop project, task, file, and team-activity workspace - projects, boards, notes, and documents in one app.</p>
-          <p class="text-muted text-sm" style="padding:0 4px">Built with vanilla HTML/CSS/JS, Dexie + Supabase, Quill, jsPDF, SortableJS, and Electron. Made by Everlasting.</p>
-        </section>
-        <section class="dash-panel support-card support-card-wide">
-          <div class="dash-panel-head"><h3>Release notes</h3></div>
-          <div class="support-changelog support-changelog-scroll">${changelogHtml}</div>
-        </section>
-      </div>
-    </div>`;
 }
 
 const GUIDE_SECTIONS = [
@@ -9290,7 +9501,9 @@ function layoutTaskGraph(tasks, deps) {
     byLevel[lv].push(id);
   });
   const positions = {};
-  Object.keys(byLevel).sort((a, b) => a - b).forEach(lv => {
+  // Object.keys() yields strings; sort numerically rather than relying on the
+  // implicit string-to-number coercion in `a - b`.
+  Object.keys(byLevel).sort((a, b) => Number(a) - Number(b)).forEach(lv => {
     byLevel[lv].forEach((id, i) => {
       positions[id] = { x: 56 + Number(lv) * 260, y: 48 + i * 108 };
     });
@@ -9570,33 +9783,13 @@ async function renderAboutPage() {
   const content = document.getElementById('content');
   const version = getAppVersion();
 
-  const releases = [
-    { version: '3.5.10', date: 'July 2026', features: ['Simpler theme choices', 'Cleaner Team graph toggle', 'More reliable first-login account setup'] },
-    { version: '3.5.9', date: 'July 2026', features: ['Octane-style black workspace skin', 'My Profile is now a full page with Drive-backed profile photos', 'Cleaner Team graph toggle', 'Desktop updater packaging repaired for installed Windows builds', 'Release workflow now verifies the updater module before publishing'] },
-    { version: '3.5.7', date: 'July 2026', features: ['Simpler settings landing page with compact controls', 'Single custom sidebar tooltip behavior', 'Arcade green/white theme polish', 'Dark-mode desktop update notice contrast fixed'] },
-    { version: '3.5.3', date: 'July 2026', features: ['Team page simplified to member cards', 'Less team summary loading', 'Minor Lite polish'] },
-    { version: '3.5.2', date: 'July 2026', features: ['Lite performance tuning', 'Tile-based team view', 'Shortcut and settings polish'] },
-    { version: '3.5.1', date: 'July 2026', features: ['Lite sync tuning and quieter routine cloud traffic', 'Live announcement and admin session controls', 'Team map and dark-theme readability polish'] },
-    { version: '3.2.1', date: 'June 2026', features: ['Fixed documents failing to load (404): the published app now reads files from Google Drive instead of the old Supabase storage path'] },
-    { version: '3.2.0', date: 'June 2026', features: ['One-time password accounts with forced first-login password change', 'Classroom assignment at user creation and private per-user personal spaces', 'Searchable in-app user guide and refreshed tour', 'Profile customization (avatar, tagline, accent/cover colors)', 'PDF previews fixed in the desktop app; themed dialogs, calmer toasts, and Escape/outside-click dismissal'] },
-    { version: '3.1.12', date: 'June 2026', features: ['Project detail pages now respect the selected light/dark theme', 'Professional typography scale applied to project headings, tabs, metrics, task groups, task rows, notes, and chips', 'Oversized task text and spacing reduced for a cleaner project workspace'] },
-    { version: '3.1.11', date: 'June 2026', features: ['Document storage authorization health check with user notification when invalid', 'Diagnostics tab for storage auth, sync queue, visible errors, copy report, and send-to-admin', 'Mobile version cache refresh and small-screen diagnostics polish'] },
-    { version: '3.1.10', date: 'June 2026', features: ['Document storage sign-in fixed so users can open Drive-backed files reliably', 'Legacy Supabase documents remain available during Drive migration', 'Theme toggle added to login/recovery screens', 'Dark-mode contrast improved for login, cloud sync, and startup database-check messages', 'Projects sticky header clearance and dark frosted styling polished'] },
-    { version: '3.1.8', date: 'June 2026', features: ['Projects sticky header no longer crops the first cards; frosted look fixed for dark theme'] },
-    { version: '3.1.7', date: 'June 2026', features: ['Project tab bar sizing stabilized across Tasks, Board, Timeline, and Map'] },
-    { version: '3.1.6', date: 'June 2026', features: ['Notes editor fixed - always loads and is typeable (bold/italic/underline/lists)', 'Project Map: tick-box "Blocked by" dependency picker on each task'] },
-    { version: '3.1.5', date: 'June 2026', features: ['Notebook-style Notes with titles, search, Quill formatting, autosave, and fallback editor', 'Quick task creation with multiline paste, advanced details on demand, and note/meeting-text task import', 'Momentum task header, focus filters, cleaner task cards, and stronger project brief/focus layout', 'Local vendor bundles for SortableJS, jsPDF, D3, Floating UI, and Quill'] },
-    { version: '3.1.4', date: 'June 2026', features: ['Notes editor rebuilt - always loads and is typeable (bold/italic/lists)', 'Project Map: fullscreen mode, fit-to-view, add-task, richer cards (assignees + due dates)', 'Project Map: click a link to unlink a dependency', 'Dashboard widgets: weekly activity, quick notes'] },
-    { version: '3.1.2', date: 'June 2026', features: ['Faster image previews (low-res instant load + View HD)', 'Fixed file delete sync errors and "Object not found" when opening files'] },
-    { version: '3.1.1', date: 'June 2026', features: ['Fixed images/documents not loading in the desktop app - files now load from Google Drive'] },
-    { version: '3.1.0', date: 'June 2026', features: ['Files now stored in the team Google Drive (faster, more scalable) - existing files migrated automatically', 'Delete button on project documents', 'More reliable cloud sign-in for file access'] },
-    { version: '3.0.11', date: 'June 2026', features: ['Fixed the in-app "Check for updates" button on installed builds', 'Updates now install automatically on quit so the app self-heals'] },
-    { version: '3.0.10', date: 'June 2026', features: ['Orbitrack-themed dialogs for light and dark mode', 'Project metadata, milestones, activity, and documents moved into a Notes-style drawer', 'Calendar summary cards, filters, day chips, and always-visible agenda', 'Expanded D3 team activity map with zoom, drag, filters, heat, clusters, collaboration links, and profile clicks', 'Brief-style HTML and PDF reports'] },
-    { version: '3.0.0', date: 'June 2026', features: ['Open-source integrations (D3.js, Quill, jsPDF, SortableJS)', 'Enhanced D3.js team activity map with interactive force-directed graph', 'Rich-text notes with Quill editor', 'PDF report generation', 'Improved task list spacing and UX', 'Chat functionality re-enabled with full DM support'] },
-    { version: '2.2.22', date: 'May 2026', features: ['Fixed stale Dexie ID causing repeated DM send failures', 'Improved realtime sync reliability'] },
-    { version: '2.2.21', date: 'May 2026', features: ['Fixed self-DM routing bug', 'Enhanced message delivery tracking'] },
-    { version: '2.2.20', date: 'May 2026', features: ['Branding updated to Orbitrack', 'UI refinements'] }
-  ];
+  // One release history for the whole app: SUPPORT_CHANGELOG. A second
+  // hand-maintained copy here had already drifted a release behind.
+  const releases = SUPPORT_CHANGELOG.map(rel => ({
+    version: rel.version,
+    date: releaseMonthLabel(rel.date),
+    features: rel.minor ? ['Minor fixes & improvements.'] : (rel.highlights || [])
+  }));
 
   content.innerHTML = `
     <div class="about-page">
@@ -9702,6 +9895,13 @@ async function renderAboutPage() {
     </div>`;
 }
 
+// This build is produced locally with --publish never, so it is not a release
+// artifact. Say which surface the running copy came from.
+function buildChannelLabel() {
+  const desktop = !!window.workTrackerDesktop?.isDesktop;
+  return desktop ? 'Local desktop build - not published' : 'Browser build - local workspace';
+}
+
 function showAboutModal() {
   showModal('About Orbitrack', `
     <div class="about-modal">
@@ -9718,6 +9918,7 @@ function showAboutModal() {
         <div>
           <div class="about-app-name">Orbitrack</div>
           <div class="about-version">Version ${esc(getAppVersion())} - Built by Everlasting</div>
+          <div class="about-build-channel">${esc(buildChannelLabel())}</div>
         </div>
       </div>
       <p class="about-desc">A team project and task management tool built for fast-moving teams. Organize projects, track tasks, review calendars, map team activity, and generate brief-style reports - all in one place.</p>
@@ -11233,7 +11434,7 @@ const actions = {
     if (!state.collapsedTaskGroups) state.collapsedTaskGroups = {};
     state.collapsedTaskGroups[pid] = collapsed;
   },
-  'show-about': () => { closeUserMenu(); state.settingsTab = 'support'; window.location.hash = '#/settings'; },
+  'show-about': () => { closeUserMenu(); showAboutModal(); },
   'open-task-detail': async (b) => { await showTaskDetailModal(Number(b.dataset.id)); },
   'save-task-detail': async (b) => {
     const saveBtn = b; saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
@@ -12693,7 +12894,18 @@ async function applyRoute() {
   }
   const s = savedSession;
   if (s) {
-    const user = isOffline() ? s : await DB.getUser(s.userId);
+    // window.DB is always the local Dexie store (db-bridge.js), so it answers
+    // offline too. Reading the stored record instead of trusting the session
+    // payload keeps `role` authoritative: the remembered-session blob lives in
+    // localStorage, where an edited role would otherwise grant admin UI while
+    // offline. Only a thrown DB error falls back to the payload.
+    let user = null;
+    try {
+      user = await DB.getUser(s.userId);
+    } catch (err) {
+      console.warn('[auth] local user lookup failed; using session payload', err);
+      user = isOffline() ? s : null;
+    }
     if (!user) {
       clearSession({ trusted: true });
       wtAppBootstrapped = false;
@@ -13026,21 +13238,22 @@ async function init() {
     document.getElementById('ranking-panel-backdrop')?.addEventListener('click', hideRankingPanel);
     document.getElementById('content').addEventListener('input', (e) => {
       const target = e.target;
-      // Search inputs live inside a view that is fully re-rendered (content.innerHTML).
-      // Re-rendering on every keystroke destroyed & recreated the <input> mid-typing,
-      // which under fast input reordered/dropped characters ("project" -> "ectojepr")
-      // and made typing laggy. Debounce so we re-render only after the user pauses,
-      // reading the live input value at fire time and restoring the caret once.
       if (target?.dataset?.projectFilterInput === 'search') {
-        _debounceSearchRender('project', 'project-search', (v) => { state.projectSearch = v; }, renderProjects);
+        _scheduleSearchRender('project', 'project-search', (v) => { state.projectSearch = v; }, renderProjects);
       } else if (target?.dataset?.taskFilterInput === 'search') {
-        _debounceSearchRender('task', 'global-task-search', (v) => { state.globalTaskSearch = v; }, renderTasks);
+        _scheduleSearchRender('task', 'global-task-search', (v) => { state.globalTaskSearch = v; }, renderTasks);
       } else if (target?.dataset?.shortcutsFilter != null) {
         const q = normalizeSearchText(target.value || '');
         document.querySelectorAll('.settings-shortcuts-table tbody tr').forEach(row => {
           row.hidden = q && !normalizeSearchText(row.textContent || '').includes(q);
         });
       }
+    });
+    document.getElementById('content').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const target = e.target;
+      if (target?.dataset?.projectFilterInput === 'search') _flushSearchRender('project');
+      else if (target?.dataset?.taskFilterInput === 'search') _flushSearchRender('task');
     });
     document.getElementById('content').addEventListener('change', async (e) => {
       const target = e.target;
@@ -13054,14 +13267,6 @@ async function init() {
         state.classroomFilter = target.value || 'all';
         await applyClassroomTheme(state.classroomFilter);
         await renderProjects();
-      } else if (target?.dataset?.settingsRange === 'performance') {
-        const order = ['low-power', 'balanced', 'full'];
-        setPerformanceMode(order[Number(target.value)] || 'balanced');
-        await renderSettings();
-      } else if (target?.dataset?.settingsRange === 'density') {
-        const order = ['comfortable', 'compact', 'tiny'];
-        setUiDensity(order[Number(target.value)] || 'compact');
-        await renderSettings();
       } else if (target?.dataset?.reportInput === 'month') {
         state.reportMonth = target.value || formatMonthInput();
         if ((window.location.hash || '').slice(1) === '/admin' && state.adminTab === 'reports') await renderAdminTabbed();
@@ -13145,6 +13350,9 @@ async function init() {
             });
           },
           onAfterUpload: async () => {
+            // The project card attachment counts are cached; without this the
+            // Projects list keeps showing the pre-upload count for 2 minutes.
+            bustWorkspaceCache();
             await refreshProjectAttachmentsUI(pid);
           }
         });

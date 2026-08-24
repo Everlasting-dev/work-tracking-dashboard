@@ -1,10 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const PKG_VERSION = process.env.npm_package_version || '3.5.11';
+const PKG_VERSION = process.env.npm_package_version || '3.6.0';
 
 contextBridge.exposeInMainWorld('workTrackerDesktop', {
   isDesktop: true,
   platform: process.platform,
+  // Synchronously available fallback. The IPC value below is authoritative, but
+  // the renderer reads a version before any promise can settle.
+  packageVersion: PKG_VERSION,
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  getSecurityStatus: () => ipcRenderer.invoke('desktop:get-security-status'),
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
@@ -20,9 +24,7 @@ contextBridge.exposeInMainWorld('workTrackerDesktop', {
   }
 });
 
-// Inject app version into window for the app to read
-ipcRenderer.invoke('app:get-version').then(version => {
-  window.WT_APP_VERSION = version;
-}).catch(() => {
-  window.WT_APP_VERSION = PKG_VERSION;
-});
+// With contextIsolation on, `window` here is the isolated world — assigning
+// window.WT_APP_VERSION from this file never reached the page. The renderer
+// reads the version through workTrackerDesktop.packageVersion / getVersion()
+// instead (see index.html and desktop/updates.js).

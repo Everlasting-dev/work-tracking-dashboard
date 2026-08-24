@@ -20,6 +20,8 @@ worktracker-*.json
 rollback-backups/
 release-build/
 release-build2/
+release-v*/
+release-metadata-probe*/
 release-test*/
 release-themefix/
 modular-dist/
@@ -62,5 +64,13 @@ supabase/.temp/
 # Local-only tools (never shipped)
 project-report.local.js
 *.local.js
+
+# Local databases — hola-coder.db and friends are working state, not source.
+# Without this a plain `git add -A` commits a multi-megabyte local DB.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 .hola/snapshots/

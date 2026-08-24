@@ -4,9 +4,11 @@
  *
  * Run ONCE, signed in as the dedicated storage Google account:
  *   node scripts/google-drive-oauth-bootstrap.mjs
+ *   node scripts/google-drive-oauth-bootstrap.mjs --write-env
  *
  * It performs the offline OAuth flow (scope: drive.file), prints the REFRESH
- * TOKEN, and creates the "Orbitrack Storage" root folder (prints its ID).
+ * TOKEN, and reuses or creates the "Orbitrack Storage" root folder (prints its ID).
+ * With --write-env, it also updates .env with the returned token and folder id.
  * Put the refresh token + folder id into Supabase Edge Function secrets:
  *   supabase secrets set GOOGLE_REFRESH_TOKEN=... GOOGLE_DRIVE_ROOT_FOLDER_ID=...
  *
@@ -14,12 +16,15 @@
  * or the environment. No npm dependencies (Node 18+ built-ins only).
  */
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+
+const ENV_PATH = new URL("../.env", import.meta.url);
+const WRITE_ENV = process.argv.includes("--write-env");
 
 function loadEnv() {
   try {
-    for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").split("\n")) {
+    for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
       if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
     }
@@ -30,6 +35,8 @@ loadEnv();
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "http://localhost:53682/oauth2callback";
+const ROOT_FOLDER_ID = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "";
+const ROOT_FOLDER_NAME = process.env.GOOGLE_DRIVE_ROOT_FOLDER_NAME || "Orbitrack Storage";
 const SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -61,6 +68,114 @@ async function postJSON(url, form) {
   return { ok: res.ok, status: res.status, data: await res.json() };
 }
 
+function updateEnvFile(updates) {
+  let text = "";
+  try {
+    text = readFileSync(ENV_PATH, "utf8");
+  } catch {
+    text = "";
+  }
+
+  const lines = text ? text.split(/\r?\n/) : [];
+  const pending = new Map(Object.entries(updates));
+  const next = lines.map((line) => {
+    const m = line.match(/^(\s*)([A-Z0-9_]+)(\s*=\s*)(.*)$/);
+    if (!m || !pending.has(m[2])) return line;
+    const value = pending.get(m[2]);
+    pending.delete(m[2]);
+    return `${m[1]}${m[2]}${m[3]}${value}`;
+  });
+
+  if (pending.size && next.length && next[next.length - 1].trim()) {
+    next.push("");
+  }
+  for (const [key, value] of pending) {
+    next.push(`${key}=${value}`);
+  }
+
+  writeFileSync(ENV_PATH, `${next.join("\n").replace(/\n+$/, "")}\n`);
+}
+
+function driveQueryString(value) {
+  return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+async function driveJson(accessToken, url, init = {}) {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error?.message || `Drive API request failed (${res.status})`);
+  }
+  return data;
+}
+
+async function getDriveFolder(accessToken, folderId) {
+  if (!folderId) return null;
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,createdTime`;
+  try {
+    const folder = await driveJson(accessToken, url);
+    if (folder.mimeType !== "application/vnd.google-apps.folder" || folder.trashed) return null;
+    return folder;
+  } catch {
+    return null;
+  }
+}
+
+async function findRootFolders(accessToken) {
+  const folders = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({
+      q: `name = ${driveQueryString(ROOT_FOLDER_NAME)} and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: "nextPageToken,files(id,name,createdTime)",
+      orderBy: "createdTime",
+      pageSize: "100",
+      spaces: "drive",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const data = await driveJson(accessToken, `https://www.googleapis.com/drive/v3/files?${params}`);
+    folders.push(...(data.files || []));
+    pageToken = data.nextPageToken || "";
+  } while (pageToken);
+  return folders;
+}
+
+async function ensureRootFolder(accessToken) {
+  const configured = await getDriveFolder(accessToken, ROOT_FOLDER_ID);
+  if (configured) {
+    console.log(`[ok] Reusing root folder from GOOGLE_DRIVE_ROOT_FOLDER_ID: ${configured.name} (${configured.id})`);
+    return configured;
+  }
+  if (ROOT_FOLDER_ID) {
+    console.warn("[warn] GOOGLE_DRIVE_ROOT_FOLDER_ID is set, but that folder was not reachable. Searching by name instead.");
+  }
+
+  const existing = await findRootFolders(accessToken);
+  if (existing.length) {
+    const folder = existing[0];
+    if (existing.length > 1) {
+      console.warn(`[warn] Found ${existing.length} folders named "${ROOT_FOLDER_NAME}". Reusing the oldest one: ${folder.id}`);
+      console.warn("[warn] Run scripts/drive-storage-root-cleanup.mjs after this to audit safe cleanup candidates.");
+    } else {
+      console.log(`[ok] Reusing existing root folder: ${folder.name} (${folder.id})`);
+    }
+    return folder;
+  }
+
+  console.log(`[info] Creating new root folder: ${ROOT_FOLDER_NAME}`);
+  return driveJson(accessToken, "https://www.googleapis.com/drive/v3/files?fields=id,name,createdTime", {
+    method: "POST",
+    body: JSON.stringify({ name: ROOT_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder" }),
+  });
+}
+
 const authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
   client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: "code",
   scope: SCOPE, access_type: "offline", prompt: "consent", include_granted_scopes: "true",
@@ -87,13 +202,17 @@ const server = http.createServer(async (req, res) => {
     }
     const accessToken = tok.data.access_token;
 
-    // Create (or note) the root folder.
-    const folderRes = await fetch("https://www.googleapis.com/drive/v3/files?fields=id,name", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Orbitrack Storage", mimeType: "application/vnd.google-apps.folder" }),
-    });
-    const folder = await folderRes.json();
+    const folder = await ensureRootFolder(accessToken);
+    if (!folder.id) {
+      throw new Error(`Could not resolve a ${ROOT_FOLDER_NAME} folder id.`);
+    }
+    if (WRITE_ENV) {
+      updateEnvFile({
+        GOOGLE_REFRESH_TOKEN: tok.data.refresh_token,
+        GOOGLE_DRIVE_ROOT_FOLDER_ID: folder.id,
+      });
+      console.log("[ok] Updated .env with GOOGLE_REFRESH_TOKEN and GOOGLE_DRIVE_ROOT_FOLDER_ID.");
+    }
 
     console.log("\n──────────────────────────────────────────────");
     console.log("GOOGLE_REFRESH_TOKEN=", tok.data.refresh_token);
