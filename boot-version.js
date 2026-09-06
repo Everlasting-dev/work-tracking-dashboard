@@ -13,7 +13,7 @@
  */
 (function (window) {
   'use strict';
-  var FALLBACK_VERSION = '3.6.2';
+  var FALLBACK_VERSION = '3.6.3';
   var bridged = null;
   try {
     bridged = window.workTrackerDesktop && window.workTrackerDesktop.packageVersion;

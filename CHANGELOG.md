@@ -36,6 +36,13 @@
 - `npm --prefix orbitrack-react run tauri:build` produced a local Windows NSIS
   installer after installing Rust and Visual Studio Build Tools.
 
+## 3.6.3
+
+### Changed
+- Mobile notices now use a narrower surface profile around modal layers.
+- Phone-sized installs resolve to the quiet Red operating profile automatically.
+- Mobile settings no longer expose desktop-only tuning and shortcut controls.
+
 ## 3.6.2
 
 ### Changed

@@ -975,8 +975,8 @@ function startPriorityEventPoller() {
   if (!isCloudMode()) return;
   priorityEventPollTimer = setInterval(() => {
     pollPriorityEventsOnce().catch(err => console.warn('[priority-events] poll failed', err));
-  }, PRIORITY_EVENT_POLL_MS);
-  setTimeout(() => pollPriorityEventsOnce().catch(() => {}), 1500);
+  }, isMobileLiteRuntime() ? Math.max(PRIORITY_EVENT_POLL_MS, 45000) : PRIORITY_EVENT_POLL_MS);
+  setTimeout(() => pollPriorityEventsOnce().catch(() => {}), isMobileLiteRuntime() ? 10000 : 1500);
 }
 
 async function notifyNewCoEditors(project, prevEditorIds, nextEditorIds, actorUserId) {
@@ -1433,6 +1433,7 @@ const UI_DENSITY_KEY = 'wt-ui-density-v1';
 const SIDEBAR_COLLAPSED_KEY = 'wt-sidebar-collapsed-v1';
 const PERFORMANCE_KEY = 'wt-performance-mode-v1';
 const SHORTCUT_OVERRIDES_KEY = 'wt-shortcut-overrides-v1';
+const MOBILE_LITE_QUERY = '(max-width: 768px), (pointer: coarse) and (max-width: 1024px)';
 
 const PERFORMANCE_MODES = {
   full: {
@@ -1458,7 +1459,34 @@ const PERFORMANCE_MODES = {
   }
 };
 
+let _mobileLiteMedia = null;
+let _mobileLiteWatcherInstalled = false;
+
+function mobileLiteMedia() {
+  if (!_mobileLiteMedia && window.matchMedia) _mobileLiteMedia = window.matchMedia(MOBILE_LITE_QUERY);
+  return _mobileLiteMedia;
+}
+
+function isMobileLiteRuntime() {
+  try {
+    if (mobileLiteMedia()?.matches) return true;
+  } catch (_) {}
+  try {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  } catch (_) {
+    return false;
+  }
+}
+
+function syncMobileLiteFlag() {
+  const enabled = isMobileLiteRuntime();
+  document.body?.classList.toggle('mobile-lite', enabled);
+  document.documentElement.dataset.mobileLite = enabled ? 'true' : 'false';
+  return enabled;
+}
+
 function getPerformanceMode() {
+  if (isMobileLiteRuntime()) return 'low-power';
   const saved = localStorage.getItem(PERFORMANCE_KEY);
   if (saved && PERFORMANCE_MODES[saved]) return saved;
   try {
@@ -1468,13 +1496,14 @@ function getPerformanceMode() {
 }
 
 function applyPerformanceMode(mode = getPerformanceMode()) {
-  const next = PERFORMANCE_MODES[mode] ? mode : 'balanced';
+  const mobileLite = syncMobileLiteFlag();
+  const next = mobileLite ? 'low-power' : (PERFORMANCE_MODES[mode] ? mode : 'balanced');
   document.body.classList.toggle('perf-full', next === 'full');
   document.body.classList.toggle('perf-balanced', next === 'balanced');
   document.body.classList.toggle('perf-low-power', next === 'low-power');
   document.documentElement.dataset.performanceMode = next;
   localStorage.setItem(PERFORMANCE_KEY, next);
-  try { window.dispatchEvent(new CustomEvent('wt-performance-mode-changed', { detail: { mode: next } })); } catch (_) {}
+  try { window.dispatchEvent(new CustomEvent('wt-performance-mode-changed', { detail: { mode: next, mobileLite } })); } catch (_) {}
   return next;
 }
 
@@ -1484,7 +1513,7 @@ function setPerformanceMode(mode) {
     if (PERFORMANCE_MODES[next].realtime) window.RealtimeSync.restart?.();
     else window.RealtimeSync.stop?.();
   }
-  showToast(`Performance mode: ${PERFORMANCE_MODES[next].label}`, 'success');
+  if (!isMobileLiteRuntime()) showToast(`Performance mode: ${PERFORMANCE_MODES[next].label}`, 'success');
   return next;
 }
 
@@ -1493,6 +1522,33 @@ function shouldUseRealtime() {
 }
 
 window.WT_shouldUseRealtime = shouldUseRealtime;
+
+function installMobileLiteModeWatcher() {
+  if (_mobileLiteWatcherInstalled) return;
+  _mobileLiteWatcherInstalled = true;
+  const media = mobileLiteMedia();
+  const refresh = () => {
+    const mode = applyPerformanceMode();
+    if (!window.RealtimeSync) return;
+    if (!PERFORMANCE_MODES[mode].realtime) {
+      window.RealtimeSync.stop?.();
+      return;
+    }
+    const s = getSession();
+    if (s?.userId) window.RealtimeSync.restart?.();
+  };
+  if (media?.addEventListener) media.addEventListener('change', refresh);
+  else media?.addListener?.(refresh);
+  window.addEventListener('orientationchange', () => setTimeout(refresh, 250), { passive: true });
+}
+
+function toastVisibleMs() {
+  return isMobileLiteRuntime() ? 2600 : 4400;
+}
+
+function toastMaxVisible() {
+  return isMobileLiteRuntime() ? 1 : TOAST_MAX_VISIBLE;
+}
 
 const SHORTCUT_DEFAULTS = [
   { id: 'command.open', category: 'Search', action: 'Open command centre', description: 'Search actions, pages, projects, tasks, and members.', keys: ['Mod+K'] },
@@ -2243,7 +2299,10 @@ async function showApp() {
   // First-time how-to guide (per user, persisted in localStorage)
   setTimeout(() => showOnboardingModal(false), 350);
   setTimeout(() => showWhatsNewModal(false), 1000);
-  setTimeout(() => runStorageAuthHealthCheck({ notify: true }).catch(() => {}), 1200);
+  setTimeout(
+    () => runStorageAuthHealthCheck({ notify: !isMobileLiteRuntime() }).catch(() => {}),
+    isMobileLiteRuntime() ? 7000 : 1200
+  );
 }
 
 function updateOfflineSyncBanner() {
@@ -2337,6 +2396,7 @@ let _sidebarClockTimer = null;
 function startSidebarClock() {
   if (_sidebarClockTimer) return;
   initClockTicks();
+  const mobileLite = isMobileLiteRuntime();
   const timeEl = document.getElementById('sc-time');
   const dateEl = document.getElementById('sc-date');
   const hourHand = document.querySelector('.clock-hour');
@@ -2367,7 +2427,9 @@ function startSidebarClock() {
   function tick() {
     const now = new Date();
     const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
-    timeEl.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    timeEl.textContent = mobileLite
+      ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`
+      : `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     const DAYS_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     dateEl.textContent = `${DAYS_FULL[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
     if (hourHand) hourHand.style.transform = `rotate(${(h % 12) * 30 + m * 0.5}deg)`;
@@ -2402,7 +2464,7 @@ function startSidebarClock() {
     }
   }
   tick();
-  _sidebarClockTimer = setInterval(tick, 1000);
+  _sidebarClockTimer = setInterval(tick, mobileLite ? 60000 : 1000);
 }
 
 function formatSyncJobType(type) {
@@ -5539,8 +5601,8 @@ function settingsTabsHtml(active) {
     ['customize', 'Customize'],
     ['support', 'Support'],
     ['diagnostics', 'Diagnostics'],
-    ['shortcuts', 'Shortcuts'],
   ];
+  if (!isMobileLiteRuntime()) tabs.push(['shortcuts', 'Shortcuts']);
   if (isAdmin()) tabs.push(['workspace', 'Workspace']);
   return `<div class="tab-bar settings-tab-bar">
     ${tabs.map(([key, label]) => `<button type="button" class="tab-btn ${active === key ? 'active' : ''}" data-action="settings-tab" data-tab="${key}">${label}</button>`).join('')}
@@ -5549,6 +5611,7 @@ function settingsTabsHtml(active) {
 
 function normalizeSettingsTab(tab) {
   const allowed = new Set(['customize', 'support', 'diagnostics', 'shortcuts']);
+  if (isMobileLiteRuntime()) allowed.delete('shortcuts');
   if (isAdmin()) allowed.add('workspace');
   return allowed.has(tab) ? tab : 'customize';
 }
@@ -5563,10 +5626,11 @@ function settingsShellHtml({ active, title = 'Settings', subtitle = 'Customize t
 }
 
 function renderCustomizeSettingsHtml() {
+  const mobileLite = isMobileLiteRuntime();
   return `
-    <div class="settings-cute-strip"><span>Theme</span><span>Size</span><span>Speed</span></div>
+    <div class="settings-cute-strip"><span>Theme</span><span>Size</span>${mobileLite ? '' : '<span>Speed</span>'}</div>
     ${renderAppearanceSettingsHtml()}
-    ${renderPerformanceSettingsHtml({ compact: true })}`;
+    ${mobileLite ? '' : renderPerformanceSettingsHtml({ compact: true })}`;
 }
 
 async function renderDiagnosticsSettingsHtml() {
@@ -5643,7 +5707,9 @@ async function renderPersonalSettings() {
   const active = normalizeSettingsTab(state.settingsTab || 'customize');
   state.settingsTab = active;
   let body = renderCustomizeSettingsHtml();
-  let subtitle = 'Personal look, view size, and support tools.';
+  let subtitle = isMobileLiteRuntime()
+    ? 'Personal look, view size, and app health.'
+    : 'Personal look, view size, and support tools.';
   if (active === 'support') body = renderSupportSettingsHtml();
   else if (active === 'diagnostics') {
     body = await renderDiagnosticsSettingsHtml();
@@ -5661,7 +5727,13 @@ async function renderSettings() {
   const active = normalizeSettingsTab(state.settingsTab || 'customize');
   state.settingsTab = active;
   if (active === 'customize') {
-    content.innerHTML = settingsShellHtml({ active, subtitle: 'Personal look, card size, and performance for this device.', body: renderCustomizeSettingsHtml() });
+    content.innerHTML = settingsShellHtml({
+      active,
+      subtitle: isMobileLiteRuntime()
+        ? 'Personal look and card size for this device.'
+        : 'Personal look, card size, and performance for this device.',
+      body: renderCustomizeSettingsHtml()
+    });
     return;
   }
   if (active === 'support') {
@@ -6357,6 +6429,7 @@ function showAIReportModal(html, label) {
       </div>
     </div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   ov.addEventListener('click', (e) => {
     if (e.target.closest('[data-action="close-modal"]') || e.target === ov) {
       URL.revokeObjectURL(blobUrl);
@@ -6841,6 +6914,7 @@ function showModal(title, body, opts = {}) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal"><div class="modal-header"><h2>${title}</h2><button class="btn-icon" data-action="close-modal">${ICONS.x}</button></div><div class="modal-body">${body}</div></div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   // Per-modal close behaviour: lockBackdrop = ignore outside clicks;
   // confirmCancel = ask before closing (used by the new-user form).
   ov.dataset.lockBackdrop = opts.lockBackdrop ? 'true' : '';
@@ -6855,6 +6929,7 @@ function showModal(title, body, opts = {}) {
 function hideModal() {
   const ov = document.getElementById('modal-overlay');
   ov.classList.add('hidden');
+  document.body.classList.remove('modal-visible');
   ov.innerHTML = '';
   ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
 }
@@ -6914,6 +6989,7 @@ function showConfirmDialog({
         </div>
       </div>`;
     ov.classList.remove('hidden');
+    document.body.classList.add('modal-visible');
     ov.querySelectorAll('[data-confirm-cancel]').forEach(btn => btn.addEventListener('click', cancel));
     ov.querySelector('[data-confirm-ok]')?.addEventListener('click', () => finish(true));
     setTimeout(() => ov.querySelector('[data-confirm-ok]')?.focus(), 30);
@@ -7351,13 +7427,14 @@ async function showCommandPalette(initialQuery = '') {
   const uMap = Object.fromEntries(users.map(u => [u.id, u]));
   const visibleTasks = tasks.filter(t => projectIds.has(Number(t.projectId)));
   const commandIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const mobileLite = isMobileLiteRuntime();
 
   showModal('Command', `
     <div class="command-palette" role="dialog" aria-label="Command palette">
       <div class="command-search-shell">
         <span class="command-search-icon">${commandIcon}</span>
-        <input id="command-palette-input" class="command-search-input" type="search" value="${esc(initialQuery)}" placeholder="Create, search, jump, or change view..." autocomplete="off">
-        <kbd>Ctrl K</kbd>
+        <input id="command-palette-input" class="command-search-input" type="search" value="${esc(initialQuery)}" placeholder="${mobileLite ? 'Search or jump...' : 'Create, search, jump, or change view...'}" autocomplete="off">
+        ${mobileLite ? '' : '<kbd>Ctrl K</kbd>'}
       </div>
       <div id="command-palette-results" class="command-results"></div>
     </div>`);
@@ -7370,12 +7447,14 @@ async function showCommandPalette(initialQuery = '') {
     { label: 'Go to Tasks', sub: 'Board and table views', route: '/tasks' },
     { label: 'Go to Reports', sub: 'Workspace reporting', route: '/reports' },
     { label: 'Go to Support', sub: 'Help, changelog, and diagnostics', route: '/support' },
-    { label: 'Go to Settings', sub: isAdmin() ? 'Shortcuts, performance, workspace settings' : 'Theme, view orientation, and shortcut reference', route: '/settings' },
+    { label: 'Go to Settings', sub: mobileLite ? 'Theme, view, and health' : (isAdmin() ? 'Shortcuts, performance, workspace settings' : 'Theme, view orientation, and shortcut reference'), route: '/settings' },
     ...(isAdmin() ? [{ label: 'Go to Admin', sub: 'Users, bugs, data, and workspace tools', route: '/admin' }] : [])
   ];
   const actionCommands = [
-    { label: 'Toggle low-power mode', sub: `Current: ${PERFORMANCE_MODES[getPerformanceMode()].label}`, action: 'command-toggle-performance', icon: ICONS.bolt || '?' },
-    { label: 'Open shortcut guide', sub: shortcutLabel(shortcutPref('shortcuts.open').keys), action: 'command-open-shortcuts', icon: ICONS.keyboard || '?' },
+    ...(mobileLite ? [] : [
+      { label: 'Toggle low-power mode', sub: `Current: ${PERFORMANCE_MODES[getPerformanceMode()].label}`, action: 'command-toggle-performance', icon: ICONS.bolt || '?' },
+      { label: 'Open shortcut guide', sub: shortcutLabel(shortcutPref('shortcuts.open').keys), action: 'command-open-shortcuts', icon: ICONS.keyboard || '?' },
+    ]),
     { label: 'Open notifications', sub: 'Notification inbox', action: 'command-route', route: '/notifications', icon: ICONS.bell }
   ];
 
@@ -8089,6 +8168,7 @@ async function showUserProfileModal(userId) {
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `<div class="modal pcard-modal">${body}</div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
 
@@ -8583,6 +8663,7 @@ async function showProfileModal() {
     <div class="form-actions pcard-form-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">Save profile</button></div>
   </form></div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
   requestAnimationFrame(() => {
@@ -8868,60 +8949,47 @@ function showOnboardingModal(force = false) {
   const s = getSession(); if (!s) return;
   if (!force && localStorage.getItem(howtoSeenKey(s.userId))) return;
   const isAdm = s.role === 'admin';
+  const mobileLite = isMobileLiteRuntime();
+  const steps = mobileLite
+    ? [
+      { icon: ICONS.folder, title: 'Projects', body: 'Open Projects, create one, and add the details you need.' },
+      { icon: ICONS.checkCircle, title: 'Tasks', body: 'Add tasks, move their status forward, and let sync handle the rest.' },
+      { icon: ICONS.bell, title: 'Updates', body: 'Check notifications when something needs your attention.' }
+    ]
+    : [
+      { icon: ICONS.folder, title: 'Create a project', body: 'Go to <strong>Projects</strong> in the sidebar and click <em>New Project</em>. Add a name, description, type, and priority.' },
+      { icon: ICONS.checkCircle, title: 'Add tasks', body: 'Open a project and click <em>Add Task</em>. The project is auto-selected. You can also click <em>New Task</em> from the Projects or Tasks pages and pick the project from a dropdown.' },
+      { icon: ICONS.user, title: 'Classrooms & your personal space', body: 'Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> - anything there is hidden from others until you invite a collaborator.' },
+      { icon: ICONS.user, title: "See your teammates' work", body: `On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' - except for admins, who can see everything' : ''}.` },
+      { icon: ICONS.file, title: 'Upload files & track progress', body: 'Inside a project, use the <em>Library</em> tab or right-side <em>Documents</em> panel to attach PDFs/images. The <em>Activity</em> tab keeps an audit log of every change.' }
+    ];
   const ov = document.getElementById('modal-overlay');
   ov.innerHTML = `
-    <div class="modal modal-howto">
+    <div class="modal modal-howto ${mobileLite ? 'modal-howto--mobile-lite' : ''}">
       <div class="modal-header">
         <h2>${ICONS.sparkles} Welcome to Orbitrack${s.displayName ? `, ${esc(s.displayName)}` : ''}!</h2>
         <button class="btn-icon" data-action="close-howto">${ICONS.x}</button>
       </div>
       <div class="modal-body">
-        <p class="text-secondary" style="margin-bottom:14px">Here's a 30-second tour to get you started.</p>
+        <p class="text-secondary howto-intro">${mobileLite ? 'Start with the essentials.' : "Here's a 30-second tour to get you started."}</p>
         <ol class="howto-list">
-          <li>
-            <span class="howto-step-icon">${ICONS.folder}</span>
+          ${steps.map(step => `<li>
+            <span class="howto-step-icon">${step.icon}</span>
             <div>
-              <strong>Create a project</strong>
-              <p class="text-muted text-sm">Go to <strong>Projects</strong> in the sidebar and click <em>New Project</em>. Add a name, description, type, and priority.</p>
+              <strong>${esc(step.title)}</strong>
+              <p class="text-muted text-sm">${step.body}</p>
             </div>
-          </li>
-          <li>
-            <span class="howto-step-icon">${ICONS.checkCircle}</span>
-            <div>
-              <strong>Add tasks</strong>
-              <p class="text-muted text-sm">Open a project and click <em>Add Task</em>. The project is auto-selected. You can also click <em>New Task</em> from the Projects or Tasks pages and pick the project from a dropdown.</p>
-            </div>
-          </li>
-          <li>
-            <span class="howto-step-icon">${ICONS.user}</span>
-            <div>
-              <strong>Classrooms & your personal space</strong>
-              <p class="text-muted text-sm">Projects live in <strong>classrooms</strong> your admin gives you. You also get a private <strong>personal space</strong> - anything there is hidden from others until you invite a collaborator.</p>
-            </div>
-          </li>
-          <li>
-            <span class="howto-step-icon">${ICONS.user}</span>
-            <div>
-              <strong>See your teammates' work</strong>
-              <p class="text-muted text-sm">On the <strong>Projects</strong> page, switch the <em>Workspace</em> toggle to <strong>Everyone</strong> to browse other people's projects (read-only). Their task details stay private${isAdm ? ' - except for admins, who can see everything' : ''}.</p>
-            </div>
-          </li>
-          <li>
-            <span class="howto-step-icon">${ICONS.file}</span>
-            <div>
-              <strong>Upload files & track progress</strong>
-              <p class="text-muted text-sm">Inside a project, use the <em>Library</em> tab or right-side <em>Documents</em> panel to attach PDFs/images. The <em>Activity</em> tab keeps an audit log of every change.</p>
-            </div>
-          </li>
+          </li>`).join('')}
         </ol>
-        <p class="text-muted text-sm" style="margin-top:14px">Want the full picture? Open the <strong>User guide</strong> from Support any time.</p>
+        ${mobileLite ? '' : '<p class="text-muted text-sm" style="margin-top:14px">Want the full picture? Open the <strong>User guide</strong> from Support any time.</p>'}
         <div class="form-actions">
-          <a href="#/guide" class="btn btn-ghost" data-action="close-howto">${ICONS.file} Full guide</a>
-          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">Got it - let's go</button>
+          ${mobileLite ? '' : `<a href="#/guide" class="btn btn-ghost" data-action="close-howto">${ICONS.file} Full guide</a>`}
+          <button type="button" class="btn btn-primary" data-action="close-howto" style="flex:1;justify-content:center">${mobileLite ? 'Got it' : "Got it - let's go"}</button>
         </div>
       </div>
     </div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   localStorage.setItem(howtoSeenKey(s.userId), String(Date.now()));
 }
 
@@ -8969,6 +9037,7 @@ function showWhatsNewModal(force = false, attempt = 0) {
     </div>
   </div>`;
   ov.classList.remove('hidden');
+  document.body.classList.add('modal-visible');
   ov.dataset.lockBackdrop = ''; ov.dataset.lockKeyboard = ''; ov.dataset.confirmCancel = ''; ov.dataset.cancelMsg = '';
   delete ov.dataset.confirmDialog;
   localStorage.setItem(key, String(Date.now()));
@@ -8985,6 +9054,11 @@ function releaseMonthLabel(iso) {
 // Single source of truth for release notes: the Support tab, the What's New
 // modal, and the About surfaces all read this list.
 const SUPPORT_CHANGELOG = [
+  { version: '3.6.3', date: '2026-09-06', highlights: [
+    'Mobile notices now resolve into a compact phone layer instead of crossing modal content.',
+    'Phone-sized installs use the quiet surface profile automatically.',
+    'Desktop-only tuning controls no longer appear inside the mobile settings path.',
+  ] },
   { version: '3.6.2', date: '2026-09-06', highlights: [
     'Mobile install surfaces now receive the Orbitrack mark through the hosted entry layer.',
     'The web shell advertises a tighter identity envelope for standalone phone launches.',
@@ -9447,9 +9521,10 @@ function renderProjectRoomsHtml(members, projects = [], tasks = []) {
 }
 
 async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
-  const activityByUser = DB.getTeamActivitySummary ? await DB.getTeamActivitySummary({ days: 7 }).catch(() => ({})) : {};
+  const mobileLite = isMobileLiteRuntime();
+  const activityByUser = !mobileLite && DB.getTeamActivitySummary ? await DB.getTeamActivitySummary({ days: 7 }).catch(() => ({})) : {};
   const visibleUsers = (users || []).filter(u => !u.hideFromTeamMap);
-  const view = ['flow', 'rooms'].includes(state.teamView) ? state.teamView : 'flow';
+  const view = mobileLite ? 'flow' : (['flow', 'rooms'].includes(state.teamView) ? state.teamView : 'flow');
   state._teamLiteTasks = tasks || [];
   const flowOrder = { available: 0, working: 1, reviewing: 2, blocked: 3, away: 4, offline: 5 };
   const members = visibleUsers
@@ -9474,12 +9549,12 @@ async function buildTeamActivityHeatmapHtml(users, projects = [], tasks = []) {
         <h3>Team View</h3>
         <span class="projects-page-count">${visibleUsers.length} visible - ${active} online - ${idle} idle - ${blocked} blocked</span>
       </div>
-      <div class="team-lite-tabs" role="tablist" aria-label="Team view">
+      ${mobileLite ? '' : `<div class="team-lite-tabs" role="tablist" aria-label="Team view">
         ${tabs.map(([key, label]) => `<button type="button" class="team-lite-tab ${view === key ? 'active' : ''}" data-action="team-view-tab" data-team-view="${key}">${label}</button>`).join('')}
-      </div>
+      </div>`}
     </div>
     <div class="team-lite-body">${body}</div>
-    <div class="activity-pent-legend">${legend}</div>
+    ${mobileLite ? '' : `<div class="activity-pent-legend">${legend}</div>`}
   </section>`;
 }
 
@@ -10784,6 +10859,7 @@ const actions = {
   },
   'command-toggle-performance': () => {
     hideModal();
+    if (isMobileLiteRuntime()) return;
     const current = getPerformanceMode();
     setPerformanceMode(current === 'low-power' ? 'balanced' : 'low-power');
     router().catch(() => {});
@@ -10794,6 +10870,10 @@ const actions = {
     setTimeout(() => document.querySelector('.settings-shortcuts-search')?.focus(), 350);
   },
   'set-performance-mode': async (b) => {
+    if (isMobileLiteRuntime()) {
+      applyPerformanceMode('low-power');
+      return;
+    }
     const mode = b.dataset.mode || 'balanced';
     setPerformanceMode(mode);
     await router();
@@ -10954,16 +11034,19 @@ const actions = {
     await renderRankingPanel();
   },
   'team-view-tab': async (b) => {
+    if (isMobileLiteRuntime()) return;
     state.teamView = b.dataset.teamView === 'rooms' ? 'rooms' : 'flow';
     localStorage.setItem('wt-team-view-v1', state.teamView);
     await renderUsers();
   },
   'user-card-view': async (b) => {
+    if (isMobileLiteRuntime()) return;
     state.userCardView = b.dataset.userCardView === 'mini' ? 'mini' : 'full';
     localStorage.setItem('wt-user-card-view-v1', state.userCardView);
     await renderUsers();
   },
   'toggle-team-rating-graph': async () => {
+    if (isMobileLiteRuntime()) return;
     state.teamRatingGraphVisible = !state.teamRatingGraphVisible;
     localStorage.setItem(TEAM_RATING_GRAPH_KEY, state.teamRatingGraphVisible ? '1' : '0');
     await renderUsers();
@@ -12144,7 +12227,7 @@ function showToast(msg, type = 'info') {
   if (existing) {
     existing.className = `toast toast-${type} toast-visible`;
     clearTimeout(existing._toastTimer);
-    existing._toastTimer = setTimeout(() => existing._toastDismiss?.(), 4400);
+    existing._toastTimer = setTimeout(() => existing._toastDismiss?.(), toastVisibleMs());
     return;
   }
   const t = document.createElement('div');
@@ -12165,15 +12248,19 @@ function showToast(msg, type = 'info') {
   c.appendChild(t);
   // Cap the number of visible toasts ? drop the oldest beyond the limit.
   const all = c.querySelectorAll('.toast');
-  for (let i = 0; i < all.length - TOAST_MAX_VISIBLE; i++) all[i]._toastDismiss?.();
+  for (let i = 0; i < all.length - toastMaxVisible(); i++) all[i]._toastDismiss?.();
   requestAnimationFrame(() => t.classList.add('toast-visible'));
-  t._toastTimer = setTimeout(dismiss, 4400);
+  t._toastTimer = setTimeout(dismiss, toastVisibleMs());
 }
 
 function showProjectCreatedPopup(project) {
   const c = document.getElementById('toast-container') || document.body;
   const id = Number(project?.id || project?.projectId || 0);
   const name = project?.name || 'Untitled project';
+  if (isMobileLiteRuntime()) {
+    showToast(`Project created: ${name}`, 'success');
+    return;
+  }
   const popup = document.createElement('div');
   popup.className = 'project-created-popup';
   popup.innerHTML = `
@@ -12405,7 +12492,7 @@ function startPresenceHeartbeat() {
     if (uid && DB.touchLastSeen) DB.touchLastSeen(uid).catch(() => {});
   };
   beat();
-  _presenceTimer = setInterval(beat, 60 * 1000);
+  _presenceTimer = setInterval(beat, isMobileLiteRuntime() ? 5 * 60 * 1000 : 60 * 1000);
   if (!window._wtPresenceVisHook) {
     window._wtPresenceVisHook = true;
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(); });
@@ -12620,6 +12707,7 @@ async function renderUsers() {
   const content = document.getElementById('content');
   if (!content) return;
   if (!['full', 'mini'].includes(state.userCardView)) state.userCardView = 'full';
+  const mobileLite = isMobileLiteRuntime();
   const [users, { projects, tasks }] = await Promise.all([
     getUsersCached(true),
     getWorkspaceData(),
@@ -12637,7 +12725,7 @@ async function renderUsers() {
       return String(a.u.displayName || a.u.username || '').localeCompare(String(b.u.displayName || b.u.username || ''));
     });
 
-  const compact = state.userCardView === 'mini';
+  const compact = mobileLite || state.userCardView === 'mini';
   const cards = enriched.map(({ u, stats }, i) => {
     const initials = (u.displayName || u.username || 'U').charAt(0).toUpperCase();
     const avatarInner = avatarSrc(u)
@@ -12688,15 +12776,15 @@ async function renderUsers() {
     <div class="view-header">
       <div><h1>Users</h1><p class="view-subtitle">${users.length} member${users.length === 1 ? '' : 's'} - ranked by contribution${userHidesScore(viewer) ? ' - scores scrambled for you' : ''}</p></div>
       <div class="view-actions user-view-actions">
-        <div class="team-lite-tabs user-card-view-tabs" role="group" aria-label="User card view">
+        ${mobileLite ? '' : `<div class="team-lite-tabs user-card-view-tabs" role="group" aria-label="User card view">
           <button type="button" class="team-lite-tab ${compact ? '' : 'active'}" data-action="user-card-view" data-user-card-view="full" title="Expanded user cards">Expanded</button>
           <button type="button" class="team-lite-tab ${compact ? 'active' : ''}" data-action="user-card-view" data-user-card-view="mini" title="Mini user cards">Mini</button>
         </div>
-        <button type="button" class="btn btn-ghost ${state.teamRatingGraphVisible ? 'active' : ''}" data-action="toggle-team-rating-graph" title="${state.teamRatingGraphVisible ? 'Hide graph' : 'Show graph'}">${ICONS.gauge} Graph</button>
+        <button type="button" class="btn btn-ghost ${state.teamRatingGraphVisible ? 'active' : ''}" data-action="toggle-team-rating-graph" title="${state.teamRatingGraphVisible ? 'Hide graph' : 'Show graph'}">${ICONS.gauge} Graph</button>`}
         <button type="button" class="btn btn-ghost ${state.rankingPanelOpen ? 'active' : ''}" data-action="toggle-ranking-panel" title="Ranking guide">${ICONS.sparkles} Ranking</button>
       </div>
     </div>
-    ${state.teamRatingGraphVisible ? teamRatingGraphHtml(enriched, viewer) : ''}
+    ${!mobileLite && state.teamRatingGraphVisible ? teamRatingGraphHtml(enriched, viewer) : ''}
     <div class="user-grid ${compact ? 'user-grid--mini' : ''}">${cards || '<p class="text-muted text-sm">No users yet.</p>'}</div>`;
   await renderRankingPanel();
 }
@@ -12996,6 +13084,7 @@ function runShortcutAction(id) {
 }
 
 function handleConfiguredShortcut(e) {
+  if (isMobileLiteRuntime()) return false;
   const typingTarget = isTypingTarget(e.target);
   const chord = eventShortcutChord(e);
   const now = Date.now();
@@ -13176,6 +13265,7 @@ async function init() {
   try {
     installGlobalErrorReporting();
     applyPerformanceMode();
+    installMobileLiteModeWatcher();
     if (window.WT_SUPABASE_ERROR) {
       showToast('Cloud database unavailable - using browser-only storage for now.', 'warning');
     }

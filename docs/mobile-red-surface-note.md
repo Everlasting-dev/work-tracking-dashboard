@@ -12,6 +12,9 @@ spill from dense workspace panels.
 Saved mobile entries also inherit the Orbitrack identity mark from the hosted
 entry layer.
 
+The phone channel now resolves the narrower operating path automatically; public
+notes keep the surface-level signal only.
+
 The implementation details are intentionally not expanded in public notes.
 Future maintainers should treat this as a release marker and inspect the source
 history when they need exact mechanics.
