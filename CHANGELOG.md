@@ -36,6 +36,19 @@
 - `npm --prefix orbitrack-react run tauri:build` produced a local Windows NSIS
   installer after installing Rust and Visual Studio Build Tools.
 
+## 3.6.1
+
+### Changed
+- Mobile Red surfaces now use a compact shell profile for narrow hosted views.
+- The web asset marker advanced so mobile clients pick up the current Red line
+  instead of lingering on an older Lite surface.
+- Dense workspace panels now collapse into a calmer phone layout with fewer
+  accidental sideways pushes.
+
+### Documentation
+- Added a short public note for the mobile Red channel. The description stays
+  intentionally abstract and avoids operational details.
+
 ## 3.5.11
 
 ### Fixed

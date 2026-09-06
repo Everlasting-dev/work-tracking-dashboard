@@ -59,7 +59,7 @@
   }
 
   function getAppVersion() {
-    return window.WT_APP_VERSION || '3.6.0';
+    return window.WT_APP_VERSION || '3.6.1';
   }
 
   function formatMonthInput(date = new Date()) {

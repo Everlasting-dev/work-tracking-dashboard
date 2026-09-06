@@ -2,19 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0909">
   <title>Orbitrack</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=3.6.0">
+  <link rel="stylesheet" href="styles.css?v=3.6.1">
   <!-- React Flow (xyflow) island styles for the project task map -->
-  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.6.0">
+  <link rel="stylesheet" href="vendor/orbiflow/orbiflow.css?v=3.6.1">
   <!-- SortableJS for smooth task drag-and-drop -->
   <script src="vendor/sortablejs/Sortable.min.js?v=1.15.7"></script>
   <!-- Quill rich-text editor island styles -->
-  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.6.0">
+  <link rel="stylesheet" href="vendor/orbinotes/orbinotes.css?v=3.6.1">
   <!-- jsPDF for PDF report generation -->
   <script src="vendor/jspdf/jspdf.umd.min.js?v=4.2.1"></script>
   <script src="vendor/jspdf-autotable/jspdf.plugin.autotable.min.js?v=5.0.8"></script>
@@ -25,13 +26,13 @@
 <body>
   <!-- Loading Splash — Red Edition loader (GIF on black; #splash-sphere is a canvas fallback) -->
   <div id="splash">
-    <img id="splash-red-edition" class="splash-red-edition-gif" src="assets/red-edition-loader.gif?v=3.6.0" alt="" aria-hidden="true">
+    <img id="splash-red-edition" class="splash-red-edition-gif" src="assets/red-edition-loader.gif?v=3.6.1" alt="" aria-hidden="true">
     <canvas id="splash-sphere" class="splash-sphere-canvas" aria-hidden="true"></canvas>
     <div class="splash-spec-overlay">
       <p class="splash-core-label">ORBITRACK RED EDITION</p>
       <div class="splash-loader-bar"><div class="splash-loader-fill"></div></div>
       <p class="splash-status" id="splash-status">Loading local database…</p>
-      <p class="splash-version" id="splash-app-version">v3.6.0</p>
+      <p class="splash-version" id="splash-app-version">v3.6.1</p>
       <p class="splash-hint" id="splash-hint">Press Esc to skip ahead once loading finishes.</p>
     </div>
   </div>
@@ -227,40 +228,40 @@
 
   <!-- No inline scripts below this point: the desktop renderer runs under a
        Content-Security-Policy with script-src 'self' (see desktop/main.js). -->
-  <script src="boot-version.js?v=3.6.0"></script>
-  <script src="config.js?v=3.6.0"></script>
+  <script src="boot-version.js?v=3.6.1"></script>
+  <script src="config.js?v=3.6.1"></script>
   <!-- Optional observability (PostHog + Sentry). No-ops unless WT_CONFIG has keys. -->
-  <script src="vendor/orbiobs/orbiobs.js?v=3.6.0"></script>
-  <script src="boot-observability.js?v=3.6.0"></script>
-  <script src="vendor/dexie.min.js?v=3.6.0"></script>
-  <script src="vendor/supabase.min.js?v=3.6.0"></script>
-  <script src="db.js?v=3.6.0"></script>
-  <script src="db-supabase.js?v=3.6.0"></script>
-  <script src="sync.js?v=3.6.0"></script>
-  <script src="sync-v3.js?v=3.6.0"></script>
-  <script src="realtime-sync.js?v=3.6.0"></script>
-  <script src="notification-sounds.js?v=3.6.0"></script>
-  <script src="db-bridge.js?v=3.6.0"></script>
-  <script src="splash-sphere.js?v=3.6.0"></script>
-  <script src="vendor/orbiemoji/orbiemoji.js?v=3.6.0"></script>
+  <script src="vendor/orbiobs/orbiobs.js?v=3.6.1"></script>
+  <script src="boot-observability.js?v=3.6.1"></script>
+  <script src="vendor/dexie.min.js?v=3.6.1"></script>
+  <script src="vendor/supabase.min.js?v=3.6.1"></script>
+  <script src="db.js?v=3.6.1"></script>
+  <script src="db-supabase.js?v=3.6.1"></script>
+  <script src="sync.js?v=3.6.1"></script>
+  <script src="sync-v3.js?v=3.6.1"></script>
+  <script src="realtime-sync.js?v=3.6.1"></script>
+  <script src="notification-sounds.js?v=3.6.1"></script>
+  <script src="db-bridge.js?v=3.6.1"></script>
+  <script src="splash-sphere.js?v=3.6.1"></script>
+  <script src="vendor/orbiemoji/orbiemoji.js?v=3.6.1"></script>
   <!-- Admin-only comprehensive project report generator (window.OrbiProjectReport) — used by the Reports tab. -->
-  <script src="reports-projects.js?v=3.6.0"></script>
-  <script src="date-utils.js?v=3.6.0"></script>
-  <script src="app.js?v=3.6.0"></script>
+  <script src="reports-projects.js?v=3.6.1"></script>
+  <script src="date-utils.js?v=3.6.1"></script>
+  <script src="app.js?v=3.6.1"></script>
   <!-- LOCAL EXPERIMENT: TipTap notes editor island (must load before notes.js mounts an editor). Roll back by removing this tag + vendor/orbitiptap + build-src/orbitiptap.js + the OrbiTipTap branch in notes.js. -->
-  <script src="vendor/orbitiptap/orbitiptap.js?v=3.6.0"></script>
-  <script src="notes.js?v=3.6.0"></script>
-  <script src="reports.js?v=3.6.0"></script>
+  <script src="vendor/orbitiptap/orbitiptap.js?v=3.6.1"></script>
+  <script src="notes.js?v=3.6.1"></script>
+  <script src="reports.js?v=3.6.1"></script>
   <!-- Hybrid Google Drive storage client (inert unless WT_CONFIG.storageProvider==='google_drive') -->
-  <script src="storage-drive.js?v=3.6.0"></script>
+  <script src="storage-drive.js?v=3.6.1"></script>
   <script src="vendor/lucide/lucide.min.js?v=1.20.0"></script>
-  <script src="ui.js?v=3.6.0"></script>
-  <script src="bootstrap.js?v=3.6.0"></script>
-  <script src="desktop/updates.js?v=3.6.0"></script>
+  <script src="ui.js?v=3.6.1"></script>
+  <script src="bootstrap.js?v=3.6.1"></script>
+  <script src="desktop/updates.js?v=3.6.1"></script>
   <!-- React Flow (xyflow) island — bundled React + @xyflow/react for the task map -->
-  <script src="vendor/orbiflow/orbiflow.js?v=3.6.0"></script>
+  <script src="vendor/orbiflow/orbiflow.js?v=3.6.1"></script>
   <!-- Quill notes editor island -->
-  <script src="vendor/orbinotes/orbinotes.js?v=3.6.0"></script>
+  <script src="vendor/orbinotes/orbinotes.js?v=3.6.1"></script>
 </body>
 </html>
 

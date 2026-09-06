@@ -8985,6 +8985,11 @@ function releaseMonthLabel(iso) {
 // Single source of truth for release notes: the Support tab, the What's New
 // modal, and the About surfaces all read this list.
 const SUPPORT_CHANGELOG = [
+  { version: '3.6.1', date: '2026-09-06', highlights: [
+    'Mobile Red Edition surfaces now settle into the small-screen shell more consistently.',
+    'Hosted/mobile clients receive refreshed asset markers so the current red build is selected cleanly.',
+    'Several dense workspace views now use a narrower operating posture on phone-sized screens.',
+  ] },
   { version: '3.6.0', date: '2026-08-22', highlights: [
     'Hardened desktop shell: stricter content security, tighter link handling, and a narrower privileged bridge.',
     'Steadier fast typing in Projects, Tasks, and Notes search, with fewer focus jumps and no stale results.',
@@ -12785,7 +12790,8 @@ function updateNav(route) {
     if (!n) return;
     item.classList.toggle('active',
       route === `/${n}`
-        || (n === 'projects' && (route === '/' || route.startsWith('/projects')))
+        || (n === 'home' && route === '/')
+        || (n === 'projects' && (route === '/projects' || route.startsWith('/projects/')))
         || (n === 'settings' && ['/support', '/diagnostics', '/about'].includes(route))
         || (n === 'admin' && ['/dashboard', '/reports'].includes(route)));
   });
