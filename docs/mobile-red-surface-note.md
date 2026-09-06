@@ -9,6 +9,9 @@ The practical outcome is simple enough for users: the current mobile channel
 should open the Red build, keep primary navigation anchored, and reduce layout
 spill from dense workspace panels.
 
+Saved mobile entries also inherit the Orbitrack identity mark from the hosted
+entry layer.
+
 The implementation details are intentionally not expanded in public notes.
 Future maintainers should treat this as a release marker and inspect the source
 history when they need exact mechanics.

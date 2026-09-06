@@ -36,6 +36,14 @@
 - `npm --prefix orbitrack-react run tauri:build` produced a local Windows NSIS
   installer after installing Rust and Visual Studio Build Tools.
 
+## 3.6.2
+
+### Changed
+- Mobile install surfaces now expose the Orbitrack identity mark through the
+  hosted entry layer.
+- Standalone phone launch metadata now follows the Red channel envelope without
+  publishing internal sequencing detail.
+
 ## 3.6.1
 
 ### Changed

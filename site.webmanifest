@@ -1,0 +1,24 @@
+{
+  "name": "Orbitrack Red",
+  "short_name": "Orbitrack",
+  "description": "Internal team workspace.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0909",
+  "theme_color": "#0b0909",
+  "icons": [
+    {
+      "src": "assets/icons/orbitrack-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/orbitrack-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -8985,6 +8985,11 @@ function releaseMonthLabel(iso) {
 // Single source of truth for release notes: the Support tab, the What's New
 // modal, and the About surfaces all read this list.
 const SUPPORT_CHANGELOG = [
+  { version: '3.6.2', date: '2026-09-06', highlights: [
+    'Mobile install surfaces now receive the Orbitrack mark through the hosted entry layer.',
+    'The web shell advertises a tighter identity envelope for standalone phone launches.',
+    'Asset markers advanced again so newly saved mobile entries resolve the current Red surface.',
+  ] },
   { version: '3.6.1', date: '2026-09-06', highlights: [
     'Mobile Red Edition surfaces now settle into the small-screen shell more consistently.',
     'Hosted/mobile clients receive refreshed asset markers so the current red build is selected cleanly.',
